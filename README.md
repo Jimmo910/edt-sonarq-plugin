@@ -23,6 +23,11 @@ Edition (single-branch).
 - **Token authentication** — a user token is used as a Bearer token, falling back to
   HTTP Basic auth for older server versions; the token is stored in the Eclipse Secure
   Storage, never in plain preferences.
+- **Run branch analysis right from the view** — a toolbar action (and a link on the
+  "branch not analyzed" banner) launches analysis using an auto-downloaded sonar-scanner
+  CLI, a custom scanner path, or a CI webhook trigger, whichever is configured; scanner
+  output streams to the SonarQube Analysis console, and the view refreshes automatically
+  once the server finishes processing the report.
 
 ## Requirements
 
@@ -62,6 +67,15 @@ Edition (single-branch).
 3. Open the **SonarQube Issues** view (`Window` > `Show View` > `Other...` > `SonarQube`
    category) and use its **Refresh** toolbar action to load issues for the selected
    project.
+4. **Preferences > SonarQube > Analysis launch** (optional) — choose how the **Run Branch
+   Analysis** toolbar action starts an analysis: local scanner with automatic download,
+   a local scanner at a specified path, or a CI trigger URL (supports a `{branch}`
+   placeholder, plus an optional secret sent as an `Authorization` header); extra scanner
+   arguments can be added for either local-scanner mode. The token used for the server
+   connection needs the **Execute Analysis** permission for the local-scanner modes. On
+   SonarQube Community Edition, which has no branch support, analysis always lands in the
+   single default branch — a confirmation dialog warns before overwriting an
+   already-analyzed branch.
 
 ## Building
 
@@ -81,8 +95,8 @@ the same content).
 
 ## Roadmap
 
-- **v2** — editor markers/underlines for issues, and a way to trigger a first analysis
-  run from EDT.
+- **v2** — editor markers/underlines for issues (the first-analysis trigger shipped in
+  v1.1).
 - **v3** — an optional local analysis mode (running the Sonar scanner without a
   pre-existing server-side analysis).
 
