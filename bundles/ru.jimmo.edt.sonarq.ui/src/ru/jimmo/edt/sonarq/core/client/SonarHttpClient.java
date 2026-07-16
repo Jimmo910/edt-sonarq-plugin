@@ -23,7 +23,10 @@ import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 
-/** {@link ISonarServerClient} implementation on top of {@link java.net.http.HttpClient}. */
+/**
+ * {@link ISonarServerClient} implementation on top of {@link java.net.http.HttpClient}.
+ * Instances are safe for concurrent use from multiple threads.
+ */
 public final class SonarHttpClient implements ISonarServerClient
 {
     private static final int PAGE_SIZE = 500;
@@ -98,11 +101,12 @@ public final class SonarHttpClient implements ISonarServerClient
 
     private String get(String pathAndQuery) throws SonarServerException
     {
-        HttpResponse<String> response = send(pathAndQuery);
-        if (response.statusCode() == 401 && !useBasicAuth)
+        boolean usedBasic = useBasicAuth;
+        HttpResponse<String> response = send(pathAndQuery, usedBasic);
+        if (response.statusCode() == 401 && !usedBasic)
         {
             useBasicAuth = true;
-            response = send(pathAndQuery);
+            response = send(pathAndQuery, true);
         }
         if (response.statusCode() >= 400)
         {
@@ -112,11 +116,11 @@ public final class SonarHttpClient implements ISonarServerClient
         return response.body();
     }
 
-    private HttpResponse<String> send(String pathAndQuery) throws SonarServerException
+    private HttpResponse<String> send(String pathAndQuery, boolean basicAuth) throws SonarServerException
     {
         HttpRequest request = HttpRequest.newBuilder(URI.create(connection.baseUrl() + pathAndQuery))
             .timeout(Duration.ofSeconds(connection.timeoutSeconds()))
-            .header("Authorization", authHeader()) //$NON-NLS-1$
+            .header("Authorization", authHeader(basicAuth)) //$NON-NLS-1$
             .GET()
             .build();
         try
@@ -134,9 +138,9 @@ public final class SonarHttpClient implements ISonarServerClient
         }
     }
 
-    private String authHeader()
+    private String authHeader(boolean basicAuth)
     {
-        if (useBasicAuth)
+        if (basicAuth)
         {
             String credentials = connection.token() + ":"; //$NON-NLS-1$
             return "Basic " //$NON-NLS-1$

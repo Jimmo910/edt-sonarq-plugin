@@ -94,6 +94,27 @@ public class SonarHttpClientTest
     }
 
     @Test
+    public void retriesOncePerCallAndSticksToBasicAfterwards() throws Exception
+    {
+        server.createContext("/api/server/version", exchange ->
+        {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            authHeaders.add(auth);
+            int status = auth != null && auth.startsWith("Basic ") ? 200 : 401;
+            byte[] bytes = "9.9".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        SonarHttpClient sharedClient = client();
+        assertEquals("9.9", sharedClient.serverVersion());
+        assertEquals(2, authHeaders.size());
+        assertEquals("9.9", sharedClient.serverVersion());
+        assertEquals(3, authHeaders.size());
+        assertTrue(authHeaders.get(2).startsWith("Basic "));
+    }
+
+    @Test
     public void errorStatusRaisesExceptionWithCode()
     {
         respond("/api/server/version", 500, "boom");
