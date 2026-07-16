@@ -112,6 +112,7 @@ public class ScannerInstallerTest
         assertTrue(Files.isExecutable(executable));
         assertEquals(EXECUTABLE_BODY, Files.readString(executable, StandardCharsets.UTF_8));
         assertEquals(1, downloads.get());
+        assertTrue(Files.exists(stateDir.resolve("scanner").resolve(".complete")));
     }
 
     @Test
@@ -130,6 +131,29 @@ public class ScannerInstallerTest
 
         assertEquals(first, second);
         assertEquals(1, downloads.get());
+        assertTrue(Files.exists(stateDir.resolve("scanner").resolve(".complete")));
+    }
+
+    @Test
+    public void partialExtractionWithoutMarkerIsRedownloaded() throws IOException
+    {
+        byte[] archive = validZip();
+        Path scannerRoot = stateDir.resolve("scanner");
+        Path staleExecutable = scannerRoot.resolve(executableEntry());
+        Files.createDirectories(staleExecutable.getParent());
+        Files.writeString(staleExecutable, "stale-half-extracted", StandardCharsets.UTF_8);
+        AtomicInteger downloads = new AtomicInteger();
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            return new ByteArrayInputStream(archive);
+        };
+
+        Path executable = ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
+
+        assertEquals(1, downloads.get());
+        assertEquals(EXECUTABLE_BODY, Files.readString(executable, StandardCharsets.UTF_8));
+        assertTrue(Files.exists(scannerRoot.resolve(".complete")));
     }
 
     @Test

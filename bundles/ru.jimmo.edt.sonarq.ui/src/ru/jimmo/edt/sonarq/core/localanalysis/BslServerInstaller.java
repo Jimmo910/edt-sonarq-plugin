@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -59,6 +60,7 @@ public final class BslServerInstaller
     private static final String BIN_DIR = "bin"; //$NON-NLS-1$
     private static final String EXE_WINDOWS = "bsl-language-server.exe"; //$NON-NLS-1$
     private static final String EXE_OTHER = "bsl-language-server"; //$NON-NLS-1$
+    private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
 
     private BslServerInstaller()
     {
@@ -78,11 +80,14 @@ public final class BslServerInstaller
      * Ensures the BSL Language Server distribution is installed under {@code stateDir/bsl-ls} and returns
      * its launcher executable.
      *
-     * <p>If the expected launcher already exists the method returns immediately without invoking
-     * {@code download}. Otherwise the zip is streamed and unpacked with a zip-slip guard, the monitor
-     * being polled for cancellation before and per entry. On non-Windows systems every regular file in a
-     * {@code bin} directory (the launcher and the bundled runtime tools) is marked executable, since the
-     * zip does not carry Unix permission bits.
+     * <p>If the expected launcher already exists and a {@code .complete} marker file confirms a prior
+     * extraction ran to completion, the method returns immediately without invoking {@code download}.
+     * Otherwise any leftover directory (for example a half-extracted install left by a cancelled or
+     * crashed run) is deleted, the zip is streamed and unpacked with a zip-slip guard, the monitor being
+     * polled for cancellation before and per entry, and the marker is written only after the whole
+     * archive has been extracted successfully. On non-Windows systems every regular file in a {@code bin}
+     * directory (the launcher and the bundled runtime tools) is marked executable, since the zip does not
+     * carry Unix permission bits.
      *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
      * @param download the source of the archive bytes, not {@code null}
@@ -96,7 +101,8 @@ public final class BslServerInstaller
     {
         Path serverRoot = stateDir.resolve(SERVER_DIR);
         Path executable = expectedExecutable(serverRoot);
-        if (Files.exists(executable))
+        Path marker = serverRoot.resolve(MARKER_FILE);
+        if (Files.exists(executable) && Files.exists(marker))
         {
             return executable;
         }
@@ -104,6 +110,7 @@ public final class BslServerInstaller
         {
             throw new OperationCanceledException();
         }
+        deleteRecursively(serverRoot);
         Files.createDirectories(serverRoot);
         Path normalizedRoot = serverRoot.normalize();
         try (ZipInputStream zip = new ZipInputStream(download.open(downloadUrl())))
@@ -137,7 +144,28 @@ public final class BslServerInstaller
         {
             markBinExecutable(serverRoot);
         }
+        Files.createFile(marker);
         return executable;
+    }
+
+    /**
+     * Recursively deletes a directory tree, tolerating a directory that does not exist.
+     *
+     * <p>Used to discard a poisoned half-extracted install (no completion marker) before retrying.
+     *
+     * @param dir the directory to delete, not {@code null}
+     * @throws IOException if a file or directory cannot be deleted
+     */
+    private static void deleteRecursively(Path dir) throws IOException
+    {
+        if (!Files.isDirectory(dir))
+        {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(dir))
+        {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+        }
     }
 
     /**

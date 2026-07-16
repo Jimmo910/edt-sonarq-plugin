@@ -148,6 +148,7 @@ public class BslServerInstallerTest
         assertTrue(Files.isExecutable(executable));
         assertEquals(LAUNCHER_BODY, Files.readString(executable, StandardCharsets.UTF_8));
         assertEquals(1, downloads.get());
+        assertTrue(Files.exists(stateDir.resolve("bsl-ls").resolve(".complete")));
     }
 
     @Test
@@ -166,6 +167,29 @@ public class BslServerInstallerTest
 
         assertEquals(first, second);
         assertEquals(1, downloads.get());
+        assertTrue(Files.exists(stateDir.resolve("bsl-ls").resolve(".complete")));
+    }
+
+    @Test
+    public void partialExtractionWithoutMarkerIsRedownloaded() throws IOException
+    {
+        byte[] archive = validZip();
+        Path serverRoot = stateDir.resolve("bsl-ls");
+        Path staleExecutable = serverRoot.resolve(launcherEntry());
+        Files.createDirectories(staleExecutable.getParent());
+        Files.writeString(staleExecutable, "stale-half-extracted", StandardCharsets.UTF_8);
+        AtomicInteger downloads = new AtomicInteger();
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            return new ByteArrayInputStream(archive);
+        };
+
+        Path executable = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
+
+        assertEquals(1, downloads.get());
+        assertEquals(LAUNCHER_BODY, Files.readString(executable, StandardCharsets.UTF_8));
+        assertTrue(Files.exists(serverRoot.resolve(".complete")));
     }
 
     @Test
