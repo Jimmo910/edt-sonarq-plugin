@@ -6,25 +6,48 @@
 
 package ru.jimmo.edt.sonarq.ui.views;
 
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.IAction;
+import org.eclipse.jface.action.IMenuCreator;
+import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.TreeViewerColumn;
+import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.SashForm;
+import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Link;
+import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.ui.part.ViewPart;
 
+import ru.jimmo.edt.sonarq.core.client.SonarConnection;
+import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
+import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
+import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
+import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
+import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
+import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
 
 /** The SonarQube Issues view: an issue tree with a rule description pane. */
 public class SonarIssuesView extends ViewPart
@@ -32,11 +55,18 @@ public class SonarIssuesView extends ViewPart
     /** The view id. */
     public static final String VIEW_ID = "ru.jimmo.edt.sonarq.ui.views.issues"; //$NON-NLS-1$
 
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss"); //$NON-NLS-1$
+
     private TreeViewer viewer;
     private Label statusLabel;
+    private Composite bannerComposite;
+    private Label bannerLabel;
+    private Link bannerLink;
     private IssueSnapshot snapshot;
     private BranchState branchState;
     private IssueGrouping grouping = IssueGrouping.BY_FILE;
+    private IProject selectedProject;
+    private String sessionBranch;
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
 
@@ -45,6 +75,8 @@ public class SonarIssuesView extends ViewPart
     {
         Composite root = new Composite(parent, SWT.NONE);
         root.setLayout(new GridLayout(1, false));
+
+        createBanner(root);
 
         SashForm sash = new SashForm(root, SWT.VERTICAL);
         sash.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
@@ -61,6 +93,61 @@ public class SonarIssuesView extends ViewPart
         statusLabel = new Label(root, SWT.NONE);
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+
+        createToolBar();
+    }
+
+    private void createBanner(Composite root)
+    {
+        bannerComposite = new Composite(root, SWT.NONE);
+        bannerComposite.setLayout(new GridLayout(2, false));
+        GridData bannerData = new GridData(SWT.FILL, SWT.CENTER, true, false);
+        bannerData.exclude = true;
+        bannerComposite.setLayoutData(bannerData);
+        bannerComposite.setVisible(false);
+
+        bannerLabel = new Label(bannerComposite, SWT.NONE);
+        bannerLabel.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+
+        bannerLink = new Link(bannerComposite, SWT.NONE);
+        bannerLink.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+        bannerLink.addSelectionListener(SelectionListener.widgetSelectedAdapter(event ->
+        {
+            if (branchState != null)
+            {
+                sessionBranch = branchState.effectiveBranch();
+                refreshIssues();
+            }
+        }));
+    }
+
+    private void createToolBar()
+    {
+        IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
+        toolBar.add(createRefreshAction());
+        toolBar.add(createProjectAction());
+        toolBar.update(true);
+    }
+
+    private Action createRefreshAction()
+    {
+        return new Action(Messages.IssuesView_RefreshAction, IAction.AS_PUSH_BUTTON)
+        {
+            @Override
+            public void run()
+            {
+                refreshIssues();
+            }
+        };
+    }
+
+    private Action createProjectAction()
+    {
+        Action projects = new Action(Messages.IssuesView_ProjectMenu, IAction.AS_DROP_DOWN_MENU)
+        {
+        };
+        projects.setMenuCreator(new ProjectMenuCreator());
+        return projects;
     }
 
     private void createColumns()
@@ -130,9 +217,171 @@ public class SonarIssuesView extends ViewPart
         viewer.setInput(IssueTreeBuilder.build(snapshot.issues(), boundProjectKey, boundPathPrefix, grouping));
     }
 
+    private void refreshIssues()
+    {
+        IProject project = selectedProject != null ? selectedProject : firstOpenProject();
+        if (project == null)
+        {
+            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            return;
+        }
+        selectedProject = project;
+        ProjectBinding binding = new ProjectBindingStore().load(project);
+        Optional<SonarConnection> connection = new SonarConnectionFactory().create();
+        if (!binding.isConfigured() || connection.isEmpty())
+        {
+            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            return;
+        }
+        boundProjectKey = binding.projectKey();
+        boundPathPrefix = binding.pathPrefix();
+        IIssueProvider provider = new ServerIssueProvider(new SonarHttpClient(connection.get()));
+        new RefreshIssuesJob(provider, project, binding, sessionBranch, this::onRefreshFinished).schedule();
+    }
+
+    private void onRefreshFinished(RefreshResult result)
+    {
+        Display.getDefault().asyncExec(() ->
+        {
+            if (viewer.getControl().isDisposed())
+            {
+                return;
+            }
+            if (result.isError())
+            {
+                statusLabel.setText(NLS.bind(Messages.IssuesView_Status_Error, result.errorMessage()));
+                return;
+            }
+            setInput(result.snapshot(), result.branchState());
+            updateStatusAndBanner();
+        });
+    }
+
+    private void updateStatusAndBanner()
+    {
+        statusLabel.setText(buildStatusText());
+        statusLabel.getParent().layout();
+        updateBanner();
+    }
+
+    private String buildStatusText()
+    {
+        int count = snapshot.issues().size();
+        String time = TIME_FORMAT.withZone(ZoneId.systemDefault()).format(snapshot.loadedAt());
+        String text;
+        if (branchState.branchesSupported() && branchState.effectiveBranch() != null)
+        {
+            text = NLS.bind(Messages.IssuesView_Status_Loaded,
+                new Object[] { Integer.valueOf(count), branchState.effectiveBranch(), time });
+        }
+        else
+        {
+            text = NLS.bind(Messages.IssuesView_Status_LoadedNoBranch,
+                new Object[] { Integer.valueOf(count), time });
+        }
+        if (snapshot.truncated())
+        {
+            text += "  " + NLS.bind(Messages.IssuesView_Status_Truncated, //$NON-NLS-1$
+                new Object[] { Integer.valueOf(count), Integer.valueOf(snapshot.serverTotal()) });
+        }
+        return text;
+    }
+
+    private void updateBanner()
+    {
+        GridData data = (GridData)bannerComposite.getLayoutData();
+        if (branchState.missingOnServer())
+        {
+            bannerLabel.setText(NLS.bind(Messages.IssuesView_BranchMissing, branchState.requestedBranch()));
+            bannerLink.setText("<a>" //$NON-NLS-1$
+                + NLS.bind(Messages.IssuesView_ShowMainBranch, branchState.effectiveBranch()) + "</a>"); //$NON-NLS-1$
+            data.exclude = false;
+            bannerComposite.setVisible(true);
+        }
+        else
+        {
+            data.exclude = true;
+            bannerComposite.setVisible(false);
+        }
+        bannerComposite.getParent().layout();
+    }
+
+    private static IProject firstOpenProject()
+    {
+        for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+        {
+            if (project.isOpen())
+            {
+                return project;
+            }
+        }
+        return null;
+    }
+
     @Override
     public void setFocus()
     {
         viewer.getControl().setFocus();
+    }
+
+    /** Lists the open workspace projects as a drop-down of the toolbar's Project action. */
+    private final class ProjectMenuCreator implements IMenuCreator
+    {
+        private Menu menu;
+
+        @Override
+        public void dispose()
+        {
+            if (menu != null && !menu.isDisposed())
+            {
+                menu.dispose();
+                menu = null;
+            }
+        }
+
+        @Override
+        public Menu getMenu(Control parent)
+        {
+            dispose();
+            menu = new Menu(parent);
+            populate(menu);
+            return menu;
+        }
+
+        @Override
+        public Menu getMenu(Menu parent)
+        {
+            dispose();
+            menu = new Menu(parent);
+            populate(menu);
+            return menu;
+        }
+
+        private void populate(Menu target)
+        {
+            for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
+            {
+                if (project.isOpen())
+                {
+                    addItem(target, project);
+                }
+            }
+        }
+
+        private void addItem(Menu target, IProject project)
+        {
+            MenuItem item = new MenuItem(target, SWT.RADIO);
+            item.setText(project.getName());
+            item.setSelection(project.equals(selectedProject));
+            item.addSelectionListener(SelectionListener.widgetSelectedAdapter(event ->
+            {
+                if (item.getSelection())
+                {
+                    selectedProject = project;
+                    sessionBranch = null;
+                    refreshIssues();
+                }
+            }));
+        }
     }
 }
