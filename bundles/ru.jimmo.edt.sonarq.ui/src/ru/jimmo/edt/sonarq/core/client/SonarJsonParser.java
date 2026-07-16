@@ -43,9 +43,9 @@ public final class SonarJsonParser
     {
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         JsonObject paging = root.getAsJsonObject("paging"); //$NON-NLS-1$
-        int total = paging != null ? paging.get("total").getAsInt() : 0; //$NON-NLS-1$
-        int pageIndex = paging != null ? paging.get("pageIndex").getAsInt() : 1; //$NON-NLS-1$
-        int pageSize = paging != null ? paging.get("pageSize").getAsInt() : 0; //$NON-NLS-1$
+        int total = paging != null ? asInt(paging, "total", 0) : 0; //$NON-NLS-1$
+        int pageIndex = paging != null ? asInt(paging, "pageIndex", 1) : 1; //$NON-NLS-1$
+        int pageSize = paging != null ? asInt(paging, "pageSize", 0) : 0; //$NON-NLS-1$
         List<SonarIssue> issues = new ArrayList<>();
         JsonArray array = root.getAsJsonArray("issues"); //$NON-NLS-1$
         if (array != null)
@@ -67,6 +67,10 @@ public final class SonarJsonParser
     public static SonarRule parseRule(String json)
     {
         JsonObject rule = JsonParser.parseString(json).getAsJsonObject().getAsJsonObject("rule"); //$NON-NLS-1$
+        if (rule == null)
+        {
+            return new SonarRule("", "", ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
         String key = asString(rule, "key"); //$NON-NLS-1$
         String name = asString(rule, "name"); //$NON-NLS-1$
         return new SonarRule(key, name, asString(rule, "htmlDesc")); //$NON-NLS-1$
@@ -145,6 +149,10 @@ public final class SonarJsonParser
     public static CeTask parseCeTask(String json)
     {
         JsonObject task = JsonParser.parseString(json).getAsJsonObject().getAsJsonObject("task"); //$NON-NLS-1$
+        if (task == null)
+        {
+            return new CeTask("", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         return new CeTask(asString(task, "status"), asString(task, "errorMessage")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
@@ -169,12 +177,18 @@ public final class SonarJsonParser
             SonarIssueType.fromJson(asString(issue, "type")), //$NON-NLS-1$
             asString(issue, "component"), //$NON-NLS-1$
             asString(issue, "message"), //$NON-NLS-1$
-            issue.has("line") ? issue.get("line").getAsInt() : 0); //$NON-NLS-1$ //$NON-NLS-2$
+            asInt(issue, "line", 0)); //$NON-NLS-1$
     }
 
     private static String asString(JsonObject object, String member)
     {
         JsonElement value = object.get(member);
         return value != null && !value.isJsonNull() ? value.getAsString() : ""; //$NON-NLS-1$
+    }
+
+    private static int asInt(JsonObject object, String member, int defaultValue)
+    {
+        JsonElement value = object.get(member);
+        return value != null && !value.isJsonNull() ? value.getAsInt() : defaultValue;
     }
 }

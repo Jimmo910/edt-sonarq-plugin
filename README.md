@@ -75,7 +75,9 @@ Edition (single-branch).
    connection needs the **Execute Analysis** permission for the local-scanner modes. On
    SonarQube Community Edition, which has no branch support, analysis always lands in the
    single default branch — a confirmation dialog warns before overwriting an
-   already-analyzed branch.
+   already-analyzed branch. For GitLab pipeline triggers the token travels inside the URL
+   template and is therefore stored in plain (non-encrypted) preferences — prefer a
+   low-privilege trigger token.
 
 ## Building
 

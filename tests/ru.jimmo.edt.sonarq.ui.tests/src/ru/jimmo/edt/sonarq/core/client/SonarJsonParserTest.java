@@ -66,6 +66,48 @@ public class SonarJsonParserTest
     }
 
     @Test
+    public void issueWithNullLineParsesAsZero()
+    {
+        String json = """
+            {
+              "issues": [
+                {
+                  "key": "AY3", "rule": "bsl:X", "severity": "MAJOR", "type": "CODE_SMELL",
+                  "component": "c", "message": "m", "line": null
+                }
+              ]
+            }""";
+        IssuesPage page = SonarJsonParser.parseIssuesPage(json);
+        assertEquals(0, page.issues().get(0).line());
+    }
+
+    @Test
+    public void pagingWithoutTotalParsesAsZero()
+    {
+        String json = """
+            { "paging": { "pageIndex": 1, "pageSize": 500 }, "issues": [] }""";
+        IssuesPage page = SonarJsonParser.parseIssuesPage(json);
+        assertEquals(0, page.total());
+    }
+
+    @Test
+    public void parseRuleOnEmptyObjectYieldsEmptyFields()
+    {
+        SonarRule rule = SonarJsonParser.parseRule("{}");
+        assertEquals("", rule.key());
+        assertEquals("", rule.name());
+        assertEquals("", rule.htmlDescription());
+    }
+
+    @Test
+    public void parseCeTaskOnEmptyObjectYieldsEmptyFields()
+    {
+        CeTask task = SonarJsonParser.parseCeTask("{}");
+        assertEquals("", task.status());
+        assertEquals("", task.errorMessage());
+    }
+
+    @Test
     public void parsesRule()
     {
         String json = """
