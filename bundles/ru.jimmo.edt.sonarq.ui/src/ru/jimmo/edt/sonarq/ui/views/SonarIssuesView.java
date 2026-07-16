@@ -15,9 +15,11 @@ import java.util.function.Function;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IMenuCreator;
 import org.eclipse.jface.action.IToolBarManager;
+import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.TreeViewerColumn;
@@ -36,11 +38,14 @@ import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Link;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
+import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.part.ViewPart;
 
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
+import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
+import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
@@ -65,6 +70,7 @@ public class SonarIssuesView extends ViewPart
     private IssueSnapshot snapshot;
     private BranchState branchState;
     private IssueGrouping grouping = IssueGrouping.BY_FILE;
+    private final IssueFilterState state = new IssueFilterState();
     private IProject selectedProject;
     private String sessionBranch;
     private String boundProjectKey = ""; //$NON-NLS-1$
@@ -82,9 +88,23 @@ public class SonarIssuesView extends ViewPart
         SashForm sash = new SashForm(root, SWT.VERTICAL);
         sash.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
-        viewer = new TreeViewer(sash, SWT.MULTI | SWT.H_SCROLL | SWT.V_SCROLL | SWT.FULL_SELECTION);
+        Composite treePane = new Composite(sash, SWT.NONE);
+        treePane.setLayout(new GridLayout(1, false));
+
+        Text filterText = new Text(treePane, SWT.SEARCH | SWT.ICON_SEARCH | SWT.BORDER);
+        filterText.setMessage(Messages.IssuesView_FilterText_Hint);
+        filterText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        filterText.addModifyListener(event ->
+        {
+            state.setText(filterText.getText());
+            viewer.refresh();
+        });
+
+        viewer = new TreeViewer(treePane, SWT.MULTI | SWT.H_SCROLL | SWT.V_SCROLL | SWT.FULL_SELECTION);
+        viewer.getTree().setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         viewer.getTree().setHeaderVisible(true);
         viewer.setContentProvider(new IssueTreeContentProvider());
+        viewer.addFilter(new IssueViewerFilter(state));
         createColumns();
 
         Composite detail = new Composite(sash, SWT.NONE);
@@ -127,6 +147,12 @@ public class SonarIssuesView extends ViewPart
         IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
         toolBar.add(createRefreshAction());
         toolBar.add(createProjectAction());
+        toolBar.add(new Separator());
+        toolBar.add(createSeverityMenuAction());
+        toolBar.add(createTypeMenuAction());
+        toolBar.add(new Separator());
+        toolBar.add(createGroupByFileAction());
+        toolBar.add(createGroupByRuleAction());
         toolBar.update(true);
     }
 
@@ -149,6 +175,52 @@ public class SonarIssuesView extends ViewPart
         };
         projects.setMenuCreator(new ProjectMenuCreator());
         return projects;
+    }
+
+    private Action createSeverityMenuAction()
+    {
+        Action severity = new Action(Messages.IssuesView_SeverityMenu, IAction.AS_DROP_DOWN_MENU)
+        {
+        };
+        severity.setMenuCreator(new SeverityMenuCreator());
+        return severity;
+    }
+
+    private Action createTypeMenuAction()
+    {
+        Action type = new Action(Messages.IssuesView_TypeMenu, IAction.AS_DROP_DOWN_MENU)
+        {
+        };
+        type.setMenuCreator(new TypeMenuCreator());
+        return type;
+    }
+
+    private Action createGroupByFileAction()
+    {
+        Action action = new Action(Messages.IssuesView_GroupByFile, IAction.AS_RADIO_BUTTON)
+        {
+            @Override
+            public void run()
+            {
+                grouping = IssueGrouping.BY_FILE;
+                rebuildTree();
+            }
+        };
+        action.setChecked(true);
+        return action;
+    }
+
+    private Action createGroupByRuleAction()
+    {
+        return new Action(Messages.IssuesView_GroupByRule, IAction.AS_RADIO_BUTTON)
+        {
+            @Override
+            public void run()
+            {
+                grouping = IssueGrouping.BY_RULE;
+                rebuildTree();
+            }
+        };
     }
 
     private void createColumns()
@@ -390,6 +462,110 @@ public class SonarIssuesView extends ViewPart
                     refreshIssues();
                 }
             }));
+        }
+    }
+
+    /** Lists {@link SonarSeverity} values as check-box actions in the toolbar's Severity drop-down. */
+    private final class SeverityMenuCreator implements IMenuCreator
+    {
+        private Menu menu;
+
+        @Override
+        public void dispose()
+        {
+            if (menu != null && !menu.isDisposed())
+            {
+                menu.dispose();
+                menu = null;
+            }
+        }
+
+        @Override
+        public Menu getMenu(Control parent)
+        {
+            dispose();
+            menu = new Menu(parent);
+            populate(menu);
+            return menu;
+        }
+
+        @Override
+        public Menu getMenu(Menu parent)
+        {
+            dispose();
+            menu = new Menu(parent);
+            populate(menu);
+            return menu;
+        }
+
+        private void populate(Menu target)
+        {
+            for (SonarSeverity severity : SonarSeverity.values())
+            {
+                Action action = new Action(severity.name(), IAction.AS_CHECK_BOX)
+                {
+                    @Override
+                    public void run()
+                    {
+                        state.toggleSeverity(severity);
+                        viewer.refresh();
+                    }
+                };
+                action.setChecked(state.isSeverityEnabled(severity));
+                new ActionContributionItem(action).fill(target, -1);
+            }
+        }
+    }
+
+    /** Lists {@link SonarIssueType} values as check-box actions in the toolbar's Type drop-down. */
+    private final class TypeMenuCreator implements IMenuCreator
+    {
+        private Menu menu;
+
+        @Override
+        public void dispose()
+        {
+            if (menu != null && !menu.isDisposed())
+            {
+                menu.dispose();
+                menu = null;
+            }
+        }
+
+        @Override
+        public Menu getMenu(Control parent)
+        {
+            dispose();
+            menu = new Menu(parent);
+            populate(menu);
+            return menu;
+        }
+
+        @Override
+        public Menu getMenu(Menu parent)
+        {
+            dispose();
+            menu = new Menu(parent);
+            populate(menu);
+            return menu;
+        }
+
+        private void populate(Menu target)
+        {
+            for (SonarIssueType type : SonarIssueType.values())
+            {
+                Action action = new Action(type.name(), IAction.AS_CHECK_BOX)
+                {
+                    @Override
+                    public void run()
+                    {
+                        state.toggleType(type);
+                        viewer.refresh();
+                    }
+                };
+                action.setChecked(state.isTypeEnabled(type));
+                new ActionContributionItem(action).fill(target, -1);
+            }
         }
     }
 }
