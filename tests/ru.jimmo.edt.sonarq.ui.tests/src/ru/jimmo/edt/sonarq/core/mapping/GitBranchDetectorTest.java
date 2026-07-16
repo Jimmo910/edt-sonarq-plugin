@@ -29,7 +29,7 @@ public class GitBranchDetectorTest
     @Before
     public void setUp() throws IOException
     {
-        tempDir = Files.createTempDirectory("sonarq-git-test"); //$NON-NLS-1$
+        tempDir = Files.createTempDirectory("sonarq-git-test");
     }
 
     @After
@@ -44,21 +44,19 @@ public class GitBranchDetectorTest
     @Test
     public void detectsInitialBranchName() throws Exception
     {
-        try (Git git = Git.init().setDirectory(tempDir.toFile())
-            .setInitialBranch("feature/task-1").call()) //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(tempDir.toFile()).setInitialBranch("feature/task-1").call())
         {
-            assertEquals(Optional.of("feature/task-1"), //$NON-NLS-1$
-                GitBranchDetector.detectBranch(tempDir.toFile()));
+            assertEquals(Optional.of("feature/task-1"), GitBranchDetector.detectBranch(tempDir.toFile()));
         }
     }
 
     @Test
     public void detectsBranchFromNestedDirectory() throws Exception
     {
-        try (Git git = Git.init().setDirectory(tempDir.toFile()).setInitialBranch("main").call()) //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(tempDir.toFile()).setInitialBranch("main").call())
         {
-            Path nested = Files.createDirectories(tempDir.resolve("src/CommonModules")); //$NON-NLS-1$
-            assertEquals(Optional.of("main"), GitBranchDetector.detectBranch(nested.toFile())); //$NON-NLS-1$
+            Path nested = Files.createDirectories(tempDir.resolve("src/CommonModules"));
+            assertEquals(Optional.of("main"), GitBranchDetector.detectBranch(nested.toFile()));
         }
     }
 
@@ -71,11 +69,10 @@ public class GitBranchDetectorTest
     @Test
     public void detachedHeadYieldsEmpty() throws Exception
     {
-        try (Git git = Git.init().setDirectory(tempDir.toFile()).setInitialBranch("main").call()) //$NON-NLS-1$
+        try (Git git = Git.init().setDirectory(tempDir.toFile()).setInitialBranch("main").call())
         {
-            RevCommit commit = git.commit().setAllowEmpty(true).setMessage("init") //$NON-NLS-1$
-                .setAuthor("test", "test@example.com") //$NON-NLS-1$ //$NON-NLS-2$
-                .setCommitter("test", "test@example.com").call(); //$NON-NLS-1$ //$NON-NLS-2$
+            RevCommit commit = git.commit().setAllowEmpty(true).setMessage("init")
+                .setAuthor("test", "test@example.com").setCommitter("test", "test@example.com").call();
             git.checkout().setName(commit.getName()).call();
             assertEquals(Optional.empty(), GitBranchDetector.detectBranch(tempDir.toFile()));
         }
