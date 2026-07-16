@@ -15,10 +15,16 @@ import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.resources.WorkspaceJob;
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.ICoreRunnable;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.preferences.IPreferencesService;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
@@ -61,14 +67,17 @@ import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
-import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
+import ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer;
 import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
+import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
+import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
+import ru.jimmo.edt.sonarq.ui.sync.RefreshInputsFactory;
 
 /** The SonarQube Issues view: an issue tree with a rule description pane. */
 public class SonarIssuesView extends ViewPart
@@ -368,17 +377,17 @@ public class SonarIssuesView extends ViewPart
             return;
         }
         selectedProject = project;
-        ProjectBinding binding = new ProjectBindingStore().load(project);
-        Optional<SonarConnection> connection = new SonarConnectionFactory().create();
-        if (!binding.isConfigured() || connection.isEmpty())
+        Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
+        if (inputs.isEmpty())
         {
             statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
             return;
         }
-        boundProjectKey = binding.projectKey();
-        boundPathPrefix = binding.pathPrefix();
-        currentProvider = new ServerIssueProvider(new SonarHttpClient(connection.get()));
-        new RefreshIssuesJob(currentProvider, project, binding, sessionBranch,
+        ProjectRefreshInputs refreshInputs = inputs.get();
+        boundProjectKey = refreshInputs.binding().projectKey();
+        boundPathPrefix = refreshInputs.binding().pathPrefix();
+        currentProvider = refreshInputs.provider();
+        new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
             result -> onRefreshFinished(generation, result)).schedule();
     }
 
@@ -561,7 +570,49 @@ public class SonarIssuesView extends ViewPart
             }
             setInput(result.snapshot(), result.branchState());
             updateStatusAndBanner();
+            scheduleMarkerSync();
         });
+    }
+
+    /**
+     * Schedules a background job that replaces the workspace markers of {@link #selectedProject} with
+     * markers derived from the current {@link #snapshot}, unless the user disabled editor markers.
+     *
+     * <p>Must run on the UI thread: it reads the view's fields once, into locals, before scheduling the
+     * job so the job body never reads mutable view state from a background thread.
+     */
+    private void scheduleMarkerSync()
+    {
+        IPreferencesService preferences = Platform.getPreferencesService();
+        if (!preferences.getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null))
+        {
+            return;
+        }
+        IProject project = selectedProject;
+        IssueSnapshot markerSnapshot = snapshot;
+        String projectKey = boundProjectKey;
+        String pathPrefix = boundPathPrefix;
+        WorkspaceJob job = new WorkspaceJob(Messages.MarkerSyncJob_Name)
+        {
+            @Override
+            public IStatus runInWorkspace(IProgressMonitor monitor)
+            {
+                try
+                {
+                    List<IssueEntry> entries =
+                        IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix);
+                    new IssueMarkerSynchronizer().sync(project, entries);
+                }
+                catch (CoreException e)
+                {
+                    Platform.getLog(SonarIssuesView.class).warn(e.getMessage(), e);
+                }
+                return Status.OK_STATUS;
+            }
+        };
+        job.setRule(project);
+        job.setSystem(true);
+        job.schedule();
     }
 
     private void updateStatusAndBanner()

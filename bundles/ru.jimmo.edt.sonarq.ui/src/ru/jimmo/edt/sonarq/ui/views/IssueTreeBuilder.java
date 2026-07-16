@@ -37,14 +37,12 @@ public final class IssueTreeBuilder
     {
         Map<String, List<IssueEntry>> mapped = new TreeMap<>();
         List<IssueEntry> unmapped = new ArrayList<>();
-        for (SonarIssue issue : issues)
+        for (IssueEntry entry : toEntries(issues, projectKey, pathPrefix))
         {
-            String path = ComponentPathMapper.toProjectRelativePath(issue.componentKey(), projectKey, pathPrefix)
-                .orElse(null);
-            IssueEntry entry = new IssueEntry(issue, path);
+            String path = entry.relativePath();
             if (grouping == IssueGrouping.BY_RULE)
             {
-                mapped.computeIfAbsent(issue.ruleKey(), key -> new ArrayList<>()).add(entry);
+                mapped.computeIfAbsent(entry.issue().ruleKey(), key -> new ArrayList<>()).add(entry);
             }
             else if (path != null)
             {
@@ -65,6 +63,30 @@ public final class IssueTreeBuilder
             result.add(new IssueGroup(Messages.IssuesView_UnmappedGroup, sorted(unmapped)));
         }
         return result;
+    }
+
+    /**
+     * Maps every issue to an {@link IssueEntry}, resolving its workspace-relative path.
+     *
+     * <p>Performs no sorting or grouping: the returned list has the same size and order as
+     * {@code issues}. An issue whose component does not map to a file under {@code projectKey}
+     * (optionally scoped to {@code pathPrefix}) gets a {@code null} {@link IssueEntry#relativePath()}.
+     *
+     * @param issues the issues, not {@code null}
+     * @param projectKey the SonarQube project key, not {@code null}
+     * @param pathPrefix the repository path prefix, may be {@code null}
+     * @return the mapped entries, never {@code null}, same size and order as {@code issues}
+     */
+    public static List<IssueEntry> toEntries(List<SonarIssue> issues, String projectKey, String pathPrefix)
+    {
+        List<IssueEntry> entries = new ArrayList<>();
+        for (SonarIssue issue : issues)
+        {
+            String path = ComponentPathMapper.toProjectRelativePath(issue.componentKey(), projectKey, pathPrefix)
+                .orElse(null);
+            entries.add(new IssueEntry(issue, path));
+        }
+        return entries;
     }
 
     private static List<IssueEntry> sorted(List<IssueEntry> entries)

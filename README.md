@@ -28,6 +28,10 @@ Edition (single-branch).
   CLI, a custom scanner path, or a CI webhook trigger, whichever is configured; scanner
   output streams to the SonarQube Analysis console, and the view refreshes automatically
   once the server finishes processing the report.
+- **Issues appear right in the code** — transient problem markers show up in the
+  Problems view and as editor underlines/gutter icons (BLOCKER/CRITICAL as errors, MAJOR
+  as warnings, the rest as infos); markers are rebuilt on every refresh and never go
+  stale across restarts.
 
 ## Requirements
 
@@ -78,6 +82,13 @@ Edition (single-branch).
    already-analyzed branch. For GitLab pipeline triggers the token travels inside the URL
    template and is therefore stored in plain (non-encrypted) preferences — prefer a
    low-privilege trigger token.
+5. **Preferences > SonarQube > Editor markers** — **Show issues in editor** (on by
+   default) puts SonarQube issues into the Problems view and into the editor as
+   underlines/gutter icons; unchecking it clears all existing markers. **Refresh
+   automatically in background** (off by default), together with a refresh interval in
+   minutes, periodically re-fetches issues and rebuilds markers for all bound projects
+   even while the SonarQube Issues view is closed; the first automatic run happens one
+   interval after EDT startup.
 
 ## Building
 
@@ -97,8 +108,6 @@ the same content).
 
 ## Roadmap
 
-- **v2** — editor markers/underlines for issues (the first-analysis trigger shipped in
-  v1.1).
 - **v3** — an optional local analysis mode (running the Sonar scanner without a
   pre-existing server-side analysis).
 

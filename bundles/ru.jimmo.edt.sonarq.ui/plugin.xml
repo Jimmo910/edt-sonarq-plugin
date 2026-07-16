@@ -26,4 +26,15 @@
             icon="icons/sonarqube.png"
             name="%issuesViewName"/>
    </extension>
+   <extension point="org.eclipse.ui.startup">
+      <startup class="ru.jimmo.edt.sonarq.ui.SonarqStartup"/>
+   </extension>
+   <extension id="issue" point="org.eclipse.core.resources.markers" name="%markerName">
+      <super type="org.eclipse.core.resources.problemmarker"/>
+      <super type="org.eclipse.core.resources.textmarker"/>
+      <persistent value="false"/>
+      <attribute name="ruleKey"/>
+      <attribute name="sonarSeverity"/>
+      <attribute name="issueKey"/>
+   </extension>
 </plugin>

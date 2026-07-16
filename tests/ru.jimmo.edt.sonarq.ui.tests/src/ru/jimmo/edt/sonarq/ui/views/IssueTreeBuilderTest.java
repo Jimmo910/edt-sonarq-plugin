@@ -23,20 +23,20 @@ public class IssueTreeBuilderTest
 {
     private static SonarIssue issue(String component, String rule, int line)
     {
-        return new SonarIssue("k" + component + line, rule, SonarSeverity.MAJOR, //$NON-NLS-1$
-            SonarIssueType.CODE_SMELL, component, "msg", line); //$NON-NLS-1$
+        return new SonarIssue("k" + component + line, rule, SonarSeverity.MAJOR,
+            SonarIssueType.CODE_SMELL, component, "msg", line);
     }
 
     @Test
     public void groupsByFileSortedByPathAndLine()
     {
         List<IssueGroup> groups = IssueTreeBuilder.build(List.of(
-            issue("p:src/B.bsl", "bsl:R1", 5), //$NON-NLS-1$ //$NON-NLS-2$
-            issue("p:src/A.bsl", "bsl:R1", 9), //$NON-NLS-1$ //$NON-NLS-2$
-            issue("p:src/A.bsl", "bsl:R2", 2)), //$NON-NLS-1$ //$NON-NLS-2$
-            "p", null, IssueGrouping.BY_FILE); //$NON-NLS-1$
+            issue("p:src/B.bsl", "bsl:R1", 5),
+            issue("p:src/A.bsl", "bsl:R1", 9),
+            issue("p:src/A.bsl", "bsl:R2", 2)),
+            "p", null, IssueGrouping.BY_FILE);
         assertEquals(2, groups.size());
-        assertEquals("src/A.bsl", groups.get(0).label()); //$NON-NLS-1$
+        assertEquals("src/A.bsl", groups.get(0).label());
         assertEquals(2, groups.get(0).entries().get(0).issue().line());
         assertEquals(9, groups.get(0).entries().get(1).issue().line());
     }
@@ -45,9 +45,9 @@ public class IssueTreeBuilderTest
     public void unmappedIssuesGoToTrailingGroup()
     {
         List<IssueGroup> groups = IssueTreeBuilder.build(List.of(
-            issue("p:src/A.bsl", "bsl:R1", 1), //$NON-NLS-1$ //$NON-NLS-2$
-            issue("other:src/X.bsl", "bsl:R1", 1)), //$NON-NLS-1$ //$NON-NLS-2$
-            "p", null, IssueGrouping.BY_FILE); //$NON-NLS-1$
+            issue("p:src/A.bsl", "bsl:R1", 1),
+            issue("other:src/X.bsl", "bsl:R1", 1)),
+            "p", null, IssueGrouping.BY_FILE);
         assertEquals(2, groups.size());
         assertEquals(Messages.IssuesView_UnmappedGroup, groups.get(1).label());
         assertNull(groups.get(1).entries().get(0).relativePath());
@@ -57,10 +57,45 @@ public class IssueTreeBuilderTest
     public void groupsByRule()
     {
         List<IssueGroup> groups = IssueTreeBuilder.build(List.of(
-            issue("p:src/A.bsl", "bsl:R2", 1), //$NON-NLS-1$ //$NON-NLS-2$
-            issue("p:src/B.bsl", "bsl:R1", 1)), //$NON-NLS-1$ //$NON-NLS-2$
-            "p", null, IssueGrouping.BY_RULE); //$NON-NLS-1$
-        assertEquals("bsl:R1", groups.get(0).label()); //$NON-NLS-1$
-        assertEquals("bsl:R2", groups.get(1).label()); //$NON-NLS-1$
+            issue("p:src/A.bsl", "bsl:R2", 1),
+            issue("p:src/B.bsl", "bsl:R1", 1)),
+            "p", null, IssueGrouping.BY_RULE);
+        assertEquals("bsl:R1", groups.get(0).label());
+        assertEquals("bsl:R2", groups.get(1).label());
+    }
+
+    @Test
+    public void toEntriesMapsPathForMatchingProject()
+    {
+        List<IssueEntry> entries =
+            IssueTreeBuilder.toEntries(List.of(issue("p:src/A.bsl", "bsl:R1", 3)), "p", null);
+        assertEquals(1, entries.size());
+        assertEquals("src/A.bsl", entries.get(0).relativePath());
+    }
+
+    @Test
+    public void toEntriesNullPathForForeignProject()
+    {
+        List<IssueEntry> entries =
+            IssueTreeBuilder.toEntries(List.of(issue("other:src/X.bsl", "bsl:R1", 1)), "p", null);
+        assertEquals(1, entries.size());
+        assertNull(entries.get(0).relativePath());
+    }
+
+    @Test
+    public void toEntriesPreservesInputOrderAndCount()
+    {
+        List<SonarIssue> issues = List.of(
+            issue("p:src/B.bsl", "bsl:R1", 5),
+            issue("p:src/A.bsl", "bsl:R1", 9),
+            issue("other:src/X.bsl", "bsl:R2", 2));
+
+        List<IssueEntry> entries = IssueTreeBuilder.toEntries(issues, "p", null);
+
+        assertEquals(issues.size(), entries.size());
+        for (int i = 0; i < issues.size(); i++)
+        {
+            assertEquals(issues.get(i), entries.get(i).issue());
+        }
     }
 }
