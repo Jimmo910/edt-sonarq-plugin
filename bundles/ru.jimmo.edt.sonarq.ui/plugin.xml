@@ -4,4 +4,18 @@
    <extension point="org.eclipse.core.runtime.preferences">
       <initializer class="ru.jimmo.edt.sonarq.ui.settings.PreferenceInitializer"/>
    </extension>
+   <extension point="org.eclipse.ui.preferencePages">
+      <page id="ru.jimmo.edt.sonarq.ui.preferences.main"
+            class="ru.jimmo.edt.sonarq.ui.preferences.SonarPreferencePage"
+            name="%preferencePageName"/>
+   </extension>
+   <extension point="org.eclipse.ui.propertyPages">
+      <page id="ru.jimmo.edt.sonarq.ui.properties.project"
+            class="ru.jimmo.edt.sonarq.ui.preferences.SonarProjectPropertyPage"
+            name="%propertyPageName">
+         <enabledWhen>
+            <adapt type="org.eclipse.core.resources.IProject"/>
+         </enabledWhen>
+      </page>
+   </extension>
 </plugin>
