@@ -27,12 +27,17 @@ import org.eclipse.core.runtime.OperationCanceledException;
  * a daemon thread, while the calling thread polls {@code process.waitFor} with a short timeout so it can
  * check the monitor for cancellation in between. A cancelled monitor destroys the process and raises
  * {@link OperationCanceledException}; a non-zero exit raises an {@link IOException} carrying the tail of
- * the log.
+ * the log. The wait is also wrapped so that an {@link InterruptedException} on the calling thread (e.g.
+ * an {@code Eclipse Job} being cancelled from outside the monitor) destroys the process the same way
+ * before the exception is rethrown — the process must never be left running just because the thread
+ * that was waiting on it gave up.
  *
  * <p>This class was verified against a live run of the native launcher (task L2 smoke run against a real
  * 1C source tree, which confirmed the fixed {@code bsl-ls.sarif} output file name used by
- * {@link BslAnalyzeCommand}). It has no headless unit test of its own, since that would require starting
- * a real OS process; only its command construction is unit-tested, in {@code BslAnalyzeCommandTest}.
+ * {@link BslAnalyzeCommand}). Spawning the real native launcher in a headless unit test is still out of
+ * scope, but the interrupted-thread teardown path is covered by a headless test that runs a throwaway
+ * long-lived script in its place (see {@code ProcessAnalyzeRunnerTest}); command construction alone is
+ * covered by {@code BslAnalyzeCommandTest}.
  */
 public final class ProcessAnalyzeRunner implements AnalyzeRunner
 {
@@ -61,15 +66,26 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         pump.setDaemon(true);
         pump.start();
 
-        while (!process.waitFor(POLL_MILLIS, TimeUnit.MILLISECONDS))
+        try
         {
-            if (monitor != null && monitor.isCanceled())
+            while (!process.waitFor(POLL_MILLIS, TimeUnit.MILLISECONDS))
             {
-                process.destroy();
-                process.waitFor();
-                join(pump);
-                throw new OperationCanceledException();
+                if (monitor != null && monitor.isCanceled())
+                {
+                    process.destroy();
+                    process.waitFor();
+                    join(pump);
+                    throw new OperationCanceledException();
+                }
             }
+        }
+        catch (InterruptedException e)
+        {
+            // The calling thread gave up waiting; the process must not be left running behind it.
+            process.destroy();
+            process.waitFor();
+            join(pump);
+            throw e;
         }
         join(pump);
 
