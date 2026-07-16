@@ -11,52 +11,47 @@ import static org.junit.Assert.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Locale;
 
 import org.junit.Test;
 
 /** Tests for {@link BslAnalyzeCommand}. */
 public class BslAnalyzeCommandTest
 {
-    private static final Path JAVA = Path.of("jvm", "bin", "java");
-    private static final Path SERVER_JAR = Path.of("state", "bsl-ls", "bsl-language-server-1.0.4-exec.jar");
+    private static final Path EXECUTABLE = Path.of("state", "bsl-ls", "bsl-language-server", "bsl-language-server");
     private static final Path SRC_DIR = Path.of("project", "root", "src");
     private static final Path OUTPUT_DIR = Path.of("state", "reports");
 
     @Test
     public void buildsAnalyzeCommandInExactOrder()
     {
-        List<String> command = BslAnalyzeCommand.build(JAVA, SERVER_JAR, SRC_DIR, OUTPUT_DIR);
+        List<String> command = BslAnalyzeCommand.build(EXECUTABLE, SRC_DIR, OUTPUT_DIR);
 
-        assertEquals(String.valueOf(JAVA), command.get(0));
-        assertEquals("-jar", command.get(1));
-        assertEquals(String.valueOf(SERVER_JAR), command.get(2));
-        assertEquals("--analyze", command.get(3));
-        assertEquals("--srcDir", command.get(4));
-        assertEquals(String.valueOf(SRC_DIR), command.get(5));
-        assertEquals("--reporter", command.get(6));
-        assertEquals("sarif", command.get(7));
-        assertEquals("--outputDir", command.get(8));
-        assertEquals(String.valueOf(OUTPUT_DIR), command.get(9));
-        assertEquals(10, command.size());
+        assertEquals(String.valueOf(EXECUTABLE), command.get(0));
+        assertEquals("--analyze", command.get(1));
+        assertEquals("--srcDir", command.get(2));
+        assertEquals(String.valueOf(SRC_DIR), command.get(3));
+        assertEquals("--reporter", command.get(4));
+        assertEquals("sarif", command.get(5));
+        assertEquals("--outputDir", command.get(6));
+        assertEquals(String.valueOf(OUTPUT_DIR), command.get(7));
+        assertEquals(8, command.size());
     }
 
     @Test
-    public void javaExecutableResolvesUnderJavaHomeBin()
+    public void executableIsFirstTokenAndNoJavaIndirection()
     {
-        Path executable = BslAnalyzeCommand.javaExecutable();
-
-        Path javaHome = Path.of(System.getProperty("java.home"));
-        assertEquals(javaHome.resolve("bin"), executable.getParent());
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String expectedName = os.contains("win") ? "java.exe" : "java";
-        assertEquals(expectedName, executable.getFileName().toString());
+        List<String> command = BslAnalyzeCommand.build(EXECUTABLE, SRC_DIR, OUTPUT_DIR);
+        assertEquals(String.valueOf(EXECUTABLE), command.get(0));
+        for (String token : command)
+        {
+            assertTrue("native command must not shell out through -jar", !"-jar".equals(token));
+        }
     }
 
     @Test
     public void sarifReporterKeyIsUsed()
     {
-        List<String> command = BslAnalyzeCommand.build(JAVA, SERVER_JAR, SRC_DIR, OUTPUT_DIR);
+        List<String> command = BslAnalyzeCommand.build(EXECUTABLE, SRC_DIR, OUTPUT_DIR);
         int reporterIndex = command.indexOf("--reporter");
         assertTrue(reporterIndex >= 0);
         assertEquals("sarif", command.get(reporterIndex + 1));
