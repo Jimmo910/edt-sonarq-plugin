@@ -45,6 +45,7 @@ public final class Messages extends NLS
     public static String IssuesView_Status_Truncated;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
+    public static String MarkerSyncJob_Name;
     public static String PreferencePage_AutoSync;
     public static String PreferencePage_AutoSyncMinutes;
     public static String PreferencePage_CiSecret;

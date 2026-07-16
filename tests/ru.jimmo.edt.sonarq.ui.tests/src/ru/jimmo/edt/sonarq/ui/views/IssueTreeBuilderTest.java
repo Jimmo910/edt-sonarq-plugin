@@ -63,4 +63,39 @@ public class IssueTreeBuilderTest
         assertEquals("bsl:R1", groups.get(0).label());
         assertEquals("bsl:R2", groups.get(1).label());
     }
+
+    @Test
+    public void toEntriesMapsPathForMatchingProject()
+    {
+        List<IssueEntry> entries =
+            IssueTreeBuilder.toEntries(List.of(issue("p:src/A.bsl", "bsl:R1", 3)), "p", null);
+        assertEquals(1, entries.size());
+        assertEquals("src/A.bsl", entries.get(0).relativePath());
+    }
+
+    @Test
+    public void toEntriesNullPathForForeignProject()
+    {
+        List<IssueEntry> entries =
+            IssueTreeBuilder.toEntries(List.of(issue("other:src/X.bsl", "bsl:R1", 1)), "p", null);
+        assertEquals(1, entries.size());
+        assertNull(entries.get(0).relativePath());
+    }
+
+    @Test
+    public void toEntriesPreservesInputOrderAndCount()
+    {
+        List<SonarIssue> issues = List.of(
+            issue("p:src/B.bsl", "bsl:R1", 5),
+            issue("p:src/A.bsl", "bsl:R1", 9),
+            issue("other:src/X.bsl", "bsl:R2", 2));
+
+        List<IssueEntry> entries = IssueTreeBuilder.toEntries(issues, "p", null);
+
+        assertEquals(issues.size(), entries.size());
+        for (int i = 0; i < issues.size(); i++)
+        {
+            assertEquals(issues.get(i), entries.get(i).issue());
+        }
+    }
 }
