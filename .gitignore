@@ -3,8 +3,10 @@ bin/
 .polyglot.*
 .tycho-consumer-pom.xml
 .metadata/
+build.log
 
 # local-only AI context (infra paths, stands) - never commit
 CLAUDE.md
 AGENTS.md
 docs/local/
+.superpowers/
