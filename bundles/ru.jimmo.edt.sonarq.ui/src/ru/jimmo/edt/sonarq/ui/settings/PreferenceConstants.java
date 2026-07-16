@@ -21,6 +21,12 @@ public final class PreferenceConstants
     /** The {@link #PREF_MODE} value for a plain SonarQube/SonarCloud server. */
     public static final String MODE_SERVER = "server"; //$NON-NLS-1$
 
+    /** The {@link #PREF_MODE} value for local analysis with the BSL Language Server. */
+    public static final String MODE_LOCAL = "local"; //$NON-NLS-1$
+
+    /** The BSL Language Server executable path preference key, used only in {@link #MODE_LOCAL}. */
+    public static final String PREF_BSL_LS_PATH = "bslLsPath"; //$NON-NLS-1$
+
     /** The default request timeout, in seconds. */
     public static final int DEFAULT_TIMEOUT_SECONDS = 30;
 

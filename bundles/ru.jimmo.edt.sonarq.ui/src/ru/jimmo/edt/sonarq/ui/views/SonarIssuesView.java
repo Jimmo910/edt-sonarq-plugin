@@ -384,8 +384,8 @@ public class SonarIssuesView extends ViewPart
             return;
         }
         ProjectRefreshInputs refreshInputs = inputs.get();
-        boundProjectKey = refreshInputs.binding().projectKey();
-        boundPathPrefix = refreshInputs.binding().pathPrefix();
+        boundProjectKey = refreshInputs.mappingProjectKey();
+        boundPathPrefix = refreshInputs.mappingPathPrefix();
         currentProvider = refreshInputs.provider();
         new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
             result -> onRefreshFinished(generation, result)).schedule();
@@ -394,15 +394,21 @@ public class SonarIssuesView extends ViewPart
     /**
      * Launches a SonarQube analysis of the selected project on the requested branch.
      *
-     * <p>Runs on the UI thread. The project, binding and connection are resolved exactly as in
-     * {@link #refreshIssues()}; when they are not configured the status line shows the not-configured
-     * hint and nothing is scheduled. A confirmation dialog guards runs that would overwrite an
-     * existing server branch (see {@link #needsConfirmation(boolean)}). The heavy work runs in an
-     * {@link AnalysisJob}; results and progress are reported back to the status line, and a successful
-     * scanner run refreshes the issue tree.
+     * <p>Runs on the UI thread. In local analysis mode there is no separate "launch": every refresh runs
+     * the BSL Language Server, so this simply delegates to {@link #refreshIssues()} and returns. In server
+     * mode the project, binding and connection are resolved exactly as in {@link #refreshIssues()}; when
+     * they are not configured the status line shows the not-configured hint and nothing is scheduled. A
+     * confirmation dialog guards runs that would overwrite an existing server branch (see
+     * {@link #needsConfirmation(boolean)}). The heavy work runs in an {@link AnalysisJob}; results and
+     * progress are reported back to the status line, and a successful scanner run refreshes the issue tree.
      */
     private void launchAnalysis()
     {
+        if (isLocalMode())
+        {
+            refreshIssues();
+            return;
+        }
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null || project.getLocation() == null)
         {
@@ -492,6 +498,18 @@ public class SonarIssuesView extends ViewPart
             return true;
         }
         return branchState == null || !branchState.missingOnServer();
+    }
+
+    /**
+     * Tells whether the workspace is configured for local BSL Language Server analysis.
+     *
+     * @return {@code true} when {@link PreferenceConstants#PREF_MODE} is {@link PreferenceConstants#MODE_LOCAL}
+     */
+    private static boolean isLocalMode()
+    {
+        String mode = Platform.getPreferencesService().getString(SonarqPlugin.PLUGIN_ID,
+            PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_SERVER, null);
+        return PreferenceConstants.MODE_LOCAL.equals(mode);
     }
 
     private boolean confirmMainAnalysis(String requested)

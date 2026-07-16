@@ -45,15 +45,26 @@ import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 /** Workspace-level SonarQube connection preferences. */
 public class SonarPreferencePage extends PreferencePage implements IWorkbenchPreferencePage
 {
+    // The mode combo item order is coupled to these indices (see #createContents, #loadValues, #performOk).
+    private static final int MODE_INDEX_SERVER = 0;
+
+    private static final int MODE_INDEX_LOCAL = 1;
+
+    private Combo modeCombo;
+
     private Text urlText;
 
     private Text tokenText;
 
     private Spinner timeoutSpinner;
 
+    private Button testButton;
+
     private Label testResultLabel;
 
     private Combo launchModeCombo;
+
+    private Text bslLsPathText;
 
     private Text scannerPathText;
 
@@ -82,6 +93,13 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         Composite composite = new Composite(parent, SWT.NONE);
         composite.setLayout(new GridLayout(2, false));
 
+        new Label(composite, SWT.NONE).setText(Messages.PreferencePage_Mode);
+        modeCombo = new Combo(composite, SWT.READ_ONLY);
+        // Item order is coupled to MODE_INDEX_SERVER / MODE_INDEX_LOCAL (see the field declarations).
+        modeCombo.setItems(Messages.PreferencePage_Mode_Server, Messages.PreferencePage_Mode_Local);
+        modeCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        modeCombo.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> updateModeEnablement()));
+
         new Label(composite, SWT.NONE).setText(Messages.PreferencePage_ServerUrl);
         urlText = new Text(composite, SWT.BORDER);
         urlText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
@@ -94,13 +112,14 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         timeoutSpinner = new Spinner(composite, SWT.BORDER);
         timeoutSpinner.setValues(PreferenceConstants.DEFAULT_TIMEOUT_SECONDS, 5, 300, 0, 5, 30);
 
-        Button testButton = new Button(composite, SWT.PUSH);
+        testButton = new Button(composite, SWT.PUSH);
         testButton.setText(Messages.PreferencePage_TestConnection);
         testButton.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> testConnection()));
         testResultLabel = new Label(composite, SWT.WRAP);
         testResultLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         createLaunchGroup(composite);
+        createLocalGroup(composite);
         createMarkersGroup(composite);
 
         loadValues();
@@ -153,6 +172,57 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         extraArgsText.setEnabled(mode == AnalysisLaunchMode.LOCAL_AUTO || mode == AnalysisLaunchMode.LOCAL_PATH);
     }
 
+    private void createLocalGroup(Composite parent)
+    {
+        Group group = new Group(parent, SWT.NONE);
+        group.setText(Messages.PreferencePage_LocalGroup);
+        group.setLayout(new GridLayout(2, false));
+        group.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        new Label(group, SWT.NONE).setText(Messages.PreferencePage_BslLsPath);
+        bslLsPathText = new Text(group, SWT.BORDER);
+        bslLsPathText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+    }
+
+    /**
+     * Enables the widgets that belong to the selected {@link PreferenceConstants#PREF_MODE}: the connection
+     * fields and the analysis-launch group in server mode, the BSL Language Server path in local mode. The
+     * <em>Show issues in editor</em> checkbox stays enabled in either mode, but background auto-sync (its
+     * checkbox and interval spinner) is disabled in local mode because the background timer never runs a
+     * local analysis; in server mode they are re-enabled, honouring the auto-sync checkbox for the spinner.
+     */
+    private void updateModeEnablement()
+    {
+        boolean server = modeCombo.getSelectionIndex() != MODE_INDEX_LOCAL;
+        urlText.setEnabled(server);
+        tokenText.setEnabled(server);
+        timeoutSpinner.setEnabled(server);
+        testButton.setEnabled(server);
+        testResultLabel.setEnabled(server);
+        launchModeCombo.setEnabled(server);
+        if (server)
+        {
+            updateLaunchEnablement();
+        }
+        else
+        {
+            scannerPathText.setEnabled(false);
+            ciUrlText.setEnabled(false);
+            ciSecretText.setEnabled(false);
+            extraArgsText.setEnabled(false);
+        }
+        bslLsPathText.setEnabled(!server);
+        autoSyncButton.setEnabled(server);
+        if (server)
+        {
+            updateAutoSyncEnablement();
+        }
+        else
+        {
+            autoSyncMinutesSpinner.setEnabled(false);
+        }
+    }
+
     private void createMarkersGroup(Composite parent)
     {
         Group group = new Group(parent, SWT.NONE);
@@ -186,6 +256,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     private void loadValues()
     {
         IPreferencesService service = Platform.getPreferencesService();
+        String mode = service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_MODE,
+            PreferenceConstants.MODE_SERVER, null);
+        modeCombo.select(
+            PreferenceConstants.MODE_LOCAL.equals(mode) ? MODE_INDEX_LOCAL : MODE_INDEX_SERVER);
+        bslLsPathText.setText(
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH, "", null)); //$NON-NLS-1$
         urlText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null)); //$NON-NLS-1$
         timeoutSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
@@ -193,9 +269,9 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         SecureTokenStore tokenStore = new SecureTokenStore();
         tokenText.setText(tokenStore.loadToken());
 
-        AnalysisLaunchMode mode = AnalysisLaunchMode.fromKey(service.getString(SonarqPlugin.PLUGIN_ID,
+        AnalysisLaunchMode launchMode = AnalysisLaunchMode.fromKey(service.getString(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_LAUNCH_MODE, AnalysisLaunchMode.LOCAL_AUTO.name(), null));
-        launchModeCombo.select(mode.ordinal());
+        launchModeCombo.select(launchMode.ordinal());
         scannerPathText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SCANNER_PATH, "", null)); //$NON-NLS-1$
         ciUrlText.setText(
@@ -203,7 +279,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         ciSecretText.setText(tokenStore.loadCiSecret());
         extraArgsText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_EXTRA_ARGS, "", null)); //$NON-NLS-1$
-        updateLaunchEnablement();
+        updateModeEnablement();
 
         showMarkersButton.setSelection(
             service.getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null));
@@ -249,6 +325,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     public boolean performOk()
     {
         IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        // Selection index is coupled to MODE_INDEX_SERVER / MODE_INDEX_LOCAL (see the field declarations).
+        node.put(PreferenceConstants.PREF_MODE, modeCombo.getSelectionIndex() == MODE_INDEX_LOCAL
+            ? PreferenceConstants.MODE_LOCAL : PreferenceConstants.MODE_SERVER);
+        node.put(PreferenceConstants.PREF_BSL_LS_PATH, bslLsPathText.getText().trim());
         node.put(PreferenceConstants.PREF_SERVER_URL, urlText.getText().trim());
         node.putInt(PreferenceConstants.PREF_TIMEOUT_SECONDS, timeoutSpinner.getSelection());
         // Selection index is coupled to AnalysisLaunchMode's declaration order (see #createLaunchGroup).

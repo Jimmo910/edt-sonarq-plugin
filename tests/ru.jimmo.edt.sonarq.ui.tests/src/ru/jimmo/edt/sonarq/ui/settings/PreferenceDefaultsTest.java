@@ -25,6 +25,8 @@ public class PreferenceDefaultsTest
         IPreferencesService service = Platform.getPreferencesService();
         assertEquals("server",
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_MODE, null, null));
+        assertEquals("",
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH, null, null));
         assertEquals(30,
             service.getInt(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_TIMEOUT_SECONDS, -1, null));
         assertEquals("LOCAL_AUTO",

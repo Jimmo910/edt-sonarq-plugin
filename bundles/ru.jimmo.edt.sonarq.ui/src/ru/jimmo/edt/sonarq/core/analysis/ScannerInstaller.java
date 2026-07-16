@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -36,6 +37,7 @@ public final class ScannerInstaller
     private static final String BIN_DIR = "bin"; //$NON-NLS-1$
     private static final String EXE_WINDOWS = "sonar-scanner.bat"; //$NON-NLS-1$
     private static final String EXE_OTHER = "sonar-scanner"; //$NON-NLS-1$
+    private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
 
     private ScannerInstaller()
     {
@@ -54,9 +56,11 @@ public final class ScannerInstaller
     /**
      * Ensures the scanner is installed under {@code stateDir/scanner} and returns its executable.
      *
-     * <p>If the expected executable already exists the method returns immediately without invoking
-     * {@code download}. Otherwise the archive is streamed, unpacked with a zip-slip guard, and the
-     * executable path is returned.
+     * <p>If the expected executable already exists and a {@code .complete} marker file confirms a prior
+     * extraction ran to completion, the method returns immediately without invoking {@code download}.
+     * Otherwise any leftover directory (for example a half-extracted install left by a cancelled or
+     * crashed run) is deleted, the archive is streamed and unpacked with a zip-slip guard, and the marker
+     * is written only after the whole archive has been extracted successfully.
      *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
      * @param download the source of the archive bytes, not {@code null}
@@ -70,10 +74,12 @@ public final class ScannerInstaller
     {
         Path scannerRoot = stateDir.resolve(SCANNER_DIR);
         Path executable = expectedExecutable(scannerRoot);
-        if (Files.exists(executable))
+        Path marker = scannerRoot.resolve(MARKER_FILE);
+        if (Files.exists(executable) && Files.exists(marker))
         {
             return executable;
         }
+        deleteRecursively(scannerRoot);
         Files.createDirectories(scannerRoot);
         Path normalizedRoot = scannerRoot.normalize();
         try (ZipInputStream zip = new ZipInputStream(download.open(downloadUrl())))
@@ -107,7 +113,28 @@ public final class ScannerInstaller
         {
             markBinExecutable(scannerRoot);
         }
+        Files.createFile(marker);
         return executable;
+    }
+
+    /**
+     * Recursively deletes a directory tree, tolerating a directory that does not exist.
+     *
+     * <p>Used to discard a poisoned half-extracted install (no completion marker) before retrying.
+     *
+     * @param dir the directory to delete, not {@code null}
+     * @throws IOException if a file or directory cannot be deleted
+     */
+    private static void deleteRecursively(Path dir) throws IOException
+    {
+        if (!Files.isDirectory(dir))
+        {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(dir))
+        {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+        }
     }
 
     /**

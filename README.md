@@ -1,10 +1,11 @@
 # SonarQ in EDT
 
 SonarQ in EDT shows SonarQube issues for 1C:Enterprise (BSL) code right inside
-1C:Enterprise Development Tools. It reads analysis results from a SonarQube server over
-the Web API — there is no local/on-the-fly analysis — and is branch-aware where the server
-edition supports it (commercial editions), while also working against SonarQube Community
-Edition (single-branch).
+1C:Enterprise Development Tools. Its default mode reads analysis results from a
+SonarQube server over the Web API, and is branch-aware where the server edition supports
+it (commercial editions), while also working against SonarQube Community Edition
+(single-branch). A serverless local analysis mode is also available, running the BSL
+Language Server directly against the project's sources with no server involved.
 
 ## Features
 
@@ -32,6 +33,9 @@ Edition (single-branch).
   Problems view and as editor underlines/gutter icons (BLOCKER/CRITICAL as errors, MAJOR
   as warnings, the rest as infos); markers are rebuilt on every refresh and never go
   stale across restarts.
+- **Serverless local analysis mode** — switch the plugin to BSL Language Server
+  (auto-downloaded native build, no Java or SonarQube server required) and get the same
+  issues view, filters and editor markers from a fully local analysis.
 
 ## Requirements
 
@@ -39,7 +43,10 @@ Edition (single-branch).
   target platform).
 - Java 17 runtime (the one bundled with / used by EDT itself).
 - A SonarQube server with an analyzed BSL project (for example, analyzed on CI with
-  [sonar-bsl-plugin-community](https://github.com/1c-syntax/sonar-bsl-plugin-community)).
+  [sonar-bsl-plugin-community](https://github.com/1c-syntax/sonar-bsl-plugin-community))
+  — for the server mode; not needed in local analysis mode.
+- Internet access once, on the first refresh in local analysis mode, to auto-download
+  the BSL Language Server native build (unless a local executable is configured).
 
 ## Installation
 
@@ -90,6 +97,23 @@ Edition (single-branch).
    even while the SonarQube Issues view is closed; the first automatic run happens one
    interval after EDT startup.
 
+### Local analysis mode
+
+**Preferences > SonarQube > Mode** — switch from **SonarQube server** to **Local
+analysis (BSL Language Server)** to get issues without a server at all. In this mode:
+
+- An optional path to your own `bsl-language-server` executable can be set; leave it
+  empty to have the plugin auto-download the native build (about 170 MB) into its state
+  area the first time the view is refreshed.
+- Every **Refresh** of the SonarQube Issues view runs a fresh local analysis of the
+  project's sources and rebuilds the view, filters and editor markers from its result.
+  Background auto-refresh applies to server mode only.
+- Branches, the **Run Branch Analysis** action and the **Analysis launch**/CI-trigger
+  settings do not apply in this mode; the project is analyzed as a whole, with no branch
+  concept.
+- Rule descriptions in the rule pane come from the BSL Language Server's own analyzer
+  metadata (bundled in its report), not from a SonarQube server.
+
 ## Building
 
 ```powershell
@@ -108,8 +132,8 @@ the same content).
 
 ## Roadmap
 
-- **v3** — an optional local analysis mode (running the Sonar scanner without a
-  pre-existing server-side analysis).
+All roadmap items shipped (v1 viewer, v1.1 analysis launch, v2 editor markers, v3
+local analysis).
 
 ## License
 

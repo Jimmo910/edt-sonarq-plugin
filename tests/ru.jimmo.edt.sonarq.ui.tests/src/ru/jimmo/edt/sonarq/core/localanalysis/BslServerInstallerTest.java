@@ -4,7 +4,7 @@
  * Licensed under EPL-2.0
  */
 
-package ru.jimmo.edt.sonarq.core.analysis;
+package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -29,17 +29,19 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-/** Tests for {@link ScannerInstaller}. */
-public class ScannerInstallerTest
+import ru.jimmo.edt.sonarq.core.analysis.DownloadFunction;
+
+/** Tests for {@link BslServerInstaller}. */
+public class BslServerInstallerTest
 {
-    private static final String EXECUTABLE_BODY = "echo";
+    private static final String LAUNCHER_BODY = "#!native-launcher";
 
     private Path stateDir;
 
     @Before
     public void setUp() throws IOException
     {
-        stateDir = Files.createTempDirectory("sonarq-scanner-test");
+        stateDir = Files.createTempDirectory("sonarq-bsl-ls-test");
     }
 
     @After
@@ -51,24 +53,27 @@ public class ScannerInstallerTest
         }
     }
 
-    private static String executableEntry()
+    private static boolean isWindows()
     {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String classifier;
-        if (os.contains("win"))
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private static boolean isMac()
+    {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    }
+
+    private static String launcherEntry()
+    {
+        if (isWindows())
         {
-            classifier = "windows-x64";
+            return "bsl-language-server/bsl-language-server.exe";
         }
-        else if (os.contains("mac"))
+        if (isMac())
         {
-            classifier = "macosx-aarch64";
+            return "bsl-language-server.app/Contents/MacOS/bsl-language-server";
         }
-        else
-        {
-            classifier = "linux-x64";
-        }
-        String executable = os.contains("win") ? "sonar-scanner.bat" : "sonar-scanner";
-        return "sonar-scanner-7.1.0.4889-" + classifier + "/bin/" + executable;
+        return "bsl-language-server/bin/bsl-language-server";
     }
 
     private static byte[] validZip() throws IOException
@@ -76,8 +81,14 @@ public class ScannerInstallerTest
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes))
         {
-            zip.putNextEntry(new ZipEntry(executableEntry()));
-            zip.write(EXECUTABLE_BODY.getBytes(StandardCharsets.UTF_8));
+            zip.putNextEntry(new ZipEntry("bsl-language-server/"));
+            zip.closeEntry();
+            // A representative bundled runtime file in a bin directory (must become executable on POSIX).
+            zip.putNextEntry(new ZipEntry("bsl-language-server/runtime/bin/java"));
+            zip.write("runtime".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry(launcherEntry()));
+            zip.write(LAUNCHER_BODY.getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
         }
         return bytes.toByteArray();
@@ -96,7 +107,28 @@ public class ScannerInstallerTest
     }
 
     @Test
-    public void extractsExecutableWithContent() throws IOException
+    public void downloadUrlPinsVersionAndNativeZip()
+    {
+        String url = BslServerInstaller.downloadUrl();
+        assertTrue(url.contains("/v" + BslServerInstaller.VERSION + "/"));
+        String expectedAsset;
+        if (isWindows())
+        {
+            expectedAsset = "bsl-language-server_win.zip";
+        }
+        else if (isMac())
+        {
+            expectedAsset = "bsl-language-server_mac.zip";
+        }
+        else
+        {
+            expectedAsset = "bsl-language-server_nix.zip";
+        }
+        assertTrue("expected asset " + expectedAsset + " in " + url, url.endsWith(expectedAsset));
+    }
+
+    @Test
+    public void extractsLauncherWithContent() throws IOException
     {
         byte[] archive = validZip();
         AtomicInteger downloads = new AtomicInteger();
@@ -106,13 +138,17 @@ public class ScannerInstallerTest
             return new ByteArrayInputStream(archive);
         };
 
-        Path executable = ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
+        Path executable = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
 
+        // The launcher nests under <bsl-ls>/bsl-language-server/ per the real distribution layout.
+        // Path.resolve accepts the forward-slashed entry on every platform.
+        Path expected = stateDir.resolve("bsl-ls").resolve(launcherEntry());
+        assertEquals(expected, executable);
         assertTrue(Files.exists(executable));
         assertTrue(Files.isExecutable(executable));
-        assertEquals(EXECUTABLE_BODY, Files.readString(executable, StandardCharsets.UTF_8));
+        assertEquals(LAUNCHER_BODY, Files.readString(executable, StandardCharsets.UTF_8));
         assertEquals(1, downloads.get());
-        assertTrue(Files.exists(stateDir.resolve("scanner").resolve(".complete")));
+        assertTrue(Files.exists(stateDir.resolve("bsl-ls").resolve(".complete")));
     }
 
     @Test
@@ -126,20 +162,20 @@ public class ScannerInstallerTest
             return new ByteArrayInputStream(archive);
         };
 
-        Path first = ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
-        Path second = ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
+        Path first = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
+        Path second = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
 
         assertEquals(first, second);
         assertEquals(1, downloads.get());
-        assertTrue(Files.exists(stateDir.resolve("scanner").resolve(".complete")));
+        assertTrue(Files.exists(stateDir.resolve("bsl-ls").resolve(".complete")));
     }
 
     @Test
     public void partialExtractionWithoutMarkerIsRedownloaded() throws IOException
     {
         byte[] archive = validZip();
-        Path scannerRoot = stateDir.resolve("scanner");
-        Path staleExecutable = scannerRoot.resolve(executableEntry());
+        Path serverRoot = stateDir.resolve("bsl-ls");
+        Path staleExecutable = serverRoot.resolve(launcherEntry());
         Files.createDirectories(staleExecutable.getParent());
         Files.writeString(staleExecutable, "stale-half-extracted", StandardCharsets.UTF_8);
         AtomicInteger downloads = new AtomicInteger();
@@ -149,11 +185,11 @@ public class ScannerInstallerTest
             return new ByteArrayInputStream(archive);
         };
 
-        Path executable = ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
+        Path executable = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
 
         assertEquals(1, downloads.get());
-        assertEquals(EXECUTABLE_BODY, Files.readString(executable, StandardCharsets.UTF_8));
-        assertTrue(Files.exists(scannerRoot.resolve(".complete")));
+        assertEquals(LAUNCHER_BODY, Files.readString(executable, StandardCharsets.UTF_8));
+        assertTrue(Files.exists(serverRoot.resolve(".complete")));
     }
 
     @Test
@@ -164,7 +200,7 @@ public class ScannerInstallerTest
 
         try
         {
-            ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
+            BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
             fail("expected IOException for zip-slip entry");
         }
         catch (IOException e)
@@ -183,7 +219,7 @@ public class ScannerInstallerTest
 
         try
         {
-            ScannerInstaller.ensureScanner(stateDir, download, monitor);
+            BslServerInstaller.ensureServer(stateDir, download, monitor);
             fail("expected OperationCanceledException for a cancelled monitor");
         }
         catch (OperationCanceledException e)
