@@ -187,7 +187,9 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     /**
      * Enables the widgets that belong to the selected {@link PreferenceConstants#PREF_MODE}: the connection
      * fields and the analysis-launch group in server mode, the BSL Language Server path in local mode. The
-     * editor-markers group stays enabled in either mode.
+     * <em>Show issues in editor</em> checkbox stays enabled in either mode, but background auto-sync (its
+     * checkbox and interval spinner) is disabled in local mode because the background timer never runs a
+     * local analysis; in server mode they are re-enabled, honouring the auto-sync checkbox for the spinner.
      */
     private void updateModeEnablement()
     {
@@ -210,6 +212,15 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
             extraArgsText.setEnabled(false);
         }
         bslLsPathText.setEnabled(!server);
+        autoSyncButton.setEnabled(server);
+        if (server)
+        {
+            updateAutoSyncEnablement();
+        }
+        else
+        {
+            autoSyncMinutesSpinner.setEnabled(false);
+        }
     }
 
     private void createMarkersGroup(Composite parent)

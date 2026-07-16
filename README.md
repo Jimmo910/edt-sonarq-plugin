@@ -106,8 +106,8 @@ analysis (BSL Language Server)** to get issues without a server at all. In this 
   empty to have the plugin auto-download the native build (about 170 MB) into its state
   area the first time the view is refreshed.
 - Every **Refresh** of the SonarQube Issues view runs a fresh local analysis of the
-  project's sources and rebuilds the view, filters and editor markers from its result —
-  there is nothing to keep in sync in the background.
+  project's sources and rebuilds the view, filters and editor markers from its result.
+  Background auto-refresh applies to server mode only.
 - Branches, the **Run Branch Analysis** action and the **Analysis launch**/CI-trigger
   settings do not apply in this mode; the project is analyzed as a whole, with no branch
   concept.

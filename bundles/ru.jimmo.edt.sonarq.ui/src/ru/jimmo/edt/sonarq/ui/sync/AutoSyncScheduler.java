@@ -106,6 +106,16 @@ public final class AutoSyncScheduler
 
     private static void refreshAllProjects()
     {
+        String mode = Platform.getPreferencesService().getString(SonarqPlugin.PLUGIN_ID,
+            PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_SERVER, null);
+        if (PreferenceConstants.MODE_LOCAL.equals(mode))
+        {
+            // Local analysis is a heavyweight per-project language-server run; never trigger it from the
+            // background timer. The job still reschedules, so switching back to server mode resumes syncing.
+            Platform.getLog(AutoSyncScheduler.class)
+                .info("Background auto-sync skipped: local analysis runs only on an explicit refresh."); //$NON-NLS-1$
+            return;
+        }
         for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
         {
             if (project.isOpen())
