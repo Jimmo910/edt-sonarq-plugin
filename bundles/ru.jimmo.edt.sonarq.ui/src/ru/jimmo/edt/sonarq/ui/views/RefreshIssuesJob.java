@@ -85,6 +85,12 @@ public class RefreshIssuesJob extends Job
             callback.accept(RefreshResult.error(toUserMessage(e)));
             return Status.OK_STATUS;
         }
+        catch (RuntimeException e)
+        {
+            Platform.getLog(getClass()).error(e.getMessage(), e);
+            callback.accept(RefreshResult.error(String.valueOf(e)));
+            return Status.OK_STATUS;
+        }
     }
 
     private static String toUserMessage(SonarServerException e)

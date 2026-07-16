@@ -42,11 +42,16 @@ public class RefreshIssuesJobTest
         List<BranchInfo> branches = List.of();
         boolean branchesCapable;
         SonarServerException failure;
+        RuntimeException runtimeFailure;
         IssueQuery lastQuery;
 
         @Override
         public IssueSnapshot fetchIssues(IssueQuery query, IProgressMonitor monitor) throws SonarServerException
         {
+            if (runtimeFailure != null)
+            {
+                throw runtimeFailure;
+            }
             if (failure != null)
             {
                 throw failure;
@@ -144,6 +149,16 @@ public class RefreshIssuesJobTest
         RefreshResult result = run(provider, new ProjectBinding("p", "", ""), null);
         assertTrue(result.isError());
         assertEquals("boom", result.errorMessage());
+    }
+
+    @Test
+    public void unexpectedRuntimeErrorIsReportedNotThrown() throws Exception
+    {
+        FakeProvider provider = new FakeProvider();
+        provider.runtimeFailure = new IllegalStateException("kaboom");
+        RefreshResult result = run(provider, new ProjectBinding("p", "", ""), null);
+        assertTrue(result.isError());
+        assertTrue(result.errorMessage().contains("kaboom"));
     }
 
     @Test

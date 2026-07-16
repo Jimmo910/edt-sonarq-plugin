@@ -17,6 +17,7 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.ICoreRunnable;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
@@ -516,7 +517,12 @@ public class SonarIssuesView extends ViewPart
         }
         catch (SonarServerException e)
         {
-            Display.getDefault().asyncExec(() -> applyFailureIfCurrent(ruleKey, e));
+            Display.getDefault().asyncExec(() -> applyFailureIfCurrent(ruleKey, e.getMessage()));
+        }
+        catch (RuntimeException e)
+        {
+            Platform.getLog(getClass()).error(e.getMessage(), e);
+            Display.getDefault().asyncExec(() -> applyFailureIfCurrent(ruleKey, String.valueOf(e)));
         }
     }
 
@@ -528,11 +534,11 @@ public class SonarIssuesView extends ViewPart
         }
     }
 
-    private void applyFailureIfCurrent(String ruleKey, SonarServerException e)
+    private void applyFailureIfCurrent(String ruleKey, String detail)
     {
         if (!rulePanel.isDisposed() && ruleKey.equals(requestedRuleKey))
         {
-            rulePanel.showMessage(NLS.bind(Messages.RulePanel_LoadFailed, e.getMessage()));
+            rulePanel.showMessage(NLS.bind(Messages.RulePanel_LoadFailed, detail));
         }
     }
 

@@ -22,6 +22,7 @@ import java.util.function.Consumer;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.OperationCanceledException;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.osgi.util.NLS;
@@ -95,11 +96,20 @@ public class AnalysisJob extends Job
     @Override
     protected IStatus run(IProgressMonitor monitor)
     {
-        if (request.config().mode() == AnalysisLaunchMode.CI_TRIGGER)
+        try
         {
-            return runCiTrigger();
+            if (request.config().mode() == AnalysisLaunchMode.CI_TRIGGER)
+            {
+                return runCiTrigger();
+            }
+            return runScanner(monitor);
         }
-        return runScanner(monitor);
+        catch (RuntimeException e)
+        {
+            Platform.getLog(getClass()).error(e.getMessage(), e);
+            report(NLS.bind(Messages.IssuesView_Status_Error, String.valueOf(e)));
+            return Status.OK_STATUS;
+        }
     }
 
     /**
