@@ -14,6 +14,8 @@ import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.ICoreRunnable;
+import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
@@ -21,6 +23,7 @@ import org.eclipse.jface.action.IMenuCreator;
 import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
+import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.TreeViewerColumn;
 import org.eclipse.osgi.util.NLS;
@@ -43,8 +46,10 @@ import org.eclipse.ui.part.ViewPart;
 
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
+import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
+import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
@@ -76,6 +81,9 @@ public class SonarIssuesView extends ViewPart
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
     private long refreshGeneration;
+    private RuleDescriptionPanel rulePanel;
+    private IIssueProvider currentProvider;
+    private String requestedRuleKey;
 
     @Override
     public void createPartControl(Composite parent)
@@ -109,7 +117,22 @@ public class SonarIssuesView extends ViewPart
 
         Composite detail = new Composite(sash, SWT.NONE);
         detail.setLayout(new FillLayout());
+        rulePanel = new RuleDescriptionPanel(detail);
         sash.setWeights(new int[] { 70, 30 });
+
+        viewer.addSelectionChangedListener(event ->
+        {
+            Object element = ((IStructuredSelection)event.getSelection()).getFirstElement();
+            if (element instanceof IssueEntry entry)
+            {
+                requestRuleDescription(entry.issue().ruleKey());
+            }
+            else
+            {
+                requestedRuleKey = null;
+                rulePanel.showMessage(""); //$NON-NLS-1$
+            }
+        });
 
         statusLabel = new Label(root, SWT.NONE);
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
@@ -310,9 +333,52 @@ public class SonarIssuesView extends ViewPart
         }
         boundProjectKey = binding.projectKey();
         boundPathPrefix = binding.pathPrefix();
-        IIssueProvider provider = new ServerIssueProvider(new SonarHttpClient(connection.get()));
-        new RefreshIssuesJob(provider, project, binding, sessionBranch,
+        currentProvider = new ServerIssueProvider(new SonarHttpClient(connection.get()));
+        new RefreshIssuesJob(currentProvider, project, binding, sessionBranch,
             result -> onRefreshFinished(generation, result)).schedule();
+    }
+
+    private void requestRuleDescription(String ruleKey)
+    {
+        requestedRuleKey = ruleKey;
+        if (currentProvider == null)
+        {
+            rulePanel.showMessage(""); //$NON-NLS-1$
+            return;
+        }
+        rulePanel.showMessage(Messages.RulePanel_Loading);
+        IIssueProvider provider = currentProvider;
+        ICoreRunnable runnable = monitor -> loadRuleDescription(provider, ruleKey);
+        Job.createSystem(Messages.RuleJob_Name, runnable).schedule();
+    }
+
+    private void loadRuleDescription(IIssueProvider provider, String ruleKey)
+    {
+        try
+        {
+            SonarRule rule = provider.describeRule(ruleKey);
+            Display.getDefault().asyncExec(() -> applyRuleIfCurrent(ruleKey, rule));
+        }
+        catch (SonarServerException e)
+        {
+            Display.getDefault().asyncExec(() -> applyFailureIfCurrent(ruleKey, e));
+        }
+    }
+
+    private void applyRuleIfCurrent(String ruleKey, SonarRule rule)
+    {
+        if (!rulePanel.isDisposed() && ruleKey.equals(requestedRuleKey))
+        {
+            rulePanel.showRule(rule);
+        }
+    }
+
+    private void applyFailureIfCurrent(String ruleKey, SonarServerException e)
+    {
+        if (!rulePanel.isDisposed() && ruleKey.equals(requestedRuleKey))
+        {
+            rulePanel.showMessage(NLS.bind(Messages.RulePanel_LoadFailed, e.getMessage()));
+        }
     }
 
     private void onRefreshFinished(long generation, RefreshResult result)
