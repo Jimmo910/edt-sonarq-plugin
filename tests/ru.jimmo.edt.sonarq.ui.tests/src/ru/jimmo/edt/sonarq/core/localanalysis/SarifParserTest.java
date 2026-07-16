@@ -262,6 +262,104 @@ public class SarifParserTest
     }
 
     @Test
+    public void absoluteFileUriIsRelativizedAgainstBasePrefix()
+    {
+        // Real BSL Language Server 1.0.4 output: absolute file:/// artifact locations.
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "MagicNumber",
+                      "level": "note",
+                      "message": { "text": "Magic number" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": {
+                              "uri": "file:///E:/proj/TestConfiguration/src/CommonModules/Calc/Module.bsl"
+                            },
+                            "region": { "startLine": 6 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "E:/proj/TestConfiguration"); //$NON-NLS-1$
+        SonarIssue issue = report.issues().get(0);
+        assertEquals("TestConfiguration:src/CommonModules/Calc/Module.bsl", issue.componentKey()); //$NON-NLS-1$
+        assertEquals("MagicNumber:src/CommonModules/Calc/Module.bsl:6", issue.key()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void basePrefixWithBackslashesAndDriveLetterCaseIsHandled()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "MagicNumber",
+                      "level": "note",
+                      "message": { "text": "Magic number" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": {
+                              "uri": "file:///E:/proj/TestConfiguration/src/CommonModules/Calc/Module.bsl"
+                            },
+                            "region": { "startLine": 6 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        // Windows-style base with back-slashes and a lower-case drive letter must still match.
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "e:\\proj\\TestConfiguration\\"); //$NON-NLS-1$
+        assertEquals("TestConfiguration:src/CommonModules/Calc/Module.bsl", //$NON-NLS-1$
+            report.issues().get(0).componentKey());
+    }
+
+    @Test
+    public void nonMatchingBasePrefixLeavesUriIntact()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "MagicNumber",
+                      "level": "note",
+                      "message": { "text": "Magic number" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "src/CommonModules/X/Module.bsl" },
+                            "region": { "startLine": 1 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        // A base prefix that does not match must not corrupt an already-relative uri.
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "E:/other/project"); //$NON-NLS-1$
+        assertEquals("TestConfiguration:src/CommonModules/X/Module.bsl", //$NON-NLS-1$
+            report.issues().get(0).componentKey());
+    }
+
+    @Test
     public void helpUriIsAppendedAsDocumentationLinkInRuleHtml()
     {
         SarifReport report = SarifParser.parse(FULL_REPORT_JSON, PROJECT_KEY);
