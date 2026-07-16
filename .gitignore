@@ -1,0 +1,10 @@
+target/
+bin/
+.polyglot.*
+.tycho-consumer-pom.xml
+.metadata/
+
+# local-only AI context (infra paths, stands) - never commit
+CLAUDE.md
+AGENTS.md
+docs/local/
