@@ -87,7 +87,7 @@ public final class RefreshInputsFactory
         }
         SonarConnection resolved = connection.get();
         return Optional.of(new ProjectRefreshInputs(project, binding, resolved,
-            new ServerIssueProvider(new SonarHttpClient(resolved))));
+            new ServerIssueProvider(new SonarHttpClient(resolved)), binding.projectKey(), binding.pathPrefix()));
     }
 
     /**
@@ -115,6 +115,9 @@ public final class RefreshInputsFactory
         Path override = overridePath.isBlank() ? null : Path.of(overridePath.trim());
         LocalIssueProvider provider =
             new LocalIssueProvider(projectKey, projectRoot, stateDir, override, new ProcessAnalyzeRunner());
-        return Optional.of(new ProjectRefreshInputs(project, binding, null, provider));
+        // Local component keys are <projectKey>:src/... already project-relative, so the mapping key is the
+        // same effective key fed to the provider and the mapping prefix is always empty (the binding prefix,
+        // which describes a server repository layout, must not be stripped from local paths).
+        return Optional.of(new ProjectRefreshInputs(project, binding, null, provider, projectKey, "")); //$NON-NLS-1$
     }
 }

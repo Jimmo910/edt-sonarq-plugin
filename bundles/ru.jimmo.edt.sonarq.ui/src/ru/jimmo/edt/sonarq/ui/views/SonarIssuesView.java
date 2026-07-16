@@ -384,8 +384,8 @@ public class SonarIssuesView extends ViewPart
             return;
         }
         ProjectRefreshInputs refreshInputs = inputs.get();
-        boundProjectKey = refreshInputs.binding().projectKey();
-        boundPathPrefix = refreshInputs.binding().pathPrefix();
+        boundProjectKey = refreshInputs.mappingProjectKey();
+        boundPathPrefix = refreshInputs.mappingPathPrefix();
         currentProvider = refreshInputs.provider();
         new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
             result -> onRefreshFinished(generation, result)).schedule();

@@ -137,7 +137,7 @@ public final class AutoSyncScheduler
         try
         {
             List<IssueEntry> entries = IssueTreeBuilder.toEntries(result.snapshot().issues(),
-                inputs.binding().projectKey(), inputs.binding().pathPrefix());
+                inputs.mappingProjectKey(), inputs.mappingPathPrefix());
             new IssueMarkerSynchronizer().sync(inputs.project(), entries);
         }
         catch (CoreException | RuntimeException e)

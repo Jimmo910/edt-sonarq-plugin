@@ -12,6 +12,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.eclipse.core.resources.IProject;
@@ -26,11 +27,16 @@ import org.junit.Test;
 import org.osgi.service.prefs.BackingStoreException;
 
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
+import ru.jimmo.edt.sonarq.core.model.SonarIssue;
+import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
+import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
+import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
+import ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder;
 
 /** Tests for {@link RefreshInputsFactory}. */
 public class RefreshInputsFactoryTest
@@ -176,5 +182,53 @@ public class RefreshInputsFactoryTest
         assertTrue(inputs.isPresent());
         assertEquals("", inputs.get().binding().projectKey()); //$NON-NLS-1$
         assertEquals(project.getName(), ((LocalIssueProvider)inputs.get().provider()).projectKey());
+    }
+
+    @Test
+    public void localModeEmptyBindingMapsComponentKeyToRelativePath() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        assertEquals(project.getName(), inputs.mappingProjectKey());
+        assertEquals("", inputs.mappingPathPrefix()); //$NON-NLS-1$
+
+        // End-to-end seam: a local component key <projectName>:src/M.bsl must map back to src/M.bsl.
+        SonarIssue issue = new SonarIssue("k", "MethodSize", SonarSeverity.MAJOR, //$NON-NLS-1$ //$NON-NLS-2$
+            SonarIssueType.CODE_SMELL, project.getName() + ":src/M.bsl", "Too long", 1); //$NON-NLS-1$ //$NON-NLS-2$
+        List<IssueEntry> entries =
+            IssueTreeBuilder.toEntries(List.of(issue), inputs.mappingProjectKey(), inputs.mappingPathPrefix());
+        assertNotNull(entries.get(0).relativePath());
+        assertEquals("src/M.bsl", entries.get(0).relativePath()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void localModeIgnoresBindingPathPrefixForMapping() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+        new ProjectBindingStore().save(project,
+            new ProjectBinding("K", "", "conf")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        assertEquals("K", inputs.mappingProjectKey()); //$NON-NLS-1$
+        assertEquals("", inputs.mappingPathPrefix()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void serverModeMappingFieldsMirrorBinding() throws BackingStoreException
+    {
+        new ProjectBindingStore().save(project,
+            new ProjectBinding("proj:key", "", "conf")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_SERVER_URL, "https://sonar.example.com"); //$NON-NLS-1$
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        assertEquals("proj:key", inputs.mappingProjectKey()); //$NON-NLS-1$
+        assertEquals("conf", inputs.mappingPathPrefix()); //$NON-NLS-1$
     }
 }
