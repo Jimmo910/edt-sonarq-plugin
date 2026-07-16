@@ -34,6 +34,13 @@ public class PluginContributionTest
             .contains("ru.jimmo.edt.sonarq.ui.properties.project")); //$NON-NLS-1$
     }
 
+    @Test
+    public void issuesViewIsRegistered()
+    {
+        assertTrue(extensionIds("org.eclipse.ui.views") //$NON-NLS-1$
+            .contains("ru.jimmo.edt.sonarq.ui.views.issues")); //$NON-NLS-1$
+    }
+
     private static Set<String> extensionIds(String point)
     {
         Set<String> ids = new HashSet<>();

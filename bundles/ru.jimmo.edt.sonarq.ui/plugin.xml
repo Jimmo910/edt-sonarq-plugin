@@ -18,4 +18,12 @@
          </enabledWhen>
       </page>
    </extension>
+   <extension point="org.eclipse.ui.views">
+      <category id="ru.jimmo.edt.sonarq.ui.category" name="%viewCategoryName"/>
+      <view id="ru.jimmo.edt.sonarq.ui.views.issues"
+            category="ru.jimmo.edt.sonarq.ui.category"
+            class="ru.jimmo.edt.sonarq.ui.views.SonarIssuesView"
+            icon="icons/sonarqube.png"
+            name="%issuesViewName"/>
+   </extension>
 </plugin>
