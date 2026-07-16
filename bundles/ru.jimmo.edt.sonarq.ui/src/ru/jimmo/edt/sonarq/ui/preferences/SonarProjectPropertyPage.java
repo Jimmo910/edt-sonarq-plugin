@@ -57,6 +57,8 @@ public class SonarProjectPropertyPage extends PropertyPage
         new Label(composite, SWT.NONE).setText(Messages.PropertyPage_ProjectKey);
         projectKeyText = new Text(composite, SWT.BORDER);
         projectKeyText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        projectKeyText.setMessage(Messages.PropertyPage_ProjectKey_Hint);
+        projectKeyText.setToolTipText(Messages.PropertyPage_ProjectKey_Hint);
 
         Button findButton = new Button(composite, SWT.PUSH);
         findButton.setText(Messages.PropertyPage_FindKey);
@@ -74,6 +76,8 @@ public class SonarProjectPropertyPage extends PropertyPage
         new Label(composite, SWT.NONE).setText(Messages.PropertyPage_PathPrefix);
         prefixText = new Text(composite, SWT.BORDER);
         prefixText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        prefixText.setMessage(Messages.PropertyPage_PathPrefix_Hint);
+        prefixText.setToolTipText(Messages.PropertyPage_PathPrefix_Hint);
 
         ProjectBinding binding = new ProjectBindingStore().load(getProject());
         projectKeyText.setText(binding.projectKey());

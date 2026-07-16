@@ -46,7 +46,9 @@ public final class Messages extends NLS
     public static String PropertyPage_FindKey;
     public static String PropertyPage_FindKeyNoMatch;
     public static String PropertyPage_PathPrefix;
+    public static String PropertyPage_PathPrefix_Hint;
     public static String PropertyPage_ProjectKey;
+    public static String PropertyPage_ProjectKey_Hint;
     public static String RefreshJob_Name;
     public static String RuleJob_Name;
     public static String RulePanel_LoadFailed;
