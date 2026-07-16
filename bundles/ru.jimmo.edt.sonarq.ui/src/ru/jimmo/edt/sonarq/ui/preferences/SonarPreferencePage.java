@@ -63,6 +63,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     private Text extraArgsText;
 
+    private Button showMarkersButton;
+
+    private Button autoSyncButton;
+
+    private Spinner autoSyncMinutesSpinner;
+
     @Override
     public void init(IWorkbench workbench)
     {
@@ -95,6 +101,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         testResultLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         createLaunchGroup(composite);
+        createMarkersGroup(composite);
 
         loadValues();
         return composite;
@@ -146,6 +153,36 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         extraArgsText.setEnabled(mode == AnalysisLaunchMode.LOCAL_AUTO || mode == AnalysisLaunchMode.LOCAL_PATH);
     }
 
+    private void createMarkersGroup(Composite parent)
+    {
+        Group group = new Group(parent, SWT.NONE);
+        group.setText(Messages.PreferencePage_MarkersGroup);
+        group.setLayout(new GridLayout(2, false));
+        group.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        showMarkersButton = new Button(group, SWT.CHECK);
+        showMarkersButton.setText(Messages.PreferencePage_ShowMarkers);
+        showMarkersButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        autoSyncButton = new Button(group, SWT.CHECK);
+        autoSyncButton.setText(Messages.PreferencePage_AutoSync);
+        autoSyncButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+        autoSyncButton.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> updateAutoSyncEnablement()));
+
+        new Label(group, SWT.NONE).setText(Messages.PreferencePage_AutoSyncMinutes);
+        autoSyncMinutesSpinner = new Spinner(group, SWT.BORDER);
+        autoSyncMinutesSpinner.setValues(PreferenceConstants.DEFAULT_AUTO_SYNC_MINUTES, 1, 1440, 0, 1, 10);
+        autoSyncMinutesSpinner.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+    }
+
+    /**
+     * Enables the auto-sync interval spinner only while background auto-sync is checked.
+     */
+    private void updateAutoSyncEnablement()
+    {
+        autoSyncMinutesSpinner.setEnabled(autoSyncButton.getSelection());
+    }
+
     private void loadValues()
     {
         IPreferencesService service = Platform.getPreferencesService();
@@ -167,6 +204,14 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         extraArgsText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_EXTRA_ARGS, "", null)); //$NON-NLS-1$
         updateLaunchEnablement();
+
+        showMarkersButton.setSelection(
+            service.getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null));
+        autoSyncButton.setSelection(
+            service.getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_AUTO_SYNC, false, null));
+        autoSyncMinutesSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
+            PreferenceConstants.PREF_AUTO_SYNC_MINUTES, PreferenceConstants.DEFAULT_AUTO_SYNC_MINUTES, null));
+        updateAutoSyncEnablement();
     }
 
     private void testConnection()
@@ -212,6 +257,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         node.put(PreferenceConstants.PREF_SCANNER_PATH, scannerPathText.getText().trim());
         node.put(PreferenceConstants.PREF_CI_URL, ciUrlText.getText().trim());
         node.put(PreferenceConstants.PREF_EXTRA_ARGS, extraArgsText.getText().trim());
+        // Note: no marker clean-up here on principle - a preference-change listener (see the
+        // editor-markers increment's Task M4) owns reacting to PREF_SHOW_MARKERS transitioning
+        // to false and clearing existing markers; this page only persists the raw values.
+        node.putBoolean(PreferenceConstants.PREF_SHOW_MARKERS, showMarkersButton.getSelection());
+        node.putBoolean(PreferenceConstants.PREF_AUTO_SYNC, autoSyncButton.getSelection());
+        node.putInt(PreferenceConstants.PREF_AUTO_SYNC_MINUTES, autoSyncMinutesSpinner.getSelection());
         try
         {
             node.flush();

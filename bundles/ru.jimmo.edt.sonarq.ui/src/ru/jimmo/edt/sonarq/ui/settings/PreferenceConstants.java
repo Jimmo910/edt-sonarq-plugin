@@ -36,6 +36,18 @@ public final class PreferenceConstants
     /** The extra scanner arguments preference key. */
     public static final String PREF_EXTRA_ARGS = "scannerExtraArgs"; //$NON-NLS-1$
 
+    /** The preference key controlling whether SonarQube issues are shown as editor markers. */
+    public static final String PREF_SHOW_MARKERS = "showMarkers"; //$NON-NLS-1$
+
+    /** The preference key controlling whether issues are refreshed automatically in the background. */
+    public static final String PREF_AUTO_SYNC = "autoSync"; //$NON-NLS-1$
+
+    /** The automatic background refresh interval, in minutes, preference key. */
+    public static final String PREF_AUTO_SYNC_MINUTES = "autoSyncMinutes"; //$NON-NLS-1$
+
+    /** The default automatic background refresh interval, in minutes. */
+    public static final int DEFAULT_AUTO_SYNC_MINUTES = 15;
+
     private PreferenceConstants()
     {
     }
