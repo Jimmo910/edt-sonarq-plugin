@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -102,7 +103,31 @@ public final class ScannerInstaller
                 entry = zip.getNextEntry();
             }
         }
+        if (!OS_WINDOWS.equals(osClassifier()))
+        {
+            markBinExecutable(scannerRoot);
+        }
         return executable;
+    }
+
+    /**
+     * Marks every regular file in the extracted {@code bin} directory as executable, for POSIX systems
+     * where the archive does not carry Unix permission bits.
+     *
+     * @param scannerRoot the scanner root directory holding the unpacked distribution, not {@code null}
+     * @throws IOException if the {@code bin} directory cannot be walked
+     */
+    private static void markBinExecutable(Path scannerRoot) throws IOException
+    {
+        Path binDir = scannerRoot.resolve(DIR_PREFIX + SCANNER_VERSION + '-' + osClassifier()).resolve(BIN_DIR);
+        if (!Files.isDirectory(binDir))
+        {
+            return;
+        }
+        try (Stream<Path> files = Files.walk(binDir))
+        {
+            files.filter(Files::isRegularFile).forEach(file -> file.toFile().setExecutable(true, false));
+        }
     }
 
     /**

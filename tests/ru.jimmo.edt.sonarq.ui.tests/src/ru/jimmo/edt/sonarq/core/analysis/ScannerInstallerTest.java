@@ -109,6 +109,7 @@ public class ScannerInstallerTest
         Path executable = ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
 
         assertTrue(Files.exists(executable));
+        assertTrue(Files.isExecutable(executable));
         assertEquals(EXECUTABLE_BODY, Files.readString(executable, StandardCharsets.UTF_8));
         assertEquals(1, downloads.get());
     }
