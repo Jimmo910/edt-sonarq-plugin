@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.core.client;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import com.google.gson.JsonArray;
@@ -145,6 +146,18 @@ public final class SonarJsonParser
     {
         JsonObject task = JsonParser.parseString(json).getAsJsonObject().getAsJsonObject("task"); //$NON-NLS-1$
         return new CeTask(asString(task, "status"), asString(task, "errorMessage")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Parses the server edition from a {@code /api/navigation/global} response.
+     *
+     * @param json the response body, not {@code null}
+     * @return the edition in lower case, e.g. {@code "community"}; empty when the field is absent or null
+     */
+    public static String parseEdition(String json)
+    {
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        return asString(root, "edition").toLowerCase(Locale.ROOT); //$NON-NLS-1$
     }
 
     private static SonarIssue parseIssue(JsonObject issue)

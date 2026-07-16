@@ -89,6 +89,18 @@ public class SonarJsonParserTest
     }
 
     @Test
+    public void parsesEditionLowercased()
+    {
+        assertEquals("developer", SonarJsonParser.parseEdition("{ \"edition\": \"Developer\" }"));
+    }
+
+    @Test
+    public void parsesEditionEmptyWhenAbsent()
+    {
+        assertEquals("", SonarJsonParser.parseEdition("{}"));
+    }
+
+    @Test
     public void parsesComponents()
     {
         String json = """

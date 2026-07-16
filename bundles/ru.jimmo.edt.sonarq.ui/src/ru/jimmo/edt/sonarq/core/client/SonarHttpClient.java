@@ -57,6 +57,24 @@ public final class SonarHttpClient implements ISonarServerClient
     }
 
     @Override
+    public String serverEdition() throws SonarServerException
+    {
+        try
+        {
+            return SonarJsonParser.parseEdition(get("/api/navigation/global")); //$NON-NLS-1$
+        }
+        catch (SonarServerException e)
+        {
+            int code = e.getStatusCode();
+            if (code == 401 || code == 403 || code == 404)
+            {
+                return ""; //$NON-NLS-1$
+            }
+            throw e;
+        }
+    }
+
+    @Override
     public List<BranchInfo> listBranches(String projectKey) throws SonarServerException
     {
         try

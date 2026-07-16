@@ -132,6 +132,20 @@ public class SonarHttpClientTest
     }
 
     @Test
+    public void serverEditionHitsNavigationGlobalEndpoint() throws Exception
+    {
+        respond("/api/navigation/global", 200, "{\"edition\":\"community\"}");
+        assertEquals("community", client().serverEdition());
+    }
+
+    @Test
+    public void serverEditionReturnsEmptyOn404() throws Exception
+    {
+        respond("/api/navigation/global", 404, "{}");
+        assertEquals("", client().serverEdition());
+    }
+
+    @Test
     public void searchIssuesPassesBranchAndPaging() throws Exception
     {
         AtomicReference<String> query = new AtomicReference<>();

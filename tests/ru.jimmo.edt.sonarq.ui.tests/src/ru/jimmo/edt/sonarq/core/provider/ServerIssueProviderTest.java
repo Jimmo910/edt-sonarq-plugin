@@ -37,14 +37,23 @@ public class ServerIssueProviderTest
     private static final class FakeClient implements ISonarServerClient
     {
         final List<IssuesPage> pages = new ArrayList<>();
+        String edition = "community";
         int searchCalls;
         int ruleCalls;
+        int editionCalls;
 
         @Override
         public IssuesPage searchIssuesPage(IssueQuery query, int page)
         {
             searchCalls++;
             return pages.get(Math.min(page, pages.size()) - 1);
+        }
+
+        @Override
+        public String serverEdition()
+        {
+            editionCalls++;
+            return edition;
         }
 
         @Override
@@ -95,6 +104,12 @@ public class ServerIssueProviderTest
         {
             searchCalls++;
             return ServerIssueProviderTest.page(12_000, 500, searchCalls + "-");
+        }
+
+        @Override
+        public String serverEdition()
+        {
+            return "community";
         }
 
         @Override
@@ -207,5 +222,31 @@ public class ServerIssueProviderTest
         provider.describeRule("bsl:R");
         provider.describeRule("bsl:R");
         assertEquals(1, client.ruleCalls);
+    }
+
+    @Test
+    public void communityEditionHasNoBranchSupport() throws Exception
+    {
+        FakeClient client = new FakeClient();
+        client.edition = "community";
+        assertFalse(new ServerIssueProvider(client).branchAnalysisSupported());
+    }
+
+    @Test
+    public void enterpriseEditionSupportsBranchAnalysis() throws Exception
+    {
+        FakeClient client = new FakeClient();
+        client.edition = "enterprise";
+        assertTrue(new ServerIssueProvider(client).branchAnalysisSupported());
+    }
+
+    @Test
+    public void branchAnalysisSupportIsCached() throws Exception
+    {
+        FakeClient client = new FakeClient();
+        ServerIssueProvider provider = new ServerIssueProvider(client);
+        provider.branchAnalysisSupported();
+        provider.branchAnalysisSupported();
+        assertEquals(1, client.editionCalls);
     }
 }

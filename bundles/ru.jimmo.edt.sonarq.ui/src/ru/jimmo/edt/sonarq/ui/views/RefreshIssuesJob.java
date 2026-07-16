@@ -6,6 +6,7 @@
 
 package ru.jimmo.edt.sonarq.ui.views;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 import org.eclipse.core.resources.IProject;
@@ -20,6 +21,7 @@ import org.eclipse.osgi.util.NLS;
 
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
+import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.provider.BranchResolver;
@@ -63,7 +65,10 @@ public class RefreshIssuesJob extends Job
         try
         {
             String requested = resolveRequestedBranch();
-            BranchState state = BranchResolver.resolve(requested, provider.listBranches(binding.projectKey()));
+            List<BranchInfo> branches = provider.branchAnalysisSupported()
+                ? provider.listBranches(binding.projectKey())
+                : List.<BranchInfo>of();
+            BranchState state = BranchResolver.resolve(requested, branches);
             IssueQuery query = new IssueQuery(binding.projectKey(),
                 state.branchesSupported() ? state.effectiveBranch() : null);
             IssueSnapshot result = provider.fetchIssues(query, monitor);

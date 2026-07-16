@@ -40,6 +40,7 @@ public class RefreshIssuesJobTest
     private static final class FakeProvider implements IIssueProvider
     {
         List<BranchInfo> branches = List.of();
+        boolean branchesCapable;
         SonarServerException failure;
         IssueQuery lastQuery;
 
@@ -64,6 +65,12 @@ public class RefreshIssuesJobTest
         public List<BranchInfo> listBranches(String projectKey)
         {
             return branches;
+        }
+
+        @Override
+        public boolean branchAnalysisSupported()
+        {
+            return branchesCapable;
         }
     }
 
@@ -100,6 +107,7 @@ public class RefreshIssuesJobTest
     public void queriesMainBranchWhenLocalBranchUnknown() throws Exception
     {
         FakeProvider provider = new FakeProvider();
+        provider.branchesCapable = true;
         provider.branches = List.of(new BranchInfo("main", true));
         RefreshResult result = run(provider, new ProjectBinding("p", "", ""), null);
         assertFalse(result.isError());
@@ -111,6 +119,7 @@ public class RefreshIssuesJobTest
     public void branchOverrideFromBindingIsUsed() throws Exception
     {
         FakeProvider provider = new FakeProvider();
+        provider.branchesCapable = true;
         provider.branches = List.of(new BranchInfo("main", true), new BranchInfo("release/1", false));
         RefreshResult result = run(provider, new ProjectBinding("p", "release/1", ""), null);
         assertEquals("release/1", result.branchState().effectiveBranch());
@@ -121,6 +130,7 @@ public class RefreshIssuesJobTest
     public void sessionBranchWinsOverBinding() throws Exception
     {
         FakeProvider provider = new FakeProvider();
+        provider.branchesCapable = true;
         provider.branches = List.of(new BranchInfo("main", true), new BranchInfo("release/1", false));
         RefreshResult result = run(provider, new ProjectBinding("p", "release/1", ""), "main");
         assertEquals("main", result.branchState().effectiveBranch());
@@ -140,7 +150,8 @@ public class RefreshIssuesJobTest
     public void communityServerQueriesWithoutBranch() throws Exception
     {
         FakeProvider provider = new FakeProvider();
-        provider.branches = List.of();
+        provider.branchesCapable = false;
+        provider.branches = List.of(new BranchInfo("main", true));
         RefreshResult result = run(provider, new ProjectBinding("p", "", ""), null);
         assertFalse(result.isError());
         assertNull(provider.lastQuery.branch());

@@ -49,4 +49,13 @@ public interface IIssueProvider
      * @throws SonarServerException if the call fails
      */
     List<BranchInfo> listBranches(String projectKey) throws SonarServerException;
+
+    /**
+     * Reports whether the bound server edition supports branch analysis.
+     *
+     * @return {@code true} only for the developer, enterprise and datacenter editions; community and
+     *     unknown editions return {@code false}
+     * @throws SonarServerException if the call fails
+     */
+    boolean branchAnalysisSupported() throws SonarServerException;
 }

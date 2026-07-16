@@ -32,6 +32,7 @@ public final class ServerIssueProvider implements IIssueProvider
 
     private final ISonarServerClient client;
     private final Map<String, SonarRule> ruleCache = new ConcurrentHashMap<>();
+    private volatile Boolean branchAnalysisSupported;
 
     /**
      * Creates a provider on top of the given client.
@@ -86,5 +87,21 @@ public final class ServerIssueProvider implements IIssueProvider
     public List<BranchInfo> listBranches(String projectKey) throws SonarServerException
     {
         return client.listBranches(projectKey);
+    }
+
+    @Override
+    public boolean branchAnalysisSupported() throws SonarServerException
+    {
+        Boolean cached = branchAnalysisSupported;
+        if (cached != null)
+        {
+            return cached.booleanValue();
+        }
+        String edition = client.serverEdition();
+        boolean supported = "developer".equals(edition) //$NON-NLS-1$
+            || "enterprise".equals(edition) //$NON-NLS-1$
+            || "datacenter".equals(edition); //$NON-NLS-1$
+        branchAnalysisSupported = Boolean.valueOf(supported);
+        return supported;
     }
 }

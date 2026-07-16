@@ -28,6 +28,15 @@ public interface ISonarServerClient
     String serverVersion() throws SonarServerException;
 
     /**
+     * Returns the SonarQube server edition.
+     *
+     * @return the lower-case edition ({@code "community"}, {@code "developer"}, {@code "enterprise"},
+     *     {@code "datacenter"}), or {@code ""} when unknown (server does not expose the field)
+     * @throws SonarServerException if the call fails
+     */
+    String serverEdition() throws SonarServerException;
+
+    /**
      * Lists the branches of a project.
      *
      * @param projectKey the SonarQube project key, not {@code null}
