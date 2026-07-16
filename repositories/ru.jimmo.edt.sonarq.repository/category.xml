@@ -4,5 +4,5 @@
    <feature id="ru.jimmo.edt.sonarq.feature">
       <category name="ru.jimmo.edt.sonarq"/>
    </feature>
-   <category-def name="ru.jimmo.edt.sonarq" label="Быстрые кнопки / SonarQ in EDT"/>
+   <category-def name="ru.jimmo.edt.sonarq" label="SonarQ in EDT"/>
 </site>
