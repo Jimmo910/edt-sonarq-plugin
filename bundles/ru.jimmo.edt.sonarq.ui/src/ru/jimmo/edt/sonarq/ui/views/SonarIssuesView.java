@@ -69,6 +69,7 @@ public class SonarIssuesView extends ViewPart
     private String sessionBranch;
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
+    private long refreshGeneration;
 
     @Override
     public void createPartControl(Composite parent)
@@ -219,6 +220,8 @@ public class SonarIssuesView extends ViewPart
 
     private void refreshIssues()
     {
+        refreshGeneration++;
+        long generation = refreshGeneration;
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null)
         {
@@ -236,14 +239,19 @@ public class SonarIssuesView extends ViewPart
         boundProjectKey = binding.projectKey();
         boundPathPrefix = binding.pathPrefix();
         IIssueProvider provider = new ServerIssueProvider(new SonarHttpClient(connection.get()));
-        new RefreshIssuesJob(provider, project, binding, sessionBranch, this::onRefreshFinished).schedule();
+        new RefreshIssuesJob(provider, project, binding, sessionBranch,
+            result -> onRefreshFinished(generation, result)).schedule();
     }
 
-    private void onRefreshFinished(RefreshResult result)
+    private void onRefreshFinished(long generation, RefreshResult result)
     {
         Display.getDefault().asyncExec(() ->
         {
             if (viewer.getControl().isDisposed())
+            {
+                return;
+            }
+            if (generation != refreshGeneration)
             {
                 return;
             }
