@@ -16,8 +16,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
+import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
@@ -97,6 +99,18 @@ public final class SonarHttpClient implements ISonarServerClient
     {
         return SonarJsonParser.parseComponents(
             get("/api/components/search?qualifiers=TRK&q=" + encode(namePart))); //$NON-NLS-1$
+    }
+
+    @Override
+    public Set<String> serverLanguages() throws SonarServerException
+    {
+        return SonarJsonParser.parseLanguages(get("/api/languages/list")); //$NON-NLS-1$
+    }
+
+    @Override
+    public CeTask ceTaskStatus(String taskId) throws SonarServerException
+    {
+        return SonarJsonParser.parseCeTask(get("/api/ce/task?id=" + encode(taskId))); //$NON-NLS-1$
     }
 
     private String get(String pathAndQuery) throws SonarServerException

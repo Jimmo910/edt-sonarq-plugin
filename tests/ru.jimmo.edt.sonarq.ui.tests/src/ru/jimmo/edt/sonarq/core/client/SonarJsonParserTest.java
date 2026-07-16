@@ -11,10 +11,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.Test;
 
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
+import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
@@ -94,5 +96,57 @@ public class SonarJsonParserTest
         List<ComponentInfo> components = SonarJsonParser.parseComponents(json);
         assertEquals(1, components.size());
         assertEquals("TestConfiguration", components.get(0).key());
+    }
+
+    @Test
+    public void parsesLanguages()
+    {
+        String json = """
+            { "languages": [ { "key": "bsl", "name": "BSL" }, { "key": "java", "name": "Java" } ] }""";
+        Set<String> languages = SonarJsonParser.parseLanguages(json);
+        assertEquals(2, languages.size());
+        assertTrue(languages.contains("bsl"));
+        assertTrue(languages.contains("java"));
+    }
+
+    @Test
+    public void parsesLanguagesEmptyWhenArrayMissing()
+    {
+        Set<String> languages = SonarJsonParser.parseLanguages("{}");
+        assertTrue(languages.isEmpty());
+    }
+
+    @Test
+    public void parsesCeTaskSuccessWithoutErrorMessage()
+    {
+        String json = """
+            { "task": { "status": "SUCCESS" } }""";
+        CeTask task = SonarJsonParser.parseCeTask(json);
+        assertEquals("SUCCESS", task.status());
+        assertEquals("", task.errorMessage());
+        assertTrue(task.terminal());
+        assertTrue(task.success());
+    }
+
+    @Test
+    public void parsesCeTaskFailedWithErrorMessage()
+    {
+        String json = """
+            { "task": { "status": "FAILED", "errorMessage": "boom" } }""";
+        CeTask task = SonarJsonParser.parseCeTask(json);
+        assertEquals("FAILED", task.status());
+        assertEquals("boom", task.errorMessage());
+        assertTrue(task.terminal());
+        assertFalse(task.success());
+    }
+
+    @Test
+    public void ceTaskInProgressIsNotTerminal()
+    {
+        String json = """
+            { "task": { "status": "IN_PROGRESS" } }""";
+        CeTask task = SonarJsonParser.parseCeTask(json);
+        assertFalse(task.terminal());
+        assertFalse(task.success());
     }
 }

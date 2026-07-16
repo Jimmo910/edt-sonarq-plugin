@@ -7,7 +7,9 @@
 package ru.jimmo.edt.sonarq.core.client;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -15,6 +17,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
+import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
@@ -110,6 +113,38 @@ public final class SonarJsonParser
             }
         }
         return result;
+    }
+
+    /**
+     * Parses {@code /api/languages/list} response.
+     *
+     * @param json the response body, not {@code null}
+     * @return the language keys, never {@code null}; empty if the server reports none
+     */
+    public static Set<String> parseLanguages(String json)
+    {
+        Set<String> result = new LinkedHashSet<>();
+        JsonArray array = JsonParser.parseString(json).getAsJsonObject().getAsJsonArray("languages"); //$NON-NLS-1$
+        if (array != null)
+        {
+            for (JsonElement element : array)
+            {
+                result.add(asString(element.getAsJsonObject(), "key")); //$NON-NLS-1$
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Parses {@code /api/ce/task} response.
+     *
+     * @param json the response body, not {@code null}
+     * @return the task status, never {@code null}
+     */
+    public static CeTask parseCeTask(String json)
+    {
+        JsonObject task = JsonParser.parseString(json).getAsJsonObject().getAsJsonObject("task"); //$NON-NLS-1$
+        return new CeTask(asString(task, "status"), asString(task, "errorMessage")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     private static SonarIssue parseIssue(JsonObject issue)

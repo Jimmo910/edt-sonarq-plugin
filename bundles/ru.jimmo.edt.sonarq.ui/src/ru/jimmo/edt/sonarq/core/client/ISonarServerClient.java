@@ -7,8 +7,10 @@
 package ru.jimmo.edt.sonarq.core.client;
 
 import java.util.List;
+import java.util.Set;
 
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
+import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
@@ -61,4 +63,21 @@ public interface ISonarServerClient
      * @throws SonarServerException if the call fails
      */
     List<ComponentInfo> searchProjects(String namePart) throws SonarServerException;
+
+    /**
+     * Returns the language keys configured on the server.
+     *
+     * @return the language keys, never {@code null}
+     * @throws SonarServerException if the call fails
+     */
+    Set<String> serverLanguages() throws SonarServerException;
+
+    /**
+     * Fetches the status of a Compute Engine (background analysis) task.
+     *
+     * @param taskId the task id, not {@code null}
+     * @return the task status, never {@code null}
+     * @throws SonarServerException if the call fails
+     */
+    CeTask ceTaskStatus(String taskId) throws SonarServerException;
 }

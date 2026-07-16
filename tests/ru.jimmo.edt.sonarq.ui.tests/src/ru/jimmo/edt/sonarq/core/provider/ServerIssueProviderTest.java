@@ -12,6 +12,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
@@ -19,6 +20,7 @@ import org.junit.Test;
 
 import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
+import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
@@ -69,6 +71,18 @@ public class ServerIssueProviderTest
         {
             return List.of();
         }
+
+        @Override
+        public Set<String> serverLanguages()
+        {
+            return Set.of();
+        }
+
+        @Override
+        public CeTask ceTaskStatus(String taskId)
+        {
+            return new CeTask("SUCCESS", "");
+        }
     }
 
     /** Always serves a full 500-issue page with unique keys, so only the cap can stop the loop. */
@@ -105,6 +119,18 @@ public class ServerIssueProviderTest
         public List<ComponentInfo> searchProjects(String namePart)
         {
             return List.of();
+        }
+
+        @Override
+        public Set<String> serverLanguages()
+        {
+            return Set.of();
+        }
+
+        @Override
+        public CeTask ceTaskStatus(String taskId)
+        {
+            return new CeTask("SUCCESS", "");
         }
     }
 

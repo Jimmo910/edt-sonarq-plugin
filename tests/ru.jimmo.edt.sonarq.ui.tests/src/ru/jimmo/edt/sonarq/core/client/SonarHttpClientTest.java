@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.After;
@@ -24,6 +25,7 @@ import org.junit.Test;
 
 import com.sun.net.httpserver.HttpServer;
 
+import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 
@@ -157,5 +159,33 @@ public class SonarHttpClientTest
     {
         respond("/api/project_branches/list", 404, "{\"errors\":[]}");
         assertTrue(client().listBranches("my:key").isEmpty());
+    }
+
+    @Test
+    public void serverLanguagesHitsLanguagesListEndpoint() throws Exception
+    {
+        respond("/api/languages/list", 200,
+            "{\"languages\":[{\"key\":\"bsl\",\"name\":\"BSL\"},{\"key\":\"java\",\"name\":\"Java\"}]}");
+        Set<String> languages = client().serverLanguages();
+        assertEquals(2, languages.size());
+        assertTrue(languages.contains("bsl"));
+        assertTrue(languages.contains("java"));
+    }
+
+    @Test
+    public void ceTaskStatusHitsCeTaskEndpointWithEncodedId() throws Exception
+    {
+        AtomicReference<String> query = new AtomicReference<>();
+        server.createContext("/api/ce/task", exchange ->
+        {
+            query.set(exchange.getRequestURI().getRawQuery());
+            byte[] bytes = "{\"task\":{\"status\":\"SUCCESS\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        CeTask task = client().ceTaskStatus("task id/1");
+        assertTrue(task.success());
+        assertEquals("id=task+id%2F1", query.get());
     }
 }
