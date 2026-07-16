@@ -6,6 +6,7 @@
 
 package ru.jimmo.edt.sonarq.ui.views;
 
+import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -15,6 +16,7 @@ import java.util.function.Function;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.ICoreRunnable;
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
@@ -22,6 +24,7 @@ import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IMenuCreator;
 import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.Separator;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
@@ -45,9 +48,12 @@ import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.part.ViewPart;
 
+import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchConfig;
+import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
@@ -57,7 +63,10 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
+import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
+import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
+import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
 
 /** The SonarQube Issues view: an issue tree with a rule description pane. */
@@ -173,20 +182,14 @@ public class SonarIssuesView extends ViewPart
 
         bannerLink = new Link(bannerComposite, SWT.NONE);
         bannerLink.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
-        bannerLink.addSelectionListener(SelectionListener.widgetSelectedAdapter(event ->
-        {
-            if (branchState != null)
-            {
-                sessionBranch = branchState.effectiveBranch();
-                refreshIssues();
-            }
-        }));
+        bannerLink.addSelectionListener(SelectionListener.widgetSelectedAdapter(event -> launchAnalysis()));
     }
 
     private void createToolBar()
     {
         IToolBarManager toolBar = getViewSite().getActionBars().getToolBarManager();
         toolBar.add(createRefreshAction());
+        toolBar.add(createRunAnalysisAction());
         toolBar.add(createProjectAction());
         toolBar.add(new Separator());
         toolBar.add(createSeverityMenuAction());
@@ -205,6 +208,18 @@ public class SonarIssuesView extends ViewPart
             public void run()
             {
                 refreshIssues();
+            }
+        };
+    }
+
+    private Action createRunAnalysisAction()
+    {
+        return new Action(Messages.IssuesView_RunAnalysisAction, IAction.AS_PUSH_BUTTON)
+        {
+            @Override
+            public void run()
+            {
+                launchAnalysis();
             }
         };
     }
@@ -366,6 +381,118 @@ public class SonarIssuesView extends ViewPart
             result -> onRefreshFinished(generation, result)).schedule();
     }
 
+    /**
+     * Launches a SonarQube analysis of the selected project on the requested branch.
+     *
+     * <p>Runs on the UI thread. The project, binding and connection are resolved exactly as in
+     * {@link #refreshIssues()}; when they are not configured the status line shows the not-configured
+     * hint and nothing is scheduled. A confirmation dialog guards runs that would overwrite an
+     * existing server branch (see {@link #needsConfirmation(boolean)}). The heavy work runs in an
+     * {@link AnalysisJob}; results and progress are reported back to the status line, and a successful
+     * scanner run refreshes the issue tree.
+     */
+    private void launchAnalysis()
+    {
+        IProject project = selectedProject != null ? selectedProject : firstOpenProject();
+        if (project == null || project.getLocation() == null)
+        {
+            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            return;
+        }
+        selectedProject = project;
+        ProjectBinding binding = new ProjectBindingStore().load(project);
+        Optional<SonarConnection> connection = new SonarConnectionFactory().create();
+        if (!binding.isConfigured() || connection.isEmpty())
+        {
+            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            return;
+        }
+        String requested = resolveRequestedBranch(project, binding);
+        boolean branchesSupported = branchState != null && branchState.branchesSupported();
+        if (needsConfirmation(branchesSupported) && !confirmMainAnalysis(requested))
+        {
+            return;
+        }
+        scheduleAnalysis(project, binding, connection.get(), requested, branchesSupported);
+    }
+
+    private void scheduleAnalysis(IProject project, ProjectBinding binding, SonarConnection connection,
+        String requested, boolean branchesSupported)
+    {
+        AnalysisLaunchConfig config = new AnalysisLaunchConfigFactory().create();
+        String ciSecret = new SecureTokenStore().loadCiSecret();
+        Path stateLocation = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+        ISonarServerClient client = new SonarHttpClient(connection);
+        AnalysisRequest request = new AnalysisRequest(project, binding, connection, config, requested,
+            branchesSupported, ciSecret, stateLocation, client);
+        new AnalysisJob(request,
+            () -> Display.getDefault().asyncExec(this::resetBranchAndRefresh),
+            text -> Display.getDefault().asyncExec(() -> applyAnalysisStatus(text))).schedule();
+    }
+
+    private void resetBranchAndRefresh()
+    {
+        if (!viewer.getControl().isDisposed())
+        {
+            sessionBranch = null;
+            refreshIssues();
+        }
+    }
+
+    private void applyAnalysisStatus(String text)
+    {
+        if (!statusLabel.isDisposed())
+        {
+            statusLabel.setText(text);
+            statusLabel.getParent().layout();
+        }
+    }
+
+    private String resolveRequestedBranch(IProject project, ProjectBinding binding)
+    {
+        if (sessionBranch != null && !sessionBranch.isEmpty())
+        {
+            return sessionBranch;
+        }
+        if (!binding.branchOverride().isEmpty())
+        {
+            return binding.branchOverride();
+        }
+        IPath location = project.getLocation();
+        return location != null
+            ? GitBranchDetector.detectBranch(location.toFile()).orElse(null)
+            : null;
+    }
+
+    /**
+     * Decides whether an overwrite confirmation is required before launching.
+     *
+     * <p>The confirmation is shown unless the analysis creates a new branch on the server, that is
+     * unless the last refresh reported the requested branch as missing. It is also shown when the
+     * server edition does not support branches, because the result then overwrites the single default
+     * branch until the next CI run.
+     *
+     * @param branchesSupported whether the server edition supports branches
+     * @return {@code true} when the user should confirm the run
+     */
+    private boolean needsConfirmation(boolean branchesSupported)
+    {
+        if (!branchesSupported)
+        {
+            return true;
+        }
+        return branchState == null || !branchState.missingOnServer();
+    }
+
+    private boolean confirmMainAnalysis(String requested)
+    {
+        String displayBranch = requested != null ? requested
+            : branchState != null && branchState.effectiveBranch() != null
+                ? branchState.effectiveBranch() : "main"; //$NON-NLS-1$
+        return MessageDialog.openConfirm(getSite().getShell(), Messages.Analysis_Confirm_MainTitle,
+            NLS.bind(Messages.Analysis_Confirm_MainBody, displayBranch));
+    }
+
     private void requestRuleDescription(String ruleKey)
     {
         requestedRuleKey = ruleKey;
@@ -467,8 +594,7 @@ public class SonarIssuesView extends ViewPart
         if (branchState.missingOnServer())
         {
             bannerLabel.setText(NLS.bind(Messages.IssuesView_BranchMissing, branchState.requestedBranch()));
-            bannerLink.setText("<a>" //$NON-NLS-1$
-                + NLS.bind(Messages.IssuesView_ShowMainBranch, branchState.effectiveBranch()) + "</a>"); //$NON-NLS-1$
+            bannerLink.setText("<a>" + Messages.IssuesView_SendBranchToAnalysis + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$
             data.exclude = false;
             bannerComposite.setVisible(true);
         }

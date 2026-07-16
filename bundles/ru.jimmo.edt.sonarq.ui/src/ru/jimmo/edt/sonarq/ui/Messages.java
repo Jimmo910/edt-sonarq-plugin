@@ -13,6 +13,16 @@ public final class Messages extends NLS
 {
     private static final String BUNDLE_NAME = "ru.jimmo.edt.sonarq.ui.messages"; //$NON-NLS-1$
 
+    public static String AnalysisJob_Name;
+    public static String Analysis_CiFailed;
+    public static String Analysis_CiTriggered;
+    public static String Analysis_Confirm_MainBody;
+    public static String Analysis_Confirm_MainTitle;
+    public static String Analysis_Done;
+    public static String Analysis_NoBslOnServer;
+    public static String Analysis_ScannerFailed;
+    public static String Analysis_ScannerNotFound;
+    public static String Analysis_ServerProcessing;
     public static String IssuesView_BranchMissing;
     public static String IssuesView_Column_Location;
     public static String IssuesView_Column_Message;
@@ -24,8 +34,9 @@ public final class Messages extends NLS
     public static String IssuesView_GroupByRule;
     public static String IssuesView_ProjectMenu;
     public static String IssuesView_RefreshAction;
+    public static String IssuesView_RunAnalysisAction;
+    public static String IssuesView_SendBranchToAnalysis;
     public static String IssuesView_SeverityMenu;
-    public static String IssuesView_ShowMainBranch;
     public static String IssuesView_Status_AuthError;
     public static String IssuesView_Status_Error;
     public static String IssuesView_Status_Loaded;
