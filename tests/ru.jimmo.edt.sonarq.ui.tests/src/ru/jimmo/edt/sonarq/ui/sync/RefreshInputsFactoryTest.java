@@ -7,7 +7,9 @@
 package ru.jimmo.edt.sonarq.ui.sync;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Optional;
@@ -23,6 +25,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.osgi.service.prefs.BackingStoreException;
 
+import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
+import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
@@ -35,11 +39,14 @@ public class RefreshInputsFactoryTest
 
     private String savedUrl;
 
+    private String savedMode;
+
     @Before
     public void setUp() throws CoreException, BackingStoreException
     {
         IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
         savedUrl = node.get(PreferenceConstants.PREF_SERVER_URL, ""); //$NON-NLS-1$
+        savedMode = node.get(PreferenceConstants.PREF_MODE, null);
         node.remove(PreferenceConstants.PREF_SERVER_URL);
         node.flush();
         project = ResourcesPlugin.getWorkspace().getRoot().getProject("refresh-inputs-test"); //$NON-NLS-1$
@@ -61,6 +68,14 @@ public class RefreshInputsFactoryTest
         else
         {
             node.put(PreferenceConstants.PREF_SERVER_URL, savedUrl);
+        }
+        if (savedMode == null)
+        {
+            node.remove(PreferenceConstants.PREF_MODE);
+        }
+        else
+        {
+            node.put(PreferenceConstants.PREF_MODE, savedMode);
         }
         node.flush();
         if (project.exists())
@@ -113,5 +128,53 @@ public class RefreshInputsFactoryTest
         assertEquals(project, inputs.get().project());
         assertNotNull(inputs.get().connection());
         assertNotNull(inputs.get().provider());
+    }
+
+    @Test
+    public void serverModeYieldsServerIssueProvider() throws BackingStoreException
+    {
+        // The default mode is server, so no explicit PREF_MODE is written here.
+        ProjectBinding binding = new ProjectBinding("proj:key", "", "conf"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        new ProjectBindingStore().save(project, binding);
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_SERVER_URL, "https://sonar.example.com"); //$NON-NLS-1$
+        node.flush();
+
+        Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
+        assertTrue(inputs.isPresent());
+        assertTrue(inputs.get().provider() instanceof ServerIssueProvider);
+        assertNotNull(inputs.get().connection());
+    }
+
+    @Test
+    public void localModeYieldsInputsWithoutServerUrl() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.remove(PreferenceConstants.PREF_SERVER_URL);
+        node.flush();
+        ProjectBinding binding = new ProjectBinding("proj:key", "", "conf"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        new ProjectBindingStore().save(project, binding);
+
+        Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
+        assertTrue(inputs.isPresent());
+        assertNull(inputs.get().connection());
+        assertTrue(inputs.get().provider() instanceof LocalIssueProvider);
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.get().provider();
+        assertFalse(provider.branchAnalysisSupported());
+        assertEquals("proj:key", provider.projectKey()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void localModeEmptyBindingUsesProjectNameAsKey() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+
+        Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
+        assertTrue(inputs.isPresent());
+        assertEquals("", inputs.get().binding().projectKey()); //$NON-NLS-1$
+        assertEquals(project.getName(), ((LocalIssueProvider)inputs.get().provider()).projectKey());
     }
 }

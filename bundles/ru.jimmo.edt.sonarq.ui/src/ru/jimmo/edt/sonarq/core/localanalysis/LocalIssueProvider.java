@@ -107,6 +107,20 @@ public final class LocalIssueProvider implements IIssueProvider
         }
     }
 
+    /**
+     * The SonarQube project key this provider prefixes component keys with.
+     *
+     * <p>Exposed so callers that build the provider (the refresh-inputs factory) can assert which key was
+     * resolved — in local analysis mode it is the binding's project key when configured, otherwise the
+     * workspace project name.
+     *
+     * @return the project key, never {@code null}
+     */
+    public String projectKey()
+    {
+        return projectKey;
+    }
+
     @Override
     public SonarRule describeRule(String ruleKey)
     {

@@ -23,6 +23,7 @@ public class PreferenceInitializer extends AbstractPreferenceInitializer
         node.put(PreferenceConstants.PREF_SERVER_URL, ""); //$NON-NLS-1$
         node.putInt(PreferenceConstants.PREF_TIMEOUT_SECONDS, PreferenceConstants.DEFAULT_TIMEOUT_SECONDS);
         node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_SERVER);
+        node.put(PreferenceConstants.PREF_BSL_LS_PATH, ""); //$NON-NLS-1$
         node.put(PreferenceConstants.PREF_LAUNCH_MODE, AnalysisLaunchMode.LOCAL_AUTO.name());
         node.put(PreferenceConstants.PREF_SCANNER_PATH, ""); //$NON-NLS-1$
         node.put(PreferenceConstants.PREF_CI_URL, ""); //$NON-NLS-1$
