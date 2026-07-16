@@ -23,6 +23,7 @@ import org.eclipse.jface.action.IMenuCreator;
 import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
+import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.TreeViewerColumn;
@@ -114,6 +115,7 @@ public class SonarIssuesView extends ViewPart
         viewer.setContentProvider(new IssueTreeContentProvider());
         viewer.addFilter(new IssueViewerFilter(state));
         createColumns();
+        ColumnViewerToolTipSupport.enableFor(viewer);
 
         Composite detail = new Composite(sash, SWT.NONE);
         detail.setLayout(new FillLayout());
@@ -131,6 +133,22 @@ public class SonarIssuesView extends ViewPart
             {
                 requestedRuleKey = null;
                 rulePanel.showMessage(""); //$NON-NLS-1$
+            }
+        });
+
+        viewer.addDoubleClickListener(event ->
+        {
+            Object element = ((IStructuredSelection)event.getSelection()).getFirstElement();
+            if (element instanceof IssueEntry entry)
+            {
+                if (selectedProject != null)
+                {
+                    IssueNavigation.open(getSite().getPage(), selectedProject, entry);
+                }
+            }
+            else if (element instanceof IssueGroup group)
+            {
+                viewer.setExpandedState(group, !viewer.getExpandedState(group));
             }
         });
 
@@ -284,6 +302,16 @@ public class SonarIssuesView extends ViewPart
                 if (element instanceof IssueEntry entry && entry.relativePath() == null)
                 {
                     return viewer.getControl().getDisplay().getSystemColor(SWT.COLOR_GRAY);
+                }
+                return null;
+            }
+
+            @Override
+            public String getToolTipText(Object element)
+            {
+                if (element instanceof IssueEntry entry && entry.relativePath() == null)
+                {
+                    return Messages.IssuesView_FileMissing_Tooltip;
                 }
                 return null;
             }
