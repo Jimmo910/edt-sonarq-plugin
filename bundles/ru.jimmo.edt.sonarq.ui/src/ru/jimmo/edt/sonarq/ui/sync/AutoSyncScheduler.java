@@ -72,10 +72,22 @@ public final class AutoSyncScheduler
         }
         int minutes = service.getInt(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_AUTO_SYNC_MINUTES,
             PreferenceConstants.DEFAULT_AUTO_SYNC_MINUTES, null);
-        long intervalMillis = minutes * MILLIS_PER_MINUTE;
+        long intervalMillis = delayMillis(minutes);
         AutoSyncJob job = new AutoSyncJob(generation, intervalMillis);
         currentJob = job;
         job.schedule(intervalMillis);
+    }
+
+    /**
+     * Converts a preference interval expressed in minutes to milliseconds, flooring it at one minute so a
+     * misconfigured (zero or negative) preference value cannot degenerate into a busy-reschedule loop.
+     *
+     * @param minutes the configured interval in minutes
+     * @return the interval in milliseconds, never less than {@value #MILLIS_PER_MINUTE}
+     */
+    private static long delayMillis(int minutes)
+    {
+        return Math.max(1, minutes) * MILLIS_PER_MINUTE;
     }
 
     private static synchronized void rescheduleIfActive(Job job, long jobGeneration, long intervalMillis)

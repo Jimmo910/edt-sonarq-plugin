@@ -57,12 +57,18 @@ public final class IssueMarkerSynchronizer
     /**
      * Removes all issue markers from every resource in the workspace.
      *
+     * <p>The deletion is wrapped in an {@link IWorkspaceRunnable} scheduled on the workspace root rule, so
+     * it serializes with any in-flight {@link #sync(IProject, List)} call (whose project rule is contained
+     * within the root rule) instead of racing it.</p>
+     *
      * @throws CoreException when the marker deletion fails
      */
     public void clearAll() throws CoreException
     {
-        ResourcesPlugin.getWorkspace().getRoot()
-            .deleteMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_INFINITE);
+        ResourcesPlugin.getWorkspace().run(
+            monitor -> ResourcesPlugin.getWorkspace().getRoot()
+                .deleteMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_INFINITE),
+            ResourcesPlugin.getWorkspace().getRoot(), IWorkspace.AVOID_UPDATE, null);
     }
 
     private static void createMarker(IProject project, IssueEntry entry) throws CoreException
