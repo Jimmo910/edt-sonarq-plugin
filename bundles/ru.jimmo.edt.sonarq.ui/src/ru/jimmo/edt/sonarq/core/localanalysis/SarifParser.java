@@ -24,7 +24,7 @@ import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 /** Parses SARIF reports produced by a local BSL Language Server analysis run. */
 public final class SarifParser
 {
-    private static final String FILE_SCHEME_PREFIX = "file:///"; //$NON-NLS-1$
+    private static final String FILE_SCHEME_PREFIX = "file://"; //$NON-NLS-1$
 
     private static final String DOT_SLASH_PREFIX = "./"; //$NON-NLS-1$
 
@@ -211,7 +211,7 @@ public final class SarifParser
         String normalized = uri.replace('\\', '/');
         if (normalized.startsWith(FILE_SCHEME_PREFIX))
         {
-            normalized = normalized.substring(FILE_SCHEME_PREFIX.length());
+            normalized = stripFileScheme(normalized);
         }
         normalized = stripBasePrefix(normalized, uriBasePrefix);
         while (normalized.startsWith(DOT_SLASH_PREFIX))
@@ -219,6 +219,40 @@ public final class SarifParser
             normalized = normalized.substring(DOT_SLASH_PREFIX.length());
         }
         return normalized;
+    }
+
+    /**
+     * Removes the {@code file://} scheme from a forward-slashed URI while preserving the root slash of a
+     * POSIX absolute path.
+     *
+     * <p>A Windows URI {@code file:///E:/...} leaves a spurious leading slash before the drive letter
+     * ({@code /E:/...}); that slash is dropped. A POSIX URI {@code file:///home/...} leaves a genuine root
+     * slash ({@code /home/...}); it is kept so relativization against an absolute base prefix still works.
+     *
+     * @param uri the forward-slashed URI starting with {@code file://}, not {@code null}
+     * @return the scheme-stripped path, never {@code null}
+     */
+    private static String stripFileScheme(String uri)
+    {
+        String path = uri.substring(FILE_SCHEME_PREFIX.length());
+        return isWindowsDrivePath(path) ? path.substring(1) : path;
+    }
+
+    /**
+     * Tells whether a scheme-stripped path has the Windows form {@code /<letter>:/...} left behind by a
+     * {@code file:///E:/...} URI.
+     *
+     * @param path the scheme-stripped path, not {@code null}
+     * @return {@code true} when the path starts with a slash, an ASCII drive letter, a colon and a slash
+     */
+    private static boolean isWindowsDrivePath(String path)
+    {
+        if (path.length() < 4 || path.charAt(0) != '/' || path.charAt(2) != ':' || path.charAt(3) != '/')
+        {
+            return false;
+        }
+        char drive = path.charAt(1);
+        return (drive >= 'A' && drive <= 'Z') || (drive >= 'a' && drive <= 'z');
     }
 
     /**

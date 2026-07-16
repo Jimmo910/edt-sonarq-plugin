@@ -257,8 +257,44 @@ public class SarifParserTest
               ]
             }""";
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
-        assertEquals("TestConfiguration:src/CommonModules/X/Module.bsl", //$NON-NLS-1$
+        // file:///src/... is a POSIX-absolute path: the scheme is stripped but the root slash survives.
+        assertEquals("TestConfiguration:/src/CommonModules/X/Module.bsl", //$NON-NLS-1$
             report.issues().get(0).componentKey());
+    }
+
+    @Test
+    public void posixAbsoluteFileUriIsRelativizedAgainstBasePrefix()
+    {
+        // Linux BSL Language Server output: an absolute POSIX file:/// location keeps its root slash so the
+        // base prefix strips cleanly instead of eating the leading slash of /home/... .
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "MagicNumber",
+                      "level": "note",
+                      "message": { "text": "Magic number" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": {
+                              "uri": "file:///home/user/proj/src/M.bsl"
+                            },
+                            "region": { "startLine": 3 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "/home/user/proj"); //$NON-NLS-1$
+        SonarIssue issue = report.issues().get(0);
+        assertEquals("TestConfiguration:src/M.bsl", issue.componentKey()); //$NON-NLS-1$
+        assertEquals("MagicNumber:src/M.bsl:3", issue.key()); //$NON-NLS-1$
     }
 
     @Test
