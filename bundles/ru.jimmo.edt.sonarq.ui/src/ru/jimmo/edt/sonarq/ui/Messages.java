@@ -23,6 +23,7 @@ public final class Messages extends NLS
     public static String Analysis_ScannerFailed;
     public static String Analysis_ScannerNotFound;
     public static String Analysis_ServerProcessing;
+    public static String AutoSyncJob_Name;
     public static String IssuesView_BranchMissing;
     public static String IssuesView_Column_Location;
     public static String IssuesView_Column_Message;

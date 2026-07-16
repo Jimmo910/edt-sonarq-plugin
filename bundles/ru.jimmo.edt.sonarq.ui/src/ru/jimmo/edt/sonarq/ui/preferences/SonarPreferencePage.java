@@ -257,9 +257,6 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         node.put(PreferenceConstants.PREF_SCANNER_PATH, scannerPathText.getText().trim());
         node.put(PreferenceConstants.PREF_CI_URL, ciUrlText.getText().trim());
         node.put(PreferenceConstants.PREF_EXTRA_ARGS, extraArgsText.getText().trim());
-        // Note: no marker clean-up here on principle - a preference-change listener (see the
-        // editor-markers increment's Task M4) owns reacting to PREF_SHOW_MARKERS transitioning
-        // to false and clearing existing markers; this page only persists the raw values.
         node.putBoolean(PreferenceConstants.PREF_SHOW_MARKERS, showMarkersButton.getSelection());
         node.putBoolean(PreferenceConstants.PREF_AUTO_SYNC, autoSyncButton.getSelection());
         node.putInt(PreferenceConstants.PREF_AUTO_SYNC_MINUTES, autoSyncMinutesSpinner.getSelection());

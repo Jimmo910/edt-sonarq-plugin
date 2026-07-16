@@ -67,7 +67,6 @@ import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
-import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
@@ -77,6 +76,8 @@ import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
+import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
+import ru.jimmo.edt.sonarq.ui.sync.RefreshInputsFactory;
 
 /** The SonarQube Issues view: an issue tree with a rule description pane. */
 public class SonarIssuesView extends ViewPart
@@ -376,17 +377,17 @@ public class SonarIssuesView extends ViewPart
             return;
         }
         selectedProject = project;
-        ProjectBinding binding = new ProjectBindingStore().load(project);
-        Optional<SonarConnection> connection = new SonarConnectionFactory().create();
-        if (!binding.isConfigured() || connection.isEmpty())
+        Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
+        if (inputs.isEmpty())
         {
             statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
             return;
         }
-        boundProjectKey = binding.projectKey();
-        boundPathPrefix = binding.pathPrefix();
-        currentProvider = new ServerIssueProvider(new SonarHttpClient(connection.get()));
-        new RefreshIssuesJob(currentProvider, project, binding, sessionBranch,
+        ProjectRefreshInputs refreshInputs = inputs.get();
+        boundProjectKey = refreshInputs.binding().projectKey();
+        boundPathPrefix = refreshInputs.binding().pathPrefix();
+        currentProvider = refreshInputs.provider();
+        new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
             result -> onRefreshFinished(generation, result)).schedule();
     }
 

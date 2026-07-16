@@ -48,6 +48,21 @@ public class PluginContributionTest
         assertNotNull(extension);
     }
 
+    @Test
+    public void startupIsRegistered()
+    {
+        boolean found = false;
+        for (IConfigurationElement element : Platform.getExtensionRegistry()
+            .getConfigurationElementsFor("org.eclipse.ui.startup"))
+        {
+            if ("ru.jimmo.edt.sonarq.ui.SonarqStartup".equals(element.getAttribute("class")))
+            {
+                found = true;
+            }
+        }
+        assertTrue(found);
+    }
+
     private static Set<String> extensionIds(String point)
     {
         Set<String> ids = new HashSet<>();
