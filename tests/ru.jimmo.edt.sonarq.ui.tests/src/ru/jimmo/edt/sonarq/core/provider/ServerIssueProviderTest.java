@@ -71,6 +71,43 @@ public class ServerIssueProviderTest
         }
     }
 
+    /** Always serves a full 500-issue page with unique keys, so only the cap can stop the loop. */
+    private static final class EndlessFakeClient implements ISonarServerClient
+    {
+        int searchCalls;
+
+        @Override
+        public IssuesPage searchIssuesPage(IssueQuery query, int page)
+        {
+            searchCalls++;
+            return ServerIssueProviderTest.page(12_000, 500, searchCalls + "-");
+        }
+
+        @Override
+        public SonarRule showRule(String ruleKey)
+        {
+            return new SonarRule(ruleKey, "name", "<p/>");
+        }
+
+        @Override
+        public String serverVersion()
+        {
+            return "10.0";
+        }
+
+        @Override
+        public List<BranchInfo> listBranches(String projectKey)
+        {
+            return List.of();
+        }
+
+        @Override
+        public List<ComponentInfo> searchProjects(String namePart)
+        {
+            return List.of();
+        }
+    }
+
     private static SonarIssue issue(String key)
     {
         return new SonarIssue(key, "bsl:R", SonarSeverity.MAJOR, SonarIssueType.CODE_SMELL,
@@ -122,6 +159,18 @@ public class ServerIssueProviderTest
         NullProgressMonitor cancelled = new NullProgressMonitor();
         cancelled.setCanceled(true);
         new ServerIssueProvider(client).fetchIssues(new IssueQuery("p", null), cancelled);
+    }
+
+    @Test
+    public void capsCollectionAtMaxIssues() throws Exception
+    {
+        EndlessFakeClient client = new EndlessFakeClient();
+        IssueSnapshot snapshot = new ServerIssueProvider(client)
+            .fetchIssues(new IssueQuery("p", null), new NullProgressMonitor());
+        assertEquals(ServerIssueProvider.MAX_ISSUES, snapshot.issues().size());
+        assertEquals(12_000, snapshot.serverTotal());
+        assertTrue(snapshot.truncated());
+        assertEquals(20, client.searchCalls);
     }
 
     @Test
