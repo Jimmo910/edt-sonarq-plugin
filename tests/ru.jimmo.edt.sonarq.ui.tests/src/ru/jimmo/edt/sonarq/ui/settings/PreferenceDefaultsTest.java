@@ -25,5 +25,7 @@ public class PreferenceDefaultsTest
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_MODE, null, null));
         assertEquals(30,
             service.getInt(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_TIMEOUT_SECONDS, -1, null));
+        assertEquals("LOCAL_AUTO",
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_LAUNCH_MODE, null, null));
     }
 }

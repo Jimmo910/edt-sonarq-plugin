@@ -19,6 +19,8 @@ public final class SecureTokenStore
 
     private static final String KEY_TOKEN = "token"; //$NON-NLS-1$
 
+    private static final String KEY_CI_SECRET = "ciSecret"; //$NON-NLS-1$
+
     /**
      * Loads the stored user token.
      *
@@ -26,15 +28,7 @@ public final class SecureTokenStore
      */
     public String loadToken()
     {
-        ISecurePreferences node = SecurePreferencesFactory.getDefault().node(NODE_PATH);
-        try
-        {
-            return node.get(KEY_TOKEN, ""); //$NON-NLS-1$
-        }
-        catch (StorageException e)
-        {
-            return ""; //$NON-NLS-1$
-        }
+        return load(KEY_TOKEN);
     }
 
     /**
@@ -46,8 +40,48 @@ public final class SecureTokenStore
      */
     public void saveToken(String token) throws StorageException, IOException
     {
+        save(KEY_TOKEN, token);
+    }
+
+    /**
+     * Loads the stored CI trigger secret.
+     *
+     * @return the secret, or an empty string when none is stored or it cannot be read
+     */
+    public String loadCiSecret()
+    {
+        return load(KEY_CI_SECRET);
+    }
+
+    /**
+     * Stores the CI trigger secret, encrypted.
+     *
+     * @param secret the secret to store, not {@code null}
+     * @throws StorageException when the value cannot be encrypted
+     * @throws IOException when the secure storage cannot be persisted to disk
+     */
+    public void saveCiSecret(String secret) throws StorageException, IOException
+    {
+        save(KEY_CI_SECRET, secret);
+    }
+
+    private String load(String key)
+    {
         ISecurePreferences node = SecurePreferencesFactory.getDefault().node(NODE_PATH);
-        node.put(KEY_TOKEN, token, true);
+        try
+        {
+            return node.get(key, ""); //$NON-NLS-1$
+        }
+        catch (StorageException e)
+        {
+            return ""; //$NON-NLS-1$
+        }
+    }
+
+    private void save(String key, String value) throws StorageException, IOException
+    {
+        ISecurePreferences node = SecurePreferencesFactory.getDefault().node(NODE_PATH);
+        node.put(key, value, true);
         node.flush();
     }
 }

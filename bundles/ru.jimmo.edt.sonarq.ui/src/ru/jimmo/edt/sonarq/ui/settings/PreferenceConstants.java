@@ -24,6 +24,18 @@ public final class PreferenceConstants
     /** The default request timeout, in seconds. */
     public static final int DEFAULT_TIMEOUT_SECONDS = 30;
 
+    /** The analysis launch mode preference key. */
+    public static final String PREF_LAUNCH_MODE = "launchMode"; //$NON-NLS-1$
+
+    /** The local scanner path preference key. */
+    public static final String PREF_SCANNER_PATH = "scannerPath"; //$NON-NLS-1$
+
+    /** The CI trigger URL preference key. */
+    public static final String PREF_CI_URL = "ciUrl"; //$NON-NLS-1$
+
+    /** The extra scanner arguments preference key. */
+    public static final String PREF_EXTRA_ARGS = "scannerExtraArgs"; //$NON-NLS-1$
+
     private PreferenceConstants()
     {
     }

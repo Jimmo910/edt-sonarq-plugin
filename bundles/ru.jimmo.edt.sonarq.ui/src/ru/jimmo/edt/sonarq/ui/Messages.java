@@ -34,7 +34,16 @@ public final class Messages extends NLS
     public static String IssuesView_Status_Truncated;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
+    public static String PreferencePage_CiSecret;
+    public static String PreferencePage_CiUrl;
     public static String PreferencePage_Description;
+    public static String PreferencePage_ExtraArgs;
+    public static String PreferencePage_LaunchGroup;
+    public static String PreferencePage_LaunchMode;
+    public static String PreferencePage_Mode_CiTrigger;
+    public static String PreferencePage_Mode_LocalAuto;
+    public static String PreferencePage_Mode_LocalPath;
+    public static String PreferencePage_ScannerPath;
     public static String PreferencePage_ServerUrl;
     public static String PreferencePage_TestConnection;
     public static String PreferencePage_TestFailure;
