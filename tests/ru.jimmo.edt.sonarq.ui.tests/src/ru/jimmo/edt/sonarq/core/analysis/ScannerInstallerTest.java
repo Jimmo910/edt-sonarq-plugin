@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -31,8 +32,6 @@ import org.junit.Test;
 /** Tests for {@link ScannerInstaller}. */
 public class ScannerInstallerTest
 {
-    private static final String EXECUTABLE_ENTRY =
-        "sonar-scanner-7.1.0.4889-windows-x64/bin/sonar-scanner.bat";
     private static final String EXECUTABLE_BODY = "echo";
 
     private Path stateDir;
@@ -52,12 +51,32 @@ public class ScannerInstallerTest
         }
     }
 
+    private static String executableEntry()
+    {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        String classifier;
+        if (os.contains("win"))
+        {
+            classifier = "windows-x64";
+        }
+        else if (os.contains("mac"))
+        {
+            classifier = "macosx-aarch64";
+        }
+        else
+        {
+            classifier = "linux-x64";
+        }
+        String executable = os.contains("win") ? "sonar-scanner.bat" : "sonar-scanner";
+        return "sonar-scanner-7.1.0.4889-" + classifier + "/bin/" + executable;
+    }
+
     private static byte[] validZip() throws IOException
     {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes))
         {
-            zip.putNextEntry(new ZipEntry(EXECUTABLE_ENTRY));
+            zip.putNextEntry(new ZipEntry(executableEntry()));
             zip.write(EXECUTABLE_BODY.getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
         }
