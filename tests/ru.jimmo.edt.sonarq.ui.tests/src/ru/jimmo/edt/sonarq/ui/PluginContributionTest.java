@@ -6,12 +6,14 @@
 
 package ru.jimmo.edt.sonarq.ui;
 
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.HashSet;
 import java.util.Set;
 
 import org.eclipse.core.runtime.IConfigurationElement;
+import org.eclipse.core.runtime.IExtension;
 import org.eclipse.core.runtime.Platform;
 import org.junit.Test;
 
@@ -39,6 +41,14 @@ public class PluginContributionTest
     {
         assertTrue(extensionIds("org.eclipse.ui.views") //$NON-NLS-1$
             .contains("ru.jimmo.edt.sonarq.ui.views.issues")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void markerTypeIsRegistered()
+    {
+        IExtension extension = Platform.getExtensionRegistry().getExtension(
+            "org.eclipse.core.resources.markers", "ru.jimmo.edt.sonarq.ui.issue"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull(extension);
     }
 
     private static Set<String> extensionIds(String point)
