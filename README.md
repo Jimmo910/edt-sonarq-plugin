@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/Jimmo910/edt-sonarq-plugin?sort=semver)](https://github.com/Jimmo910/edt-sonarq-plugin/releases)
 [![License: EPL 2.0](https://img.shields.io/badge/License-EPL_2.0-blue.svg)](LICENSE)
 [![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](#требования)
-[![1C:EDT 2025.2+](https://img.shields.io/badge/1C%3AEDT-2025.2%2B-brightgreen.svg)](#требования)
+[![1C:EDT 2026.1](https://img.shields.io/badge/1C%3AEDT-2026.1-brightgreen.svg)](#требования)
 
 [English](README.en.md) | **Русский**
 
@@ -33,8 +33,7 @@ SonarQube через Web API и учитывает ветки там, где э�
 
 ## Требования
 
-- 1C:Enterprise Development Tools **2025.2 или новее** (собрано и проверено на target-платформе
-  2026.1).
+- 1C:Enterprise Development Tools **2026.1** (target-платформа сборки).
 - Java 17 — та, на которой уже работает EDT (отдельно устанавливать не нужно).
 - Для режима сервера — сервер SonarQube с уже проанализированным BSL-проектом (например,
   анализ на CI с плагином

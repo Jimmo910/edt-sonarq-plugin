@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/Jimmo910/edt-sonarq-plugin?sort=semver)](https://github.com/Jimmo910/edt-sonarq-plugin/releases)
 [![License: EPL 2.0](https://img.shields.io/badge/License-EPL_2.0-blue.svg)](LICENSE)
 [![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](#requirements)
-[![1C:EDT 2025.2+](https://img.shields.io/badge/1C%3AEDT-2025.2%2B-brightgreen.svg)](#requirements)
+[![1C:EDT 2026.1](https://img.shields.io/badge/1C%3AEDT-2026.1-brightgreen.svg)](#requirements)
 
 **English** | [Русский](README.md)
 
@@ -33,8 +33,7 @@ against the project's sources, with no server involved.
 
 ## Requirements
 
-- 1C:Enterprise Development Tools **2025.2 or later** (built and tested against the 2026.1
-  target platform).
+- 1C:Enterprise Development Tools **2026.1** (the build target platform).
 - Java 17 — the one EDT already runs on (no separate install needed).
 - For server mode — a SonarQube server with an already-analyzed BSL project (for example,
   analyzed on CI with
