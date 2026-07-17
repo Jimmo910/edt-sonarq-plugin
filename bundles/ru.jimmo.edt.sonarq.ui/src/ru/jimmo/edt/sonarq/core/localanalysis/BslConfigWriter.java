@@ -38,11 +38,17 @@ public final class BslConfigWriter
      * {@code {"diagnostics":{"parameters":{"Key":false,...}}}}, with parameter keys written in sorted
      * order. Any file previously written at that path is overwritten.
      *
+     * <p>This is called from {@code RefreshInputsFactory} on every project refresh once any diagnostic is
+     * disabled - on the UI thread for a manually triggered refresh - so, before writing, the existing file
+     * (if any) is read and compared byte-for-byte against the computed content; the write is skipped when
+     * they already match, turning the common case (the disabled set has not changed since the last
+     * refresh) into a small read and compare instead of a synchronous file write on every refresh.
+     *
      * @param stateDir the plugin state directory to write the config file under, not {@code null}
      * @param disabledKeys the diagnostic keys to disable, may be {@code null} or empty
      * @return the written file's path, or {@code null} if {@code disabledKeys} is {@code null} or empty
      *     and no config file is needed
-     * @throws IOException if the file cannot be written
+     * @throws IOException if the existing file cannot be read or the new content cannot be written
      */
     public static Path write(Path stateDir, Collection<String> disabledKeys) throws IOException
     {
@@ -59,9 +65,32 @@ public final class BslConfigWriter
         diagnostics.add(PARAMETERS_MEMBER, parameters);
         JsonObject root = new JsonObject();
         root.add(DIAGNOSTICS_MEMBER, diagnostics);
+        String json = root.toString();
 
         Path file = stateDir.resolve(CONFIG_FILE_NAME);
-        Files.writeString(file, root.toString(), StandardCharsets.UTF_8);
+        if (isUnchanged(file, json))
+        {
+            return file;
+        }
+        Files.writeString(file, json, StandardCharsets.UTF_8);
         return file;
+    }
+
+    /**
+     * Tells whether {@code file} already holds exactly {@code content}, so a caller can skip a redundant
+     * write.
+     *
+     * @param file the file to compare against, not {@code null}
+     * @param content the content that would be written, not {@code null}
+     * @return {@code true} if {@code file} exists and its content equals {@code content}
+     * @throws IOException if an existing file cannot be read
+     */
+    private static boolean isUnchanged(Path file, String content) throws IOException
+    {
+        if (!Files.isRegularFile(file))
+        {
+            return false;
+        }
+        return content.equals(Files.readString(file, StandardCharsets.UTF_8));
     }
 }

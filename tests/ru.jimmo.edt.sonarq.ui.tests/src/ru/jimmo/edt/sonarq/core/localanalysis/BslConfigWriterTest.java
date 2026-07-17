@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
@@ -96,5 +97,21 @@ public class BslConfigWriterTest
             .getAsJsonObject("diagnostics").getAsJsonObject("parameters");
         assertEquals(1, parameters.size());
         assertTrue(parameters.has("Second"));
+    }
+
+    @Test
+    public void secondWriteWithSameKeysDoesNotModifyFile() throws IOException
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"));
+        // Push the timestamp back in time so a skipped write is distinguishable from one that merely
+        // completed within the same filesystem timestamp-resolution tick.
+        FileTime old = FileTime.fromMillis(Files.getLastModifiedTime(result).toMillis() - 60_000L);
+        Files.setLastModifiedTime(result, old);
+
+        Path second = BslConfigWriter.write(tempDir, List.of("MethodSize", "Typo"));
+
+        assertEquals(result, second);
+        assertEquals(old, Files.getLastModifiedTime(second));
     }
 }

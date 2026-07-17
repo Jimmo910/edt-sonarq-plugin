@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -63,6 +65,20 @@ public final class BslServerInstaller
     private static final String EXE_OTHER = "bsl-language-server"; //$NON-NLS-1$
     private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
 
+    private static final long LOCK_POLL_MILLIS = 200L;
+
+    /**
+     * Guards the whole check-install critical section of {@link #ensureServer}.
+     *
+     * <p>Two entry points can call {@link #ensureServer} concurrently against the same state directory:
+     * the "Fetch Checks List" job on the BSL checks preference page, and a project refresh job running
+     * {@code LocalIssueProvider#fetchIssues}. Without this lock, both could observe "not installed" at the
+     * same time, both delete and re-extract the same target directory, and corrupt the installed
+     * distribution - found in the K3 review, 2026-07-17. Package-private so the headless test fragment can
+     * hold it directly to exercise the cancellation-while-waiting path.
+     */
+    static final ReentrantLock INSTALL_LOCK = new ReentrantLock();
+
     private BslServerInstaller()
     {
     }
@@ -90,6 +106,70 @@ public final class BslServerInstaller
      * directory (the launcher and the bundled runtime tools) is marked executable, since the zip does not
      * carry Unix permission bits.
      *
+     * <p>The whole check-install sequence runs under {@link #INSTALL_LOCK}, serializing concurrent callers
+     * against the same state directory (see the field javadoc); a caller blocked waiting for the lock still
+     * observes monitor cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even while
+     * another caller is mid-download.
+     *
+     * @param stateDir the plugin state directory to unpack under, not {@code null}
+     * @param download the source of the archive bytes, not {@code null}
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @return the path to the launcher executable, never {@code null}
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or the
+     *     calling thread is interrupted while waiting for {@link #INSTALL_LOCK}
+     * @throws OperationCanceledException if the monitor is cancelled while waiting for the lock, before, or
+     *     during unpacking
+     */
+    public static Path ensureServer(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
+        throws IOException
+    {
+        acquireInstallLock(monitor);
+        try
+        {
+            return doEnsureServer(stateDir, download, monitor);
+        }
+        finally
+        {
+            INSTALL_LOCK.unlock();
+        }
+    }
+
+    /**
+     * Acquires {@link #INSTALL_LOCK}, polling in short slices so a monitor cancellation is observed
+     * promptly even while another caller is mid-download (the critical section can run for as long as a
+     * ~170 MB download takes).
+     *
+     * @param monitor the progress monitor checked for cancellation before and between poll attempts, or
+     *     {@code null}
+     * @throws IOException if the calling thread is interrupted while waiting for the lock
+     * @throws OperationCanceledException if the monitor is cancelled before or while waiting for the lock
+     */
+    private static void acquireInstallLock(IProgressMonitor monitor) throws IOException
+    {
+        if (monitor != null && monitor.isCanceled())
+        {
+            throw new OperationCanceledException();
+        }
+        try
+        {
+            while (!INSTALL_LOCK.tryLock(LOCK_POLL_MILLIS, TimeUnit.MILLISECONDS))
+            {
+                if (monitor != null && monitor.isCanceled())
+                {
+                    throw new OperationCanceledException();
+                }
+            }
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The check-install sequence itself, run under {@link #INSTALL_LOCK} by {@link #ensureServer}.
+     *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
      * @param download the source of the archive bytes, not {@code null}
      * @param monitor the progress monitor checked for cancellation, or {@code null}
@@ -97,7 +177,7 @@ public final class BslServerInstaller
      * @throws IOException if the archive cannot be read or an entry escapes the target directory
      * @throws OperationCanceledException if the monitor is cancelled before or during unpacking
      */
-    public static Path ensureServer(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
+    private static Path doEnsureServer(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
         throws IOException
     {
         Path serverRoot = stateDir.resolve(SERVER_DIR);

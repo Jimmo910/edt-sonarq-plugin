@@ -20,9 +20,13 @@ import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.core.runtime.jobs.IJobChangeEvent;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.jobs.JobChangeAdapter;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.IPreferencesService;
 import org.eclipse.core.runtime.preferences.InstanceScope;
@@ -353,7 +357,9 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
      * Schedules the user-visible job that fetches the full diagnostics catalog: ensures the language
      * server is installed, runs it against an empty temporary source directory (yielding the full rule
      * catalog with zero issues), persists the catalog and reloads the table. Errors are reported on
-     * {@link #statusLabel}; the page never opens a modal dialog.
+     * {@link #statusLabel}; the page never opens a modal dialog. The fetch button is disabled for the
+     * duration of the job (re-enabled from the job's done listener) so a double-click cannot schedule two
+     * overlapping fetch jobs.
      */
     private void fetchCatalog()
     {
@@ -361,9 +367,24 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
         Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
         Job job = Job.create(Messages.BslChecksPage_FetchJob_Name, monitor ->
         {
-            runFetchJob(stateDir, monitor);
+            return runFetchJob(stateDir, monitor);
         });
         job.setUser(true);
+        job.addJobChangeListener(new JobChangeAdapter()
+        {
+            @Override
+            public void done(IJobChangeEvent event)
+            {
+                Display.getDefault().asyncExec(() ->
+                {
+                    if (!fetchButton.isDisposed())
+                    {
+                        fetchButton.setEnabled(true);
+                    }
+                });
+            }
+        });
+        fetchButton.setEnabled(false);
         job.schedule();
     }
 
@@ -375,8 +396,11 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
      *
      * @param stateDir the plugin state directory, not {@code null}
      * @param monitor the job's progress monitor, not {@code null}
+     * @return {@link Status#CANCEL_STATUS} if the user cancelled the job, {@link Status#OK_STATUS} otherwise
+     *     (including on a reported failure - the failure itself is surfaced on {@link #statusLabel}, not as
+     *     job status)
      */
-    private void runFetchJob(Path stateDir, IProgressMonitor monitor)
+    private IStatus runFetchJob(Path stateDir, IProgressMonitor monitor)
     {
         Path emptySrcDir = null;
         Path reportDir = null;
@@ -391,19 +415,24 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             List<DiagnosticsCatalog.Entry> fetched = DiagnosticsCatalog.fromReport(report);
             DiagnosticsCatalog.save(stateDir.resolve(DiagnosticsCatalog.CATALOG_FILE_NAME), fetched);
             applyFetchedCatalog(fetched);
+            return Status.OK_STATUS;
         }
         catch (OperationCanceledException e)
         {
-            // The user cancelled the job from the progress dialog; nothing to report.
+            // The user cancelled the job from the progress dialog; nothing to report, but the job status
+            // must reflect the cancellation rather than reporting OK.
+            return Status.CANCEL_STATUS;
         }
         catch (IOException e)
         {
             reportFetchError(e.getMessage());
+            return Status.OK_STATUS;
         }
         catch (InterruptedException e)
         {
             Thread.currentThread().interrupt();
             reportFetchError(e.getMessage());
+            return Status.OK_STATUS;
         }
         finally
         {
