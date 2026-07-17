@@ -146,6 +146,23 @@ public final class LocalIssueProvider implements IIssueProvider
         return projectKey;
     }
 
+    /**
+     * The generated checks configuration file this provider was built with.
+     *
+     * <p>Exposed so callers that build the provider (the refresh-inputs factory) can assert which
+     * configuration was generated for the current preferences, without running a fetch. This is the
+     * constructor argument as given; a project-local {@code .bsl-language-server.json}, when found, still
+     * takes priority at analysis time (see the class javadoc), but that override is resolved per-fetch and
+     * is not reflected here.
+     *
+     * @return the generated checks configuration path, or {@code null} when the language server is meant
+     *     to run with its defaults
+     */
+    public Path configPath()
+    {
+        return configPath;
+    }
+
     @Override
     public SonarRule describeRule(String ruleKey)
     {

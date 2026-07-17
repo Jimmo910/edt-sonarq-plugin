@@ -8,6 +8,10 @@
       <page id="ru.jimmo.edt.sonarq.ui.preferences.main"
             class="ru.jimmo.edt.sonarq.ui.preferences.SonarPreferencePage"
             name="%preferencePageName"/>
+      <page id="ru.jimmo.edt.sonarq.ui.preferences.bslChecks"
+            category="ru.jimmo.edt.sonarq.ui.preferences.main"
+            class="ru.jimmo.edt.sonarq.ui.preferences.BslChecksPreferencePage"
+            name="%bslChecksPageName"/>
    </extension>
    <extension point="org.eclipse.ui.propertyPages">
       <page id="ru.jimmo.edt.sonarq.ui.properties.project"

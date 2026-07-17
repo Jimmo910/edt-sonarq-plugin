@@ -31,5 +31,6 @@ public class PreferenceInitializer extends AbstractPreferenceInitializer
         node.putBoolean(PreferenceConstants.PREF_SHOW_MARKERS, true);
         node.putBoolean(PreferenceConstants.PREF_AUTO_SYNC, false);
         node.putInt(PreferenceConstants.PREF_AUTO_SYNC_MINUTES, PreferenceConstants.DEFAULT_AUTO_SYNC_MINUTES);
+        node.put(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, ""); //$NON-NLS-1$
     }
 }

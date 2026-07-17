@@ -54,6 +54,13 @@ public final class PreferenceConstants
     /** The default automatic background refresh interval, in minutes. */
     public static final int DEFAULT_AUTO_SYNC_MINUTES = 15;
 
+    /**
+     * The preference key holding the comma-separated list of disabled BSL diagnostic keys, used only in
+     * {@link #MODE_LOCAL} to generate the BSL Language Server checks configuration. Empty (the default)
+     * means every diagnostic is enabled.
+     */
+    public static final String PREF_DISABLED_BSL_DIAGNOSTICS = "disabledBslDiagnostics"; //$NON-NLS-1$
+
     private PreferenceConstants()
     {
     }

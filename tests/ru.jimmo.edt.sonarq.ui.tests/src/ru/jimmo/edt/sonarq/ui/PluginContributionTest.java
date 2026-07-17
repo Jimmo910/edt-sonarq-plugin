@@ -6,6 +6,7 @@
 
 package ru.jimmo.edt.sonarq.ui;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -32,6 +33,22 @@ public class PluginContributionTest
     public void propertyPageIsRegistered()
     {
         assertTrue(extensionIds("org.eclipse.ui.propertyPages").contains("ru.jimmo.edt.sonarq.ui.properties.project"));
+    }
+
+    @Test
+    public void bslChecksPreferencePageIsRegisteredUnderMainCategory()
+    {
+        boolean found = false;
+        for (IConfigurationElement element : Platform.getExtensionRegistry()
+            .getConfigurationElementsFor("org.eclipse.ui.preferencePages"))
+        {
+            if ("ru.jimmo.edt.sonarq.ui.preferences.bslChecks".equals(element.getAttribute("id")))
+            {
+                assertEquals("ru.jimmo.edt.sonarq.ui.preferences.main", element.getAttribute("category"));
+                found = true;
+            }
+        }
+        assertTrue(found);
     }
 
     @Test

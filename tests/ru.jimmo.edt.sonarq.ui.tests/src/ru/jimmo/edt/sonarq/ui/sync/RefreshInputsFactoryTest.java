@@ -12,6 +12,10 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +29,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.osgi.service.prefs.BackingStoreException;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
@@ -47,13 +54,17 @@ public class RefreshInputsFactoryTest
 
     private String savedMode;
 
+    private String savedDisabled;
+
     @Before
     public void setUp() throws CoreException, BackingStoreException
     {
         IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
         savedUrl = node.get(PreferenceConstants.PREF_SERVER_URL, ""); //$NON-NLS-1$
         savedMode = node.get(PreferenceConstants.PREF_MODE, null);
+        savedDisabled = node.get(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, null);
         node.remove(PreferenceConstants.PREF_SERVER_URL);
+        node.remove(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS);
         node.flush();
         project = ResourcesPlugin.getWorkspace().getRoot().getProject("refresh-inputs-test"); //$NON-NLS-1$
         if (!project.exists())
@@ -82,6 +93,14 @@ public class RefreshInputsFactoryTest
         else
         {
             node.put(PreferenceConstants.PREF_MODE, savedMode);
+        }
+        if (savedDisabled == null)
+        {
+            node.remove(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS);
+        }
+        else
+        {
+            node.put(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, savedDisabled);
         }
         node.flush();
         if (project.exists())
@@ -230,5 +249,38 @@ public class RefreshInputsFactoryTest
         ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
         assertEquals("proj:key", inputs.mappingProjectKey()); //$NON-NLS-1$
         assertEquals("conf", inputs.mappingPathPrefix()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void localModeWithDisabledDiagnosticsWritesGeneratedConfig() throws BackingStoreException, IOException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.put(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, "MethodSize, Typo"); //$NON-NLS-1$
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+        Path configPath = provider.configPath();
+        assertNotNull(configPath);
+
+        String json = Files.readString(configPath, StandardCharsets.UTF_8);
+        JsonObject parameters = JsonParser.parseString(json).getAsJsonObject()
+            .getAsJsonObject("diagnostics").getAsJsonObject("parameters"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(false, parameters.get("MethodSize").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(false, parameters.get("Typo").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(2, parameters.size());
+    }
+
+    @Test
+    public void localModeWithoutDisabledDiagnosticsYieldsNullConfigPath() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+        assertNull(provider.configPath());
     }
 }
