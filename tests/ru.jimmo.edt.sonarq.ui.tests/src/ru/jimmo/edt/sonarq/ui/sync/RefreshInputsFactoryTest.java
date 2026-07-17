@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,6 +31,8 @@ import org.junit.Before;
 import org.junit.Test;
 import org.osgi.service.prefs.BackingStoreException;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -282,5 +285,32 @@ public class RefreshInputsFactoryTest
         ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
         LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
         assertNull(provider.configPath());
+    }
+
+    @Test
+    public void localModeWithSubsystemsWritesSubsystemsFilterInclude() throws BackingStoreException, IOException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+        new ProjectBindingStore().save(project,
+            new ProjectBinding("proj:key", "", "conf", "", List.of("SubsystemA", "SubsystemB")));
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+        Path configPath = provider.configPath();
+        assertNotNull(configPath);
+
+        String json = Files.readString(configPath, StandardCharsets.UTF_8);
+        JsonArray include = JsonParser.parseString(json).getAsJsonObject().getAsJsonObject("diagnostics")
+            .getAsJsonObject("subsystemsFilter").getAsJsonArray("include");
+        assertEquals(2, include.size());
+        List<String> names = new ArrayList<>();
+        for (JsonElement entry : include)
+        {
+            names.add(entry.getAsString());
+        }
+        assertTrue(names.contains("SubsystemA"));
+        assertTrue(names.contains("SubsystemB"));
     }
 }
