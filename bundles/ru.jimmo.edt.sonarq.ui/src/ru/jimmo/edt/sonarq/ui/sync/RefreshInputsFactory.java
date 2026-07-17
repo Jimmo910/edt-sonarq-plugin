@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.ui.sync;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -155,7 +156,9 @@ public final class RefreshInputsFactory
         }
         try
         {
-            return BslConfigWriter.write(stateDir, disabled);
+            // Not wired yet: the subsystems filter is empty until a later task feeds the project
+            // binding's local-analysis scope selection through this call.
+            return BslConfigWriter.write(stateDir, disabled, List.of());
         }
         catch (IOException e)
         {
