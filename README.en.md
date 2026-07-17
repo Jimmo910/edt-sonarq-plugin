@@ -196,6 +196,31 @@ Which diagnostics local analysis reports is configured on a separate page: **Pre
   file always takes priority: analysis uses it instead of the generated one, and the page's
   selection is ignored for that project.
 
+### Analysis scope
+
+The project's **Properties → SonarQube** page (see [Project binding](#2-project-binding) above)
+has an **Analysis scope (local mode)** group with two independent filters. Both apply only to
+local analysis mode, and both default to empty — meaning "analyze everything", today's behavior,
+unchanged.
+
+- **Base branch** — an editable combo pre-filled with the repository's local branch names. When
+  set, only issues on lines that differ from that base are shown (the base branch or commit
+  compared against your working copy, including uncommitted edits) — the same idea as EDT's own
+  "hide errors of the base branch". If the value can't be resolved (the project isn't inside a
+  git repository, or the ref doesn't exist), the filter is skipped and every issue is shown —
+  never silently hidden.
+- **Subsystems** — a checkbox tree read from the project's `src/Subsystems` folder (nested
+  subsystems included). Leave everything unchecked to analyze the whole project; check one or
+  more subsystems to restrict analysis to them — checking a subsystem also includes everything
+  nested under it (handled by the BSL Language Server itself, via its `subsystemsFilter`
+  diagnostic parameter). The **Refresh** button re-reads the tree from disk (for example after
+  adding a new subsystem) without discarding the current selection.
+
+If the project ships its own `.bsl-language-server.json`, it takes priority over the generated
+checks configuration, and — like the disabled-diagnostics selection — the subsystem filter is not
+applied for that project either. The base-branch line filter is independent of the checks
+configuration, though, and still applies even then.
+
 ## Editor markers
 
 The **Editor markers** group on the preference page:
