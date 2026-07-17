@@ -264,6 +264,64 @@ public class SarifParserTest
     }
 
     @Test
+    public void percentEncodedPathIsDecodedBeforeMapping()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "R1",
+                      "level": "warning",
+                      "message": { "text": "m" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "file:///E:/My%20Proj/src/M.bsl" },
+                            "region": { "startLine": 3 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        SonarIssue issue = SarifParser.parse(json, PROJECT_KEY, "E:\\My Proj").issues().get(0); //$NON-NLS-1$
+        assertEquals("TestConfiguration:src/M.bsl", issue.componentKey()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void uncFileUriKeepsAuthorityAndRelativizes()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "R1",
+                      "level": "warning",
+                      "message": { "text": "m" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "file://server/share/proj/src/M.bsl" },
+                            "region": { "startLine": 1 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "\\\\server\\share\\proj"); //$NON-NLS-1$
+        assertEquals("TestConfiguration:src/M.bsl", report.issues().get(0).componentKey()); //$NON-NLS-1$
+    }
+
+    @Test
     public void posixAbsoluteFileUriIsRelativizedAgainstBasePrefix()
     {
         // Linux BSL Language Server output: an absolute POSIX file:/// location keeps its root slash so the

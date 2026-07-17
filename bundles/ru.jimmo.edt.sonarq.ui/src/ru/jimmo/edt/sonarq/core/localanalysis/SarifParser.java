@@ -6,6 +6,8 @@
 
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,6 +28,10 @@ import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 public final class SarifParser
 {
     private static final String FILE_SCHEME_PREFIX = "file://"; //$NON-NLS-1$
+
+    private static final String FILE_SCHEME_ABSOLUTE = "file:///"; //$NON-NLS-1$
+
+    private static final String UNC_PREFIX = "//"; //$NON-NLS-1$
 
     private static final String DOT_SLASH_PREFIX = "./"; //$NON-NLS-1$
 
@@ -226,10 +232,15 @@ public final class SarifParser
 
     private static String normalizeUri(String uri, String uriBasePrefix)
     {
-        String normalized = uri.replace('\\', '/');
-        if (normalized.startsWith(FILE_SCHEME_PREFIX))
+        String normalized = percentDecode(uri).replace('\\', '/');
+        if (normalized.startsWith(FILE_SCHEME_ABSOLUTE))
         {
             normalized = stripFileScheme(normalized);
+        }
+        else if (normalized.startsWith(FILE_SCHEME_PREFIX))
+        {
+            // file://host/share/... - a UNC location; keep the leading // so the authority is preserved.
+            normalized = UNC_PREFIX + normalized.substring(FILE_SCHEME_PREFIX.length());
         }
         normalized = stripBasePrefix(normalized, uriBasePrefix);
         while (normalized.startsWith(DOT_SLASH_PREFIX))
@@ -237,6 +248,41 @@ public final class SarifParser
             normalized = normalized.substring(DOT_SLASH_PREFIX.length());
         }
         return normalized;
+    }
+
+    /**
+     * Decodes {@code %XX} percent-escapes as UTF-8, leaving every other character (including {@code +})
+     * untouched, so SARIF paths that contain spaces or non-ASCII characters map to real file names.
+     *
+     * @param value the raw URI, not {@code null}
+     * @return the decoded value, never {@code null}
+     */
+    private static String percentDecode(String value)
+    {
+        if (value.indexOf('%') < 0)
+        {
+            return value;
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(value.length());
+        for (int i = 0; i < value.length(); i++)
+        {
+            char c = value.charAt(i);
+            int high = c == '%' && i + 2 < value.length() ? Character.digit(value.charAt(i + 1), 16) : -1;
+            int low = high >= 0 ? Character.digit(value.charAt(i + 2), 16) : -1;
+            if (high >= 0 && low >= 0)
+            {
+                bytes.write((high << 4) + low);
+                i += 2;
+            }
+            else
+            {
+                for (byte b : String.valueOf(c).getBytes(StandardCharsets.UTF_8))
+                {
+                    bytes.write(b);
+                }
+            }
+        }
+        return bytes.toString(StandardCharsets.UTF_8);
     }
 
     /**

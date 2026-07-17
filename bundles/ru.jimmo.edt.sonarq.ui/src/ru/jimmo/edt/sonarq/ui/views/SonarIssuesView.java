@@ -101,6 +101,7 @@ public class SonarIssuesView extends ViewPart
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
     private long refreshGeneration;
+    private Job inFlightJob;
     private RuleDescriptionPanel rulePanel;
     private IIssueProvider currentProvider;
     private String requestedRuleKey;
@@ -387,8 +388,25 @@ public class SonarIssuesView extends ViewPart
         boundProjectKey = refreshInputs.mappingProjectKey();
         boundPathPrefix = refreshInputs.mappingPathPrefix();
         currentProvider = refreshInputs.provider();
-        new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, result)).schedule();
+        scheduleTracked(new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
+            result -> onRefreshFinished(generation, result)));
+    }
+
+    /**
+     * Cancels the previous refresh or analysis job before scheduling a new one, so consecutive user
+     * actions cannot run concurrently and race on the same analyzer install, report and {@code
+     * scannerwork} directories (a real hazard in local-analysis mode where each run spawns a process).
+     *
+     * @param job the job to schedule and track, not {@code null}
+     */
+    private void scheduleTracked(Job job)
+    {
+        if (inFlightJob != null)
+        {
+            inFlightJob.cancel();
+        }
+        inFlightJob = job;
+        job.schedule();
     }
 
     /**
@@ -436,14 +454,14 @@ public class SonarIssuesView extends ViewPart
         String requested, boolean branchesSupported)
     {
         AnalysisLaunchConfig config = new AnalysisLaunchConfigFactory().create();
-        String ciSecret = new SecureTokenStore().loadCiSecret();
+        String ciSecret = new SecureTokenStore().loadCiSecret(config.ciUrl());
         Path stateLocation = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
         ISonarServerClient client = new SonarHttpClient(connection);
         AnalysisRequest request = new AnalysisRequest(project, binding, connection, config, requested,
             branchesSupported, ciSecret, stateLocation, client);
-        new AnalysisJob(request,
+        scheduleTracked(new AnalysisJob(request,
             () -> Display.getDefault().asyncExec(this::resetBranchAndRefresh),
-            text -> Display.getDefault().asyncExec(() -> applyAnalysisStatus(text))).schedule();
+            text -> Display.getDefault().asyncExec(() -> applyAnalysisStatus(text))));
     }
 
     private void resetBranchAndRefresh()

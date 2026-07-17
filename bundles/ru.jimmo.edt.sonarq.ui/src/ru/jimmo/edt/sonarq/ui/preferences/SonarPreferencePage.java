@@ -426,21 +426,23 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslLsPathText.setText(bslPath);
         // Blank stored path means automatic download (see BSL_SOURCE_INDEX_DOWNLOAD).
         bslSourceCombo.select(bslPath.isBlank() ? BSL_SOURCE_INDEX_DOWNLOAD : BSL_SOURCE_INDEX_LOCAL);
-        urlText.setText(
-            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null)); //$NON-NLS-1$
+        String serverUrl =
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null); //$NON-NLS-1$
+        urlText.setText(serverUrl);
         timeoutSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_TIMEOUT_SECONDS, PreferenceConstants.DEFAULT_TIMEOUT_SECONDS, null));
         SecureTokenStore tokenStore = new SecureTokenStore();
-        tokenText.setText(tokenStore.loadToken());
+        tokenText.setText(tokenStore.loadToken(serverUrl.trim()));
 
         AnalysisLaunchMode launchMode = AnalysisLaunchMode.fromKey(service.getString(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_LAUNCH_MODE, AnalysisLaunchMode.LOCAL_AUTO.name(), null));
         launchModeCombo.select(launchMode.ordinal());
         scannerPathText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SCANNER_PATH, "", null)); //$NON-NLS-1$
-        ciUrlText.setText(
-            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_CI_URL, "", null)); //$NON-NLS-1$
-        ciSecretText.setText(tokenStore.loadCiSecret());
+        String ciUrl =
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_CI_URL, "", null); //$NON-NLS-1$
+        ciUrlText.setText(ciUrl);
+        ciSecretText.setText(tokenStore.loadCiSecret(ciUrl.trim()));
         extraArgsText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_EXTRA_ARGS, "", null)); //$NON-NLS-1$
         updateModeEnablement();
@@ -496,13 +498,15 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         boolean ownExecutable = bslSourceCombo.getSelectionIndex() == BSL_SOURCE_INDEX_LOCAL;
         node.put(PreferenceConstants.PREF_BSL_LS_PATH,
             ownExecutable ? bslLsPathText.getText().trim() : ""); //$NON-NLS-1$
-        node.put(PreferenceConstants.PREF_SERVER_URL, urlText.getText().trim());
+        String serverUrl = urlText.getText().trim();
+        String ciUrl = ciUrlText.getText().trim();
+        node.put(PreferenceConstants.PREF_SERVER_URL, serverUrl);
         node.putInt(PreferenceConstants.PREF_TIMEOUT_SECONDS, timeoutSpinner.getSelection());
         // Selection index is coupled to AnalysisLaunchMode's declaration order (see #createLaunchGroup).
         AnalysisLaunchMode mode = AnalysisLaunchMode.values()[launchModeCombo.getSelectionIndex()];
         node.put(PreferenceConstants.PREF_LAUNCH_MODE, mode.name());
         node.put(PreferenceConstants.PREF_SCANNER_PATH, scannerPathText.getText().trim());
-        node.put(PreferenceConstants.PREF_CI_URL, ciUrlText.getText().trim());
+        node.put(PreferenceConstants.PREF_CI_URL, ciUrl);
         node.put(PreferenceConstants.PREF_EXTRA_ARGS, extraArgsText.getText().trim());
         node.putBoolean(PreferenceConstants.PREF_SHOW_MARKERS, showMarkersButton.getSelection());
         node.putBoolean(PreferenceConstants.PREF_AUTO_SYNC, autoSyncButton.getSelection());
@@ -511,8 +515,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         {
             node.flush();
             SecureTokenStore tokenStore = new SecureTokenStore();
-            tokenStore.saveToken(tokenText.getText().trim());
-            tokenStore.saveCiSecret(ciSecretText.getText().trim());
+            tokenStore.saveToken(serverUrl, tokenText.getText().trim());
+            tokenStore.saveCiSecret(ciUrl, ciSecretText.getText().trim());
         }
         catch (BackingStoreException | StorageException | IOException e)
         {

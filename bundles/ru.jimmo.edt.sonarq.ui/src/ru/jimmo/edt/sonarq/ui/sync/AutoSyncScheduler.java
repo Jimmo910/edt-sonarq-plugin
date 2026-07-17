@@ -118,17 +118,42 @@ public final class AutoSyncScheduler
         }
         for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
         {
-            if (project.isOpen())
+            if (project.isOpen() && !runRefresh(project))
             {
-                RefreshInputsFactory.create(project).ifPresent(AutoSyncScheduler::scheduleRefresh);
+                // Interrupted: stop this cycle. The scheduler's generation fence handles rescheduling.
+                return;
             }
         }
     }
 
-    private static void scheduleRefresh(ProjectRefreshInputs inputs)
+    /**
+     * Runs one project's refresh to completion before returning, so a whole cycle finishes before the
+     * timer reschedules and slow refreshes cannot overlap or let a stale response overwrite newer markers.
+     *
+     * @param project the open workspace project to refresh, not {@code null}
+     * @return {@code true} to continue the cycle, {@code false} if the thread was interrupted while waiting
+     */
+    private static boolean runRefresh(IProject project)
     {
-        new RefreshIssuesJob(inputs.provider(), inputs.project(), inputs.binding(), null,
-            result -> onRefreshed(inputs, result)).schedule();
+        var inputs = RefreshInputsFactory.create(project);
+        if (inputs.isEmpty())
+        {
+            return true;
+        }
+        ProjectRefreshInputs refresh = inputs.get();
+        Job job = new RefreshIssuesJob(refresh.provider(), refresh.project(), refresh.binding(), null,
+            result -> onRefreshed(refresh, result));
+        job.schedule();
+        try
+        {
+            job.join();
+            return true;
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private static void onRefreshed(ProjectRefreshInputs inputs, RefreshResult result)

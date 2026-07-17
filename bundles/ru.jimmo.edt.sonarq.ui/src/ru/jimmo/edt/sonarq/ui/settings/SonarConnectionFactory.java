@@ -33,6 +33,8 @@ public final class SonarConnectionFactory
         }
         int timeout = service.getInt(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_TIMEOUT_SECONDS,
             PreferenceConstants.DEFAULT_TIMEOUT_SECONDS, null);
-        return Optional.of(SonarConnection.of(url.trim(), new SecureTokenStore().loadToken(), timeout));
+        String trimmedUrl = url.trim();
+        return Optional.of(
+            SonarConnection.of(trimmedUrl, new SecureTokenStore().loadToken(trimmedUrl), timeout));
     }
 }
