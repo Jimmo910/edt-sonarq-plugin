@@ -7,6 +7,12 @@
 package ru.jimmo.edt.sonarq.ui.preferences;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.jobs.Job;
@@ -25,6 +31,7 @@ import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.FileDialog;
 import org.eclipse.swt.widgets.Group;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Spinner;
@@ -50,6 +57,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     private static final int MODE_INDEX_LOCAL = 1;
 
+    // The BSL source combo item order is coupled to these indices (see #createLocalGroup, #loadValues,
+    // #performOk): blank stored path means "download automatically".
+    private static final int BSL_SOURCE_INDEX_DOWNLOAD = 0;
+
+    private static final int BSL_SOURCE_INDEX_LOCAL = 1;
+
     private Combo modeCombo;
 
     private Text urlText;
@@ -64,7 +77,15 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     private Combo launchModeCombo;
 
+    private Combo bslSourceCombo;
+
     private Text bslLsPathText;
+
+    private Button bslBrowseButton;
+
+    private Button bslVerifyButton;
+
+    private Label bslVerifyResultLabel;
 
     private Text scannerPathText;
 
@@ -176,12 +197,147 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     {
         Group group = new Group(parent, SWT.NONE);
         group.setText(Messages.PreferencePage_LocalGroup);
-        group.setLayout(new GridLayout(2, false));
+        group.setLayout(new GridLayout(4, false));
         group.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        new Label(group, SWT.NONE).setText(Messages.PreferencePage_BslSource);
+        bslSourceCombo = new Combo(group, SWT.READ_ONLY);
+        // Item order is coupled to BSL_SOURCE_INDEX_DOWNLOAD / BSL_SOURCE_INDEX_LOCAL (field declarations).
+        bslSourceCombo.setItems(Messages.PreferencePage_BslSource_Download, Messages.PreferencePage_BslSource_Local);
+        bslSourceCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+        bslSourceCombo.addSelectionListener(
+            SelectionListener.widgetSelectedAdapter(e -> updateBslSourceEnablement()));
 
         new Label(group, SWT.NONE).setText(Messages.PreferencePage_BslLsPath);
         bslLsPathText = new Text(group, SWT.BORDER);
         bslLsPathText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        bslLsPathText.addModifyListener(e -> validateBslPath());
+
+        bslBrowseButton = new Button(group, SWT.PUSH);
+        bslBrowseButton.setText(Messages.PreferencePage_Browse);
+        bslBrowseButton.addSelectionListener(
+            SelectionListener.widgetSelectedAdapter(e -> browseBslExecutable()));
+
+        bslVerifyButton = new Button(group, SWT.PUSH);
+        bslVerifyButton.setText(Messages.PreferencePage_BslVerify);
+        bslVerifyButton.addSelectionListener(
+            SelectionListener.widgetSelectedAdapter(e -> verifyBslExecutable()));
+
+        bslVerifyResultLabel = new Label(group, SWT.WRAP);
+        bslVerifyResultLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 4, 1));
+    }
+
+    /**
+     * Enables the BSL source widgets: the combo follows the page mode, the path row (text, browse and
+     * verify buttons) is active only when the user chose a local executable over the automatic download.
+     */
+    private void updateBslSourceEnablement()
+    {
+        boolean local = modeCombo.getSelectionIndex() == MODE_INDEX_LOCAL;
+        boolean ownExecutable = bslSourceCombo.getSelectionIndex() == BSL_SOURCE_INDEX_LOCAL;
+        bslSourceCombo.setEnabled(local);
+        bslLsPathText.setEnabled(local && ownExecutable);
+        bslBrowseButton.setEnabled(local && ownExecutable);
+        bslVerifyButton.setEnabled(local && ownExecutable);
+        bslVerifyResultLabel.setEnabled(local && ownExecutable);
+        validateBslPath();
+    }
+
+    /**
+     * Blocks the page while local mode expects a user-supplied executable that does not point to a file.
+     */
+    private void validateBslPath()
+    {
+        boolean local = modeCombo.getSelectionIndex() == MODE_INDEX_LOCAL;
+        boolean ownExecutable = bslSourceCombo.getSelectionIndex() == BSL_SOURCE_INDEX_LOCAL;
+        boolean invalid = local && ownExecutable && !isExistingFile(bslLsPathText.getText().trim());
+        setErrorMessage(invalid ? Messages.PreferencePage_BslPathRequired : null);
+        setValid(!invalid);
+    }
+
+    private static boolean isExistingFile(String path)
+    {
+        if (path.isEmpty())
+        {
+            return false;
+        }
+        try
+        {
+            return Files.isRegularFile(Path.of(path));
+        }
+        catch (InvalidPathException e)
+        {
+            return false;
+        }
+    }
+
+    private void browseBslExecutable()
+    {
+        FileDialog dialog = new FileDialog(getShell(), SWT.OPEN);
+        dialog.setFilterExtensions(new String[] { "*.exe;*.bat", "*.*" }); //$NON-NLS-1$ //$NON-NLS-2$
+        dialog.setFilterNames(
+            new String[] { Messages.PreferencePage_BslFilter_Executables, Messages.PreferencePage_BslFilter_All });
+        String selected = dialog.open();
+        if (selected != null)
+        {
+            bslLsPathText.setText(selected);
+        }
+    }
+
+    private void verifyBslExecutable()
+    {
+        String path = bslLsPathText.getText().trim();
+        bslVerifyResultLabel.setText(Messages.RulePanel_Loading);
+        Job job = Job.create(Messages.PreferencePage_BslVerify, monitor ->
+        {
+            String message = probeBslExecutable(path);
+            Display.getDefault().asyncExec(() ->
+            {
+                if (!bslVerifyResultLabel.isDisposed())
+                {
+                    bslVerifyResultLabel.setText(message);
+                    bslVerifyResultLabel.getParent().layout();
+                }
+            });
+        });
+        job.setSystem(true);
+        job.schedule();
+    }
+
+    /**
+     * Runs the given file with {@code --version} and reports whether the output looks like BSL Language
+     * Server. The wait is bounded; output is read only after the process exits (version output is tiny).
+     *
+     * @param path the executable path chosen by the user, not {@code null}
+     * @return the localized result message, never {@code null}
+     */
+    private static String probeBslExecutable(String path)
+    {
+        try
+        {
+            Process process = new ProcessBuilder(path, "--version").redirectErrorStream(true).start(); //$NON-NLS-1$
+            if (!process.waitFor(30, TimeUnit.SECONDS))
+            {
+                process.destroy();
+                return NLS.bind(Messages.PreferencePage_BslVerifyFail, "timeout"); //$NON-NLS-1$
+            }
+            String output = new String(process.getInputStream().readAllBytes(), Charset.defaultCharset());
+            String firstLine = output.lines().findFirst().orElse("").trim(); //$NON-NLS-1$
+            if (output.toLowerCase(Locale.ROOT).contains("bsl")) //$NON-NLS-1$
+            {
+                return NLS.bind(Messages.PreferencePage_BslVerifyOk, firstLine);
+            }
+            return NLS.bind(Messages.PreferencePage_BslVerifyFail, firstLine);
+        }
+        catch (IOException e)
+        {
+            return NLS.bind(Messages.PreferencePage_BslVerifyFail, e.getMessage());
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            return NLS.bind(Messages.PreferencePage_BslVerifyFail, e.getMessage());
+        }
     }
 
     /**
@@ -211,7 +367,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
             ciSecretText.setEnabled(false);
             extraArgsText.setEnabled(false);
         }
-        bslLsPathText.setEnabled(!server);
+        updateBslSourceEnablement();
         autoSyncButton.setEnabled(server);
         if (server)
         {
@@ -260,8 +416,11 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
             PreferenceConstants.MODE_SERVER, null);
         modeCombo.select(
             PreferenceConstants.MODE_LOCAL.equals(mode) ? MODE_INDEX_LOCAL : MODE_INDEX_SERVER);
-        bslLsPathText.setText(
-            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH, "", null)); //$NON-NLS-1$
+        String bslPath = service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH,
+            "", null); //$NON-NLS-1$
+        bslLsPathText.setText(bslPath);
+        // Blank stored path means automatic download (see BSL_SOURCE_INDEX_DOWNLOAD).
+        bslSourceCombo.select(bslPath.isBlank() ? BSL_SOURCE_INDEX_DOWNLOAD : BSL_SOURCE_INDEX_LOCAL);
         urlText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null)); //$NON-NLS-1$
         timeoutSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
@@ -328,7 +487,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         // Selection index is coupled to MODE_INDEX_SERVER / MODE_INDEX_LOCAL (see the field declarations).
         node.put(PreferenceConstants.PREF_MODE, modeCombo.getSelectionIndex() == MODE_INDEX_LOCAL
             ? PreferenceConstants.MODE_LOCAL : PreferenceConstants.MODE_SERVER);
-        node.put(PreferenceConstants.PREF_BSL_LS_PATH, bslLsPathText.getText().trim());
+        // Download source stores a blank path (see BSL_SOURCE_INDEX_DOWNLOAD coupling).
+        boolean ownExecutable = bslSourceCombo.getSelectionIndex() == BSL_SOURCE_INDEX_LOCAL;
+        node.put(PreferenceConstants.PREF_BSL_LS_PATH,
+            ownExecutable ? bslLsPathText.getText().trim() : ""); //$NON-NLS-1$
         node.put(PreferenceConstants.PREF_SERVER_URL, urlText.getText().trim());
         node.putInt(PreferenceConstants.PREF_TIMEOUT_SECONDS, timeoutSpinner.getSelection());
         // Selection index is coupled to AnalysisLaunchMode's declaration order (see #createLaunchGroup).

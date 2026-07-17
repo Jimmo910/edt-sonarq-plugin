@@ -49,7 +49,17 @@ public final class Messages extends NLS
     public static String MarkerSyncJob_Name;
     public static String PreferencePage_AutoSync;
     public static String PreferencePage_AutoSyncMinutes;
+    public static String PreferencePage_Browse;
+    public static String PreferencePage_BslFilter_All;
+    public static String PreferencePage_BslFilter_Executables;
     public static String PreferencePage_BslLsPath;
+    public static String PreferencePage_BslPathRequired;
+    public static String PreferencePage_BslSource;
+    public static String PreferencePage_BslSource_Download;
+    public static String PreferencePage_BslSource_Local;
+    public static String PreferencePage_BslVerify;
+    public static String PreferencePage_BslVerifyFail;
+    public static String PreferencePage_BslVerifyOk;
     public static String PreferencePage_CiSecret;
     public static String PreferencePage_CiUrl;
     public static String PreferencePage_Description;
