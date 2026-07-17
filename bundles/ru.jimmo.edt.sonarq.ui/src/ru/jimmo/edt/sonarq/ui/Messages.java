@@ -95,6 +95,8 @@ public final class Messages extends NLS
     public static String PreferencePage_TestSuccess;
     public static String PreferencePage_TimeoutSeconds;
     public static String PreferencePage_Token;
+    public static String PropertyPage_BaseBranch;
+    public static String PropertyPage_BaseBranchHint;
     public static String PropertyPage_Branch;
     public static String PropertyPage_BranchHint;
     public static String PropertyPage_FindKey;
@@ -103,6 +105,10 @@ public final class Messages extends NLS
     public static String PropertyPage_PathPrefix_Hint;
     public static String PropertyPage_ProjectKey;
     public static String PropertyPage_ProjectKey_Hint;
+    public static String PropertyPage_RefreshSubsystems;
+    public static String PropertyPage_ScopeGroup;
+    public static String PropertyPage_Subsystems;
+    public static String PropertyPage_SubsystemsHint;
     public static String RefreshJob_Name;
     public static String RuleJob_Name;
     public static String RulePanel_LoadFailed;
