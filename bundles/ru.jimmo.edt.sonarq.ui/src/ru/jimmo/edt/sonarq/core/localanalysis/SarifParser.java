@@ -117,12 +117,13 @@ public final class SarifParser
             String text = asString(fullDescription, "text"); //$NON-NLS-1$
             description = !text.isEmpty() ? text : asString(fullDescription, "markdown"); //$NON-NLS-1$
         }
+        String html = MarkdownHtml.toHtml(description);
         String helpUri = asString(ruleObject, "helpUri"); //$NON-NLS-1$
         if (helpUri.isEmpty())
         {
-            return description;
+            return html;
         }
-        return description + "<p><a href=\"" + helpUri + "\">Documentation</a></p>"; //$NON-NLS-1$ //$NON-NLS-2$
+        return html + "<p><a href=\"" + helpUri + "\">Documentation</a></p>"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     private static List<SonarIssue> parseResults(JsonObject run, String projectKey, String uriBasePrefix)

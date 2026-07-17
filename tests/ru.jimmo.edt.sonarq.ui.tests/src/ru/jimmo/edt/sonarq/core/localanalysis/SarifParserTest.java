@@ -446,7 +446,9 @@ public class SarifParserTest
               ]
             }""";
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
-        assertEquals("**bold** description", //$NON-NLS-1$
+        // The markdown fallback is rendered to HTML the same way as "text": **bold** becomes <b>bold</b>,
+        // wrapped in a single paragraph.
+        assertEquals("<p><b>bold</b> description</p>", //$NON-NLS-1$
             report.rules().get("MdOnly").htmlDescription()); //$NON-NLS-1$
     }
 
