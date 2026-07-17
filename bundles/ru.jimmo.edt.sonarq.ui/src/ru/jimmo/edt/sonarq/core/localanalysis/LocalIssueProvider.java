@@ -6,6 +6,7 @@
 
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -23,8 +25,12 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
+import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
+import ru.jimmo.edt.sonarq.core.scope.ChangedLines;
+import ru.jimmo.edt.sonarq.core.scope.ChangedLinesIssueFilter;
+import ru.jimmo.edt.sonarq.core.scope.GitChangedLines;
 
 /**
  * Loads issues by running the BSL Language Server locally against a project's sources, instead of
@@ -57,6 +63,14 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
  * {@link DiagnosticsCatalog} into the state directory, best-effort: a settings page can list every known
  * diagnostic key/name without re-running an analysis, but a failure to write that cache must never fail the
  * fetch itself, so any {@link IOException} from the write is swallowed.
+ *
+ * <p>When {@code baseBranch} is non-blank, the parsed issues are additionally filtered down to those on
+ * lines changed relative to that branch (see {@link ChangedLinesIssueFilter}). This post-filter degrades to
+ * keeping every issue when the base cannot be resolved (no repository, unknown ref) and, unlike the
+ * generated checks configuration, always applies - even when the project ships its own
+ * {@code .bsl-language-server.json}. The subsystem filter, by contrast, is applied upstream: it is baked
+ * into the generated {@code configPath} configuration and is therefore skipped whenever a project-local
+ * configuration file takes priority, exactly like the disabled-diagnostics filter.
  */
 public final class LocalIssueProvider implements IIssueProvider
 {
@@ -71,7 +85,9 @@ public final class LocalIssueProvider implements IIssueProvider
     private final Path stateDir;
     private final Path serverOverride;
     private final Path configPath;
+    private final String baseBranch;
     private final AnalyzeRunner runner;
+    private final BiFunction<File, String, ChangedLines> changedLinesSource;
 
     private volatile Map<String, SonarRule> ruleCache = Map.of();
 
@@ -88,17 +104,47 @@ public final class LocalIssueProvider implements IIssueProvider
      *     {@code null} to run with its defaults; overridden when a project-local
      *     {@code .bsl-language-server.json} is found under {@code projectRoot} or the analyzed source
      *     directory, which is then passed explicitly instead
+     * @param baseBranch the git base branch or commit to filter changed lines against, not {@code null};
+     *     blank means no base-branch filtering
      * @param runner runs the headless analysis, not {@code null}
      */
     public LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride,
-        Path configPath, AnalyzeRunner runner)
+        Path configPath, String baseBranch, AnalyzeRunner runner)
+    {
+        this(projectKey, projectRoot, stateDir, serverOverride, configPath, baseBranch, runner,
+            GitChangedLines::compute);
+    }
+
+    /**
+     * Creates the provider with an injectable changed-lines source, for tests.
+     *
+     * @param projectKey the SonarQube project key used to build component keys, not {@code null}
+     * @param projectRoot the EDT project location to analyze, not {@code null}
+     * @param stateDir the plugin state directory to install the language server under and write reports
+     *     into, not {@code null}
+     * @param serverOverride a user-provided BSL Language Server executable, or {@code null} to use the
+     *     managed download
+     * @param configPath a generated checks configuration file to pass to the language server, or
+     *     {@code null} to run with its defaults; overridden when a project-local
+     *     {@code .bsl-language-server.json} is found under {@code projectRoot} or the analyzed source
+     *     directory, which is then passed explicitly instead
+     * @param baseBranch the git base branch or commit to filter changed lines against, not {@code null};
+     *     blank means no base-branch filtering
+     * @param runner runs the headless analysis, not {@code null}
+     * @param changedLinesSource resolves the changed lines for a work-tree directory and base ref, not
+     *     {@code null}; production code always passes {@link GitChangedLines#compute(File, String)}
+     */
+    LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride, Path configPath,
+        String baseBranch, AnalyzeRunner runner, BiFunction<File, String, ChangedLines> changedLinesSource)
     {
         this.projectKey = projectKey;
         this.projectRoot = projectRoot;
         this.stateDir = stateDir;
         this.serverOverride = serverOverride;
         this.configPath = configPath;
+        this.baseBranch = baseBranch;
         this.runner = runner;
+        this.changedLinesSource = changedLinesSource;
     }
 
     @Override
@@ -119,7 +165,13 @@ public final class LocalIssueProvider implements IIssueProvider
                 projectRoot.toString());
             ruleCache = report.rules();
             saveDiagnosticsCatalog(report);
-            return new IssueSnapshot(query, report.issues(), report.issues().size(), Instant.now());
+            List<SonarIssue> issues = report.issues();
+            if (baseBranch != null && !baseBranch.isBlank())
+            {
+                ChangedLines changed = changedLinesSource.apply(projectRoot.toFile(), baseBranch.trim());
+                issues = ChangedLinesIssueFilter.keepChanged(issues, projectKey, projectRoot, changed);
+            }
+            return new IssueSnapshot(query, issues, issues.size(), Instant.now());
         }
         catch (IOException e)
         {

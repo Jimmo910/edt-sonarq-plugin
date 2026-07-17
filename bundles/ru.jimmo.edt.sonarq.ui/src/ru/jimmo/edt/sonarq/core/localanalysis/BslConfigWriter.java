@@ -13,11 +13,13 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.TreeSet;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 /**
- * Writes a BSL Language Server configuration file that disables a set of diagnostics, so a local analysis
- * run only reports the diagnostics a user has left enabled.
+ * Writes a BSL Language Server configuration file that disables a set of diagnostics and/or restricts
+ * analysis to a set of subsystems, so a local analysis run only reports the diagnostics a user has left
+ * enabled and only for the subsystems the user has selected.
  */
 public final class BslConfigWriter
 {
@@ -28,41 +30,66 @@ public final class BslConfigWriter
 
     private static final String PARAMETERS_MEMBER = "parameters"; //$NON-NLS-1$
 
+    private static final String SUBSYSTEMS_FILTER_MEMBER = "subsystemsFilter"; //$NON-NLS-1$
+
+    private static final String INCLUDE_MEMBER = "include"; //$NON-NLS-1$
+
     private BslConfigWriter()
     {
     }
 
     /**
      * Writes a {@code bsl-ls-config.json} file under {@code stateDir} that disables every key in
-     * {@code disabledKeys}, in the shape the BSL Language Server expects:
-     * {@code {"diagnostics":{"parameters":{"Key":false,...}}}}, with parameter keys written in sorted
-     * order. Any file previously written at that path is overwritten.
+     * {@code disabledKeys} and/or restricts analysis to the subsystems in {@code includeSubsystems}, in
+     * the shape the BSL Language Server expects:
+     * {@code {"diagnostics":{"parameters":{"Key":false,...},"subsystemsFilter":{"include":["Name",...]}}}},
+     * with each member present only when its input is non-empty and its entries written in sorted order.
+     * Any file previously written at that path is overwritten.
      *
      * <p>This is called from {@code RefreshInputsFactory} on every project refresh once any diagnostic is
-     * disabled - on the UI thread for a manually triggered refresh - so, before writing, the existing file
-     * (if any) is read and compared byte-for-byte against the computed content; the write is skipped when
-     * they already match, turning the common case (the disabled set has not changed since the last
-     * refresh) into a small read and compare instead of a synchronous file write on every refresh.
+     * disabled or a subsystem filter is configured - on the UI thread for a manually triggered refresh -
+     * so, before writing, the existing file (if any) is read and compared byte-for-byte against the
+     * computed content; the write is skipped when they already match, turning the common case (neither
+     * input has changed since the last refresh) into a small read and compare instead of a synchronous
+     * file write on every refresh.
      *
      * @param stateDir the plugin state directory to write the config file under, not {@code null}
      * @param disabledKeys the diagnostic keys to disable, may be {@code null} or empty
-     * @return the written file's path, or {@code null} if {@code disabledKeys} is {@code null} or empty
-     *     and no config file is needed
+     * @param includeSubsystems the subsystem names to restrict analysis to, may be {@code null} or empty
+     * @return the written file's path, or {@code null} if both {@code disabledKeys} and
+     *     {@code includeSubsystems} are {@code null} or empty and no config file is needed
      * @throws IOException if the existing file cannot be read or the new content cannot be written
      */
-    public static Path write(Path stateDir, Collection<String> disabledKeys) throws IOException
+    public static Path write(Path stateDir, Collection<String> disabledKeys,
+        Collection<String> includeSubsystems) throws IOException
     {
-        if (disabledKeys == null || disabledKeys.isEmpty())
+        boolean hasDisabled = disabledKeys != null && !disabledKeys.isEmpty();
+        boolean hasSubsystems = includeSubsystems != null && !includeSubsystems.isEmpty();
+        if (!hasDisabled && !hasSubsystems)
         {
             return null;
         }
-        JsonObject parameters = new JsonObject();
-        for (String key : new TreeSet<>(disabledKeys))
-        {
-            parameters.addProperty(key, Boolean.FALSE);
-        }
         JsonObject diagnostics = new JsonObject();
-        diagnostics.add(PARAMETERS_MEMBER, parameters);
+        if (hasDisabled)
+        {
+            JsonObject parameters = new JsonObject();
+            for (String key : new TreeSet<>(disabledKeys))
+            {
+                parameters.addProperty(key, Boolean.FALSE);
+            }
+            diagnostics.add(PARAMETERS_MEMBER, parameters);
+        }
+        if (hasSubsystems)
+        {
+            JsonArray include = new JsonArray();
+            for (String name : new TreeSet<>(includeSubsystems))
+            {
+                include.add(name);
+            }
+            JsonObject subsystemsFilter = new JsonObject();
+            subsystemsFilter.add(INCLUDE_MEMBER, include);
+            diagnostics.add(SUBSYSTEMS_FILTER_MEMBER, subsystemsFilter);
+        }
         JsonObject root = new JsonObject();
         root.add(DIAGNOSTICS_MEMBER, diagnostics);
         String json = root.toString();

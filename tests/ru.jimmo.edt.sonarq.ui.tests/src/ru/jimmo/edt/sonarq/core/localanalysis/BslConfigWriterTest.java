@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -19,6 +20,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -48,7 +50,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path result = BslConfigWriter.write(tempDir, null);
+        Path result = BslConfigWriter.write(tempDir, null, List.of());
 
         assertNull(result);
         assertTrue(Files.list(tempDir).findAny().isEmpty());
@@ -59,7 +61,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path result = BslConfigWriter.write(tempDir, List.of());
+        Path result = BslConfigWriter.write(tempDir, List.of(), List.of());
 
         assertNull(result);
     }
@@ -69,7 +71,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"));
+        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"), List.of());
 
         assertEquals(tempDir.resolve("bsl-ls-config.json"), result);
         String json = Files.readString(result, StandardCharsets.UTF_8);
@@ -89,8 +91,8 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        BslConfigWriter.write(tempDir, List.of("First"));
-        Path result = BslConfigWriter.write(tempDir, List.of("Second"));
+        BslConfigWriter.write(tempDir, List.of("First"), List.of());
+        Path result = BslConfigWriter.write(tempDir, List.of("Second"), List.of());
 
         String json = Files.readString(result, StandardCharsets.UTF_8);
         JsonObject parameters = JsonParser.parseString(json).getAsJsonObject()
@@ -103,15 +105,53 @@ public class BslConfigWriterTest
     public void secondWriteWithSameKeysDoesNotModifyFile() throws IOException
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
-        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"));
+        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"), List.of());
         // Push the timestamp back in time so a skipped write is distinguishable from one that merely
         // completed within the same filesystem timestamp-resolution tick.
         FileTime old = FileTime.fromMillis(Files.getLastModifiedTime(result).toMillis() - 60_000L);
         Files.setLastModifiedTime(result, old);
 
-        Path second = BslConfigWriter.write(tempDir, List.of("MethodSize", "Typo"));
+        Path second = BslConfigWriter.write(tempDir, List.of("MethodSize", "Typo"), List.of());
 
         assertEquals(result, second);
         assertEquals(old, Files.getLastModifiedTime(second));
+    }
+
+    @Test
+    public void writesSubsystemsFilterInclude() throws Exception
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+
+        Path file = BslConfigWriter.write(tempDir, List.of(), List.of("ЮТДвижок",
+            "Общий"));
+
+        JsonObject root = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+        JsonArray include = root.getAsJsonObject("diagnostics").getAsJsonObject("subsystemsFilter")
+            .getAsJsonArray("include");
+        assertEquals(2, include.size());
+        assertEquals("Общий", include.get(0).getAsString());   // sorted
+        assertEquals("ЮТДвижок", include.get(1).getAsString());
+        assertFalse(root.getAsJsonObject("diagnostics").has("parameters"));
+    }
+
+    @Test
+    public void writesBothParametersAndSubsystems() throws Exception
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+
+        Path file = BslConfigWriter.write(tempDir, List.of("MethodSize"),
+            List.of("ЮТДвижок"));
+        JsonObject diag = JsonParser.parseString(Files.readString(file)).getAsJsonObject()
+            .getAsJsonObject("diagnostics");
+        assertTrue(diag.has("parameters"));
+        assertTrue(diag.has("subsystemsFilter"));
+    }
+
+    @Test
+    public void bothEmptyYieldsNull() throws Exception
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+
+        assertNull(BslConfigWriter.write(tempDir, List.of(), List.of()));
     }
 }

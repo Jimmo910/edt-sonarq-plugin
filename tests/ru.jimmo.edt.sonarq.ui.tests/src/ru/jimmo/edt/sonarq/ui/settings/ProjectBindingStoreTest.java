@@ -10,6 +10,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.List;
+
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
@@ -61,5 +63,29 @@ public class ProjectBindingStoreTest
         ProjectBinding loaded = new ProjectBindingStore().load(project);
         assertEquals("", loaded.projectKey());
         assertFalse(loaded.isConfigured());
+    }
+
+    @Test
+    public void roundTripsScopeFields() throws Exception
+    {
+        ProjectBindingStore store = new ProjectBindingStore();
+        store.save(project, new ProjectBinding("my:key", "release/1", "conf", "vendor/base",
+            List.of("СтандартныеПодсистемы", "ЮТДвижок")));
+
+        ProjectBinding loaded = store.load(project);
+
+        assertEquals("vendor/base", loaded.baseBranch());
+        assertEquals(List.of("СтандартныеПодсистемы", "ЮТДвижок"), loaded.subsystems());
+    }
+
+    @Test
+    public void loadsLegacyBindingWithoutScopeAsEmptyScope() throws Exception
+    {
+        new ProjectBindingStore().save(project, new ProjectBinding("k", "", "")); // 3-arg convenience
+
+        ProjectBinding loaded = new ProjectBindingStore().load(project);
+
+        assertEquals("", loaded.baseBranch());
+        assertTrue(loaded.subsystems().isEmpty());
     }
 }
