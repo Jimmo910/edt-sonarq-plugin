@@ -126,4 +126,36 @@ public class ChangedLinesIssueFilterTest
 
         assertEquals(List.of(outsideProject), out);
     }
+
+    @Test
+    public void nonAncestorWorkTreeFailsOpenAndKeepsEverything()
+    {
+        // workTreeRoot ("C:/a") is a sibling of projectRoot ("C:/b/proj"), not an ancestor: relativize()
+        // would normalize to a ".."-leading path. The filter must fail open (keep everything) instead of
+        // silently dropping every issue because no repo path can ever match such a prefix.
+        Path workTree = Path.of("C:/a");
+        Path proj = Path.of("C:/b/proj");
+        SonarIssue kept = issue("proj:src/CommonModules/A/Module.bsl", 10);
+        ChangedLines cl = fake(workTree.toFile(), Set.of(), Set.of());
+
+        List<SonarIssue> out = ChangedLinesIssueFilter.keepChanged(List.of(kept), "proj", proj, cl);
+
+        assertEquals(List.of(kept), out);
+    }
+
+    @Test
+    public void differentRootsFailOpenWithoutThrowing()
+    {
+        // workTreeRoot ("C:/wt") and projectRoot ("D:/proj") have different roots: Path.relativize() throws
+        // IllegalArgumentException for this pair on the JVM. keepChanged must not let that escape - it would
+        // otherwise kill the refresh Job, which only catches IOException/InterruptedException.
+        Path workTree = Path.of("C:/wt");
+        Path proj = Path.of("D:/proj");
+        SonarIssue kept = issue("proj:src/CommonModules/A/Module.bsl", 10);
+        ChangedLines cl = fake(workTree.toFile(), Set.of(), Set.of());
+
+        List<SonarIssue> out = ChangedLinesIssueFilter.keepChanged(List.of(kept), "proj", proj, cl);
+
+        assertEquals(List.of(kept), out);
+    }
 }

@@ -39,8 +39,15 @@ public final class ChangedLinesIssueFilter
         {
             return issues;
         }
-        String prefix = relativePrefix(changed.workTreeRoot().toPath(), projectRoot);
-        return issues.stream().filter(issue -> keep(issue, projectKey, prefix, changed)).toList();
+        Optional<String> prefix = relativePrefix(changed.workTreeRoot().toPath(), projectRoot);
+        // Fail open exactly like the !available() branch above: a prefix we cannot resolve must never be
+        // treated as "nothing matches", or every issue would silently vanish.
+        if (prefix.isEmpty())
+        {
+            return issues;
+        }
+        String prefixValue = prefix.get();
+        return issues.stream().filter(issue -> keep(issue, projectKey, prefixValue, changed)).toList();
     }
 
     /**
@@ -67,14 +74,32 @@ public final class ChangedLinesIssueFilter
     /**
      * Computes {@code projectRoot} relative to {@code workTreeRoot} as a {@code /}-separated prefix.
      *
+     * <p>Returns {@link Optional#empty()} when the prefix cannot be resolved: {@code relativize} throws
+     * (e.g. different roots/drive letters on Windows) or the project root is not under the work tree at all
+     * (a {@code ..}-leading result) - a linked worktree, a {@code core.worktree} override, or a
+     * junction/symlink can all put {@code projectRoot} outside {@code workTreeRoot}. Callers must treat an
+     * empty result as fail-open, never as an empty (root-level) prefix.
+     *
      * @param workTreeRoot the git work tree root, not {@code null}
      * @param projectRoot the project location, not {@code null}
-     * @return the relative prefix, empty when the project is the work tree root
+     * @return the relative prefix (empty string when the project is the work tree root), or
+     *     {@link Optional#empty()} when unresolvable
      */
-    private static String relativePrefix(Path workTreeRoot, Path projectRoot)
+    private static Optional<String> relativePrefix(Path workTreeRoot, Path projectRoot)
     {
-        Path rel = workTreeRoot.relativize(projectRoot);
-        String text = rel.toString().replace('\\', '/');
-        return text;
+        Path rel;
+        try
+        {
+            rel = workTreeRoot.relativize(projectRoot);
+        }
+        catch (IllegalArgumentException e)
+        {
+            return Optional.empty();
+        }
+        if (rel.getNameCount() > 0 && "..".equals(rel.getName(0).toString())) //$NON-NLS-1$
+        {
+            return Optional.empty();
+        }
+        return Optional.of(rel.toString().replace('\\', '/'));
     }
 }

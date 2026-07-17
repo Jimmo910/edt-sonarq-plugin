@@ -75,4 +75,65 @@ public class GitChangedLinesTest
     {
         assertFalse(GitChangedLines.compute(Files.createTempDirectory("plain").toFile(), "HEAD").available());
     }
+
+    @Test
+    public void subdirPathUsesForwardSlashKey() throws Exception
+    {
+        Path repo = Files.createTempDirectory("gitchgsubdir");
+        try (Git git = Git.init().setDirectory(repo.toFile()).call())
+        {
+            Path sub = repo.resolve("sub").resolve("dir");
+            Files.createDirectories(sub);
+            Files.writeString(sub.resolve("m.bsl"), "l1\nl2\nl3\n");
+            git.add().addFilepattern(".").call();
+            RevCommit base = git.commit().setAuthor("t", "t@t").setMessage("base").call();
+            Files.writeString(sub.resolve("m.bsl"), "l1\nCHANGED\nl3\n");
+
+            ChangedLines cl = GitChangedLines.compute(repo.toFile(), base.getName());
+
+            assertTrue(cl.available());
+            assertTrue(cl.isChanged("sub/dir/m.bsl", 2));
+        }
+    }
+
+    @Test
+    public void renameIsReportedWithoutException() throws Exception
+    {
+        Path repo = Files.createTempDirectory("gitchgrename");
+        try (Git git = Git.init().setDirectory(repo.toFile()).call())
+        {
+            Files.writeString(repo.resolve("a.bsl"), "l1\nl2\nl3\n");
+            git.add().addFilepattern(".").call();
+            RevCommit base = git.commit().setAuthor("t", "t@t").setMessage("base").call();
+            Files.move(repo.resolve("a.bsl"), repo.resolve("b.bsl"));
+
+            ChangedLines cl = GitChangedLines.compute(repo.toFile(), base.getName());
+
+            assertTrue(cl.available());
+            // Pure rename, content unchanged: detectRenames may report zero edits for b.bsl - that is an
+            // acceptable outcome (either ranges or none). The important thing is that looking it up never
+            // throws.
+            cl.isChanged("b.bsl", 1);
+        }
+    }
+
+    @Test
+    public void deletedFileIsSkippedWithoutException() throws Exception
+    {
+        Path repo = Files.createTempDirectory("gitchgdelete");
+        try (Git git = Git.init().setDirectory(repo.toFile()).call())
+        {
+            Files.writeString(repo.resolve("a.bsl"), "l1\nl2\n");
+            Files.writeString(repo.resolve("keep.bsl"), "k1\nk2\nk3\n");
+            git.add().addFilepattern(".").call();
+            RevCommit base = git.commit().setAuthor("t", "t@t").setMessage("base").call();
+            Files.delete(repo.resolve("a.bsl"));
+            Files.writeString(repo.resolve("keep.bsl"), "k1\nCHANGED\nk3\n");
+
+            ChangedLines cl = GitChangedLines.compute(repo.toFile(), base.getName());
+
+            assertTrue(cl.available());
+            assertTrue(cl.isChanged("keep.bsl", 2));
+        }
+    }
 }
