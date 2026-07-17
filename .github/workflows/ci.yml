@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Cache target platform (p2)
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/.meta/p2-artifacts.properties
+          key: p2-${{ hashFiles('targets/default/default.target') }}
+
+      - name: Build and test
+        run: mvn --batch-mode --no-transfer-progress clean verify

@@ -1,228 +1,235 @@
 # SonarQ in EDT
 
-**English** | [Русский](README.ru.md)
+[![CI](https://github.com/Jimmo910/edt-sonarq-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Jimmo910/edt-sonarq-plugin/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Jimmo910/edt-sonarq-plugin?sort=semver)](https://github.com/Jimmo910/edt-sonarq-plugin/releases)
+[![License: EPL 2.0](https://img.shields.io/badge/License-EPL_2.0-blue.svg)](LICENSE)
+[![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](#требования)
+[![1C:EDT 2025.2+](https://img.shields.io/badge/1C%3AEDT-2025.2%2B-brightgreen.svg)](#требования)
 
-A plugin for **1C:Enterprise Development Tools (EDT)** that shows **SonarQube** issues for
-1C:Enterprise (BSL) code right inside the IDE. Its default mode reads analysis results from a
-SonarQube server over the Web API and is branch-aware where the server edition supports it
-(commercial editions); it also works against SonarQube Community Edition (single-branch).
-A serverless local mode is available too — it runs the **BSL Language Server** directly
-against the project's sources, with no server involved.
+[English](README.en.md) | **Русский**
 
-## Features
+Плагин для **1C:Enterprise Development Tools (EDT)**, который показывает замечания
+**SonarQube** по BSL-коду прямо в IDE. Основной режим читает результаты анализа с сервера
+SonarQube через Web API и учитывает ветки там, где это поддерживает редакция сервера
+(коммерческие редакции); при этом плагин работает и с SonarQube Community Edition
+(без веток). Дополнительно доступен локальный режим без сервера — он запускает
+**BSL Language Server** прямо по исходникам проекта.
 
-- **SonarQube Issues view** — a tree of issues for the active project, grouped by file or by
-  rule, with toolbar filters for severity and type and a free-text search.
-- **Jump to code** — double-click an issue to open the module at the reported line; a single
-  click shows the rule description in the bottom pane.
-- **Automatic git branch detection** — the view detects the project's current branch and
-  queries issues for it (on commercial server editions).
-- **Per-project binding** — each project is bound to a SonarQube project key, with an
-  optional fixed branch and an optional repository path prefix.
-- **Issues right in the code** — transient markers in the standard Problems view and
-  underlines in the editor.
-- **Run analysis from the view** — a toolbar action (local scanner or CI trigger).
-- **Serverless local mode** — analysis by the BSL Language Server straight from the sources,
-  with no SonarQube server and no Java install required.
+## Возможности
 
-## Requirements
+- **Окно «Замечания SonarQube»** — дерево замечаний активного проекта с группировкой по
+  файлу или по правилу, фильтрами по критичности и типу и текстовым поиском.
+- **Переход к коду** — двойной клик по замечанию открывает модуль на нужной строке;
+  одиночный клик показывает описание правила в нижней панели.
+- **Автоопределение git-ветки** — окно определяет текущую ветку проекта и запрашивает
+  замечания именно по ней (на коммерческих редакциях сервера).
+- **Привязка к проекту** — каждый проект связывается с ключом проекта SonarQube, с
+  необязательной фиксированной веткой и префиксом пути в репозитории.
+- **Замечания прямо в коде** — транзиентные маркеры в стандартном окне Problems и
+  подчёркивания в редакторе.
+- **Запуск анализа из окна** — по кнопке (локальный scanner или CI-триггер).
+- **Локальный режим без сервера** — анализ BSL Language Server прямо по исходникам, без
+  SonarQube и без установки Java.
 
-- 1C:Enterprise Development Tools **2025.2 or later** (built and tested against the 2026.1
-  target platform).
-- Java 17 — the one EDT already runs on (no separate install needed).
-- For server mode — a SonarQube server with an already-analyzed BSL project (for example,
-  analyzed on CI with
+## Требования
+
+- 1C:Enterprise Development Tools **2025.2 или новее** (собрано и проверено на target-платформе
+  2026.1).
+- Java 17 — та, на которой уже работает EDT (отдельно устанавливать не нужно).
+- Для режима сервера — сервер SonarQube с уже проанализированным BSL-проектом (например,
+  анализ на CI с плагином
   [sonar-bsl-plugin-community](https://github.com/1c-syntax/sonar-bsl-plugin-community)).
-- For local mode — internet access once, on the first analysis, to auto-download the BSL
-  Language Server native build (unless a local executable is configured).
+- Для локального режима — доступ в интернет один раз, при первом анализе, чтобы автоматически
+  скачать нативную сборку BSL Language Server (если не указан локальный файл).
 
-## Installation
+## Установка
 
-**From a p2 update-site archive** (recommended):
+**Из p2-архива обновлений** (рекомендуется):
 
-1. Download the `ru.jimmo.edt.sonarq.repository` update-site zip from the project's
-   **Releases** page (or build it yourself — see [Building from source](#building-from-source)).
-2. In EDT: `Help` → `Install New Software…` → `Add…` → `Archive…`, point it at the
-   downloaded zip, select the **SonarQ in EDT** feature, and finish the wizard.
-3. Restart EDT when prompted.
+1. Скачайте zip-архив обновлений `ru.jimmo.edt.sonarq.repository` со страницы **Releases**
+   проекта (или соберите сами — см. [Сборка из исходников](#сборка-из-исходников)).
+2. В EDT: `Help` → `Install New Software…` → `Add…` → `Archive…`, укажите скачанный zip,
+   выберите функцию **SonarQ in EDT** и пройдите мастер до конца.
+3. Перезапустите EDT по запросу.
 
-**From the command line** (p2 director) — for scripted / unattended installs:
+**Из командной строки** (p2 director) — для скриптовой/автономной установки:
 
 ```
-<edt-install>/1cedtc.exe -nosplash -application org.eclipse.equinox.p2.director ^
-  -repository file:/<path-to-extracted-repository> ^
+<каталог-EDT>/1cedtc.exe -nosplash -application org.eclipse.equinox.p2.director ^
+  -repository file:/<путь-к-распакованному-репозиторию> ^
   -installIU ru.jimmo.edt.sonarq.feature.feature.group ^
-  -vm <path-to-jdk17>/bin/javaw.exe
+  -vm <путь-к-jdk17>/bin/javaw.exe
 ```
 
-## Opening the view
+## Как открыть окно
 
-**Window** → **Show View** → **Other…** → **SonarQube** category → **SonarQube Issues**.
+**Окно** → **Показать панель** → **Другие…** → категория **SonarQube** → **Замечания SonarQube**
+(в английской локализации EDT: `Window` → `Show View` → `Other…` → `SonarQube` → `SonarQube Issues`).
 
-![SonarQube Issues view: the grouped issue tree, the toolbar filters and the rule description pane](docs/images/issues-view.png)
-<!-- TODO: owner — add a screenshot of the SonarQube Issues view (tree + toolbar + rule pane). -->
+![Окно «Замечания SonarQube»: дерево замечаний с группировкой, тулбар с фильтрами и панель описания правила](docs/images/issues-view.png)
+<!-- TODO: владельцу — добавить скриншот окна «Замечания SonarQube» (дерево + тулбар + панель правила). -->
 
-## The Issues view
+## Окно замечаний
 
-The toolbar sits at the top of the view, the issue tree below it, the rule description pane
-under the tree, and a status line at the very bottom.
+В верхней части окна расположен тулбар, ниже — дерево замечаний, под ним — панель описания
+правила, а в самом низу — строка статуса.
 
-| Control | What it does |
+| Элемент | Что делает |
 |---|---|
-| **Refresh** | Reload issues. In server mode — fetch them from the server; in local mode — re-run the local analysis. |
-| **Run Branch Analysis** | In server mode — analyze the current state of the working copy the configured way (local scanner or CI trigger). Overwriting an already-analyzed branch pops up a confirmation dialog. In local mode this is the same as **Refresh**. |
-| **Project** | Pick a workspace project when there is more than one. |
-| **Severity** | Multi-select of severities: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. |
-| **Type** | Filter by type: BUG, VULNERABILITY, CODE_SMELL. |
-| **Filter by rule or message** field | Free-text filter over the rule key and the message text. |
-| **Group by File** / **Group by Rule** | Toggle the tree structure. |
+| **Обновить** | Перечитать замечания. В режиме сервера — забрать их с сервера; в локальном режиме — запустить локальный анализ заново. |
+| **Запустить анализ ветки** | В режиме сервера — проанализировать текущее состояние рабочей копии настроенным способом (локальный scanner или CI-триггер). При попытке перезаписать уже проанализированную ветку показывается диалог подтверждения. В локальном режиме действует так же, как **Обновить**. |
+| **Проект** | Выбор проекта воркспейса, если их несколько. |
+| **Критичность** | Мультивыбор критичностей: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. |
+| **Тип** | Фильтр по типу: BUG, VULNERABILITY, CODE_SMELL. |
+| Поле **«Фильтр по правилу или сообщению»** | Текстовый фильтр по ключу правила и тексту сообщения. |
+| **Группировать по файлу** / **Группировать по правилу** | Переключатель структуры дерева. |
 
-Also in the view:
+Дополнительно в окне:
 
-- The **status line** at the bottom shows the issue count, the branch, the last-refresh time,
-  and, on failures, the error text (for example an authentication or network error).
-- **Double-click** an issue to open the corresponding module at the reported line; a **single
-  click** loads the rule description into the bottom pane.
-- Issues whose **file is not found locally** are shown greyed out; a tooltip explains that
-  navigation is unavailable.
-- When the current git branch has not been analyzed on the server yet, a banner appears above
-  the tree — **"Branch … has not been analyzed on the server yet"** — with a **Send branch
-  for analysis** link (server mode only, on commercial SonarQube editions).
+- **Строка статуса** внизу показывает число замечаний, ветку, время последнего обновления,
+  а при сбоях — текст ошибки (например, ошибку аутентификации или сети).
+- **Двойной клик** по замечанию открывает соответствующий модуль на нужной строке;
+  **одиночный клик** загружает описание правила в нижнюю панель.
+- Замечания, для которых **файл не найден локально**, показываются серым; тултип поясняет,
+  что переход недоступен.
+- Если текущая git-ветка ещё не анализировалась на сервере, над деревом появляется плашка
+  **«Ветка … ещё не анализировалась на сервере»** со ссылкой **«Отправить ветку на анализ»**
+  (только в режиме сервера, на коммерческих редакциях SonarQube).
 
-## Configuring server mode
+## Настройка режима сервера
 
-### 1. Server connection
+### 1. Подключение к серверу
 
-**Preferences** → **SonarQube**:
+**Настройки** → **SonarQube**:
 
-- **Mode** — choose **SonarQube server**.
-- **Server URL** — the SonarQube server address.
-- **Token** — a user token. To create one, open **My Account → Security → Generate Tokens**
-  in the SonarQube web UI and create a **User Token**. For the analysis-launch button the
-  token additionally needs the **Execute Analysis** permission. The token is stored in the
-  **Eclipse Secure Storage**, not in plain preferences.
-- **Timeout (seconds)** — the HTTP request timeout.
-- **Test Connection** verifies the URL and token and reports the server version.
+- **Режим** — выберите **«Сервер SonarQube»**.
+- **URL сервера** — адрес сервера SonarQube.
+- **Токен** — пользовательский токен. Как создать: в веб-интерфейсе SonarQube откройте
+  **My Account → Security → Generate Tokens** и создайте токен типа **User Token**.
+  Для кнопки запуска анализа токену дополнительно нужно право **Execute Analysis**.
+  Токен хранится в **Eclipse Secure Storage**, а не в обычных настройках.
+- **Тайм-аут, сек.** — тайм-аут HTTP-запросов.
+- Кнопка **«Проверить соединение»** проверяет URL и токен и показывает версию сервера.
 
-![The SonarQube preference page: mode, server URL, token, and the Analysis launch and Editor markers groups](docs/images/preferences.png)
-<!-- TODO: owner — add a screenshot of the Preferences → SonarQube page. -->
+![Страница настроек SonarQube: режим, URL сервера, токен, группы «Запуск анализа» и «Маркеры в редакторе»](docs/images/preferences.png)
+<!-- TODO: владельцу — добавить скриншот страницы «Настройки → SonarQube». -->
 
-### 2. Project binding
+### 2. Привязка проекта
 
-**Right-click the project** → **Properties** → **SonarQube**:
+**Правый клик по проекту** → **Свойства** → **SonarQube**:
 
-- **Project key** — the project key in SonarQube. The **Fill from Server** button looks it up
-  by the EDT project name (a hint is shown in the field).
-- **Fixed branch** — leave empty to detect the branch from git automatically.
-- **Repository path prefix** — set it only when the EDT project lives in a sub-directory of
-  the git repository that CI analyzes; otherwise leave it empty.
+- **Имя проекта** — ключ проекта (project key) в SonarQube. Кнопка **«Заполнить»**
+  подбирает его по имени проекта EDT (подсказка выводится прямо в поле).
+- **Фиксированная ветка** — если оставить пустой, ветка определяется автоматически из git.
+- **Префикс пути в репозитории** — заполняется только если проект EDT лежит в подкаталоге
+  git-репозитория, который анализирует CI; иначе оставьте пустым.
 
-### 3. Loading issues
+### 3. Загрузка замечаний
 
-Open the **SonarQube Issues** view and press **Refresh**.
+Откройте окно **«Замечания SonarQube»** и нажмите **Обновить**.
 
-### 4. Analysis launch (optional)
+### 4. Запуск анализа (необязательно)
 
-The **Analysis launch** group on the preference page controls how the **Run Branch Analysis**
-button works. **Launch mode**:
+Группа **«Запуск анализа»** на странице настроек задаёт, как работает кнопка
+**«Запустить анализ ветки»**. **Способ запуска**:
 
-- **Local scanner (download automatically)** — the plugin downloads the sonar-scanner CLI
-  itself.
-- **Local scanner (specified path)** — use the scanner at the given **Scanner path**.
-- **CI trigger (URL)** — a POST to a CI webhook. Configure the **CI trigger URL** with a
-  `{branch}` placeholder (the current branch is substituted) and an optional **CI secret**
-  (sent as an `Authorization` header, stored in the Secure Storage).
+- **Локальный scanner (скачать автоматически)** — плагин сам скачает sonar-scanner CLI.
+- **Локальный scanner (указанный путь)** — использовать scanner по заданному **Пути к scanner**.
+- **CI-триггер (URL)** — POST-запрос на webhook CI. Задаётся **URL CI-триггера** с
+  плейсхолдером `{branch}` (подставляется текущая ветка) и необязательный **Секрет CI**
+  (отправляется как заголовок `Authorization`, хранится в Secure Storage).
 
-The **Extra scanner arguments** field appends arguments in both local-scanner modes.
+Поле **«Доп. параметры scanner»** добавляет аргументы к обоим scanner-режимам.
 
-Example GitLab pipeline trigger URL:
+Пример URL для GitLab pipeline trigger:
 
 ```
 https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline?token=<trigger_token>&ref={branch}
 ```
 
-> **Warning.** GitLab expects the trigger token as a URL query parameter, so it goes right
-> into the URL template — and is therefore stored in **plain (non-encrypted)** preferences.
-> Prefer a low-privilege trigger token.
+> **Предупреждение.** GitLab ожидает trigger-токен в query-параметре URL, поэтому его
+> вписывают прямо в шаблон URL — и тогда он хранится в **обычных (незашифрованных)**
+> настройках. Используйте маловластный trigger token.
 
-### 5. Branches
+### 5. Ветки
 
-On commercial SonarQube editions the view shows the branch matching the project's current git
-branch. On SonarQube Community Edition branches are not supported — the main branch is shown,
-and analysis always lands in the single default branch (a confirmation dialog warns before
-overwriting an already-analyzed branch).
+На коммерческих редакциях SonarQube окно показывает ветку, соответствующую текущей git-ветке
+проекта. На SonarQube Community Edition ветки не поддерживаются — показывается основная ветка,
+а запуск анализа всегда попадает в единственную ветку по умолчанию (перед перезаписью уже
+проанализированной ветки выводится диалог подтверждения).
 
-## Configuring local mode (no server)
+## Настройка локального режима (без сервера)
 
-**Preferences** → **SonarQube** → **Mode** → **Local analysis (BSL Language Server)**.
+**Настройки** → **SonarQube** → **Режим** → **«Локальный анализ (BSL Language Server)»**.
 
-- **Source**:
-  - **Download automatically (internet, ~170 MB once)** — the default; the plugin downloads
-    the BSL Language Server native build into its own state area on the first analysis. No
-    Java is required.
-  - **Use a local executable** — set the **BSL Language Server executable** path yourself
-    (**Browse…** and **Verify** buttons; **Verify** runs the file with `--version`).
-- Every **Refresh** runs a fresh local analysis.
-- Rules are the ones bundled with the BSL Language Server. A `.bsl-language-server.json` file
-  at the project root is picked up automatically.
-- Branches, the analysis-launch button and the CI settings do not apply in this mode — the
-  project is analyzed as a whole.
+- **Источник**:
+  - **«Скачать автоматически (из интернета, ~170 МБ однократно)»** — по умолчанию; плагин
+    скачает нативную сборку BSL Language Server в свой каталог при первом анализе. Java при
+    этом не требуется.
+  - **«Указать локальный файл»** — задать **Путь к BSL Language Server** вручную (кнопки
+    **«Обзор…»** и **«Проверить»**; **«Проверить»** запускает файл с `--version`).
+- Каждое нажатие **«Обновить»** запускает свежий локальный анализ.
+- Правила берутся встроенные в BSL Language Server. Свой файл `.bsl-language-server.json` в
+  корне проекта подхватывается автоматически.
+- Ветки, кнопка запуска анализа и настройки CI в этом режиме не действуют — проект
+  анализируется целиком.
 
-## Editor markers
+## Маркеры в редакторе
 
-The **Editor markers** group on the preference page:
+Группа **«Маркеры в редакторе»** на странице настроек:
 
-- **Show issues in editor** (on by default) — issues go into the standard Problems view and
-  show up as underlines in the editor. Severity mapping: BLOCKER/CRITICAL → errors, MAJOR →
-  warnings, everything else → info.
-- **Refresh automatically in background** + **Interval (minutes)** — periodic background
-  refresh of issues and markers even while the view is closed (server mode only).
+- **«Показывать замечания в редакторе»** (включено по умолчанию) — замечания попадают в
+  стандартное окно Problems и отображаются подчёркиваниями в редакторе. Соответствие
+  критичности: BLOCKER/CRITICAL → ошибки, MAJOR → предупреждения, остальное → информация.
+- **«Автоматически обновлять в фоне»** + **«Интервал, мин.»** — периодическое фоновое
+  обновление замечаний и маркеров даже при закрытом окне (только в режиме сервера).
 
-Markers are **transient**: they are rebuilt on every refresh, and after an EDT restart the
-Problems view is empty until the first refresh.
+Маркеры **транзиентные**: они пересоздаются при каждом обновлении, а после перезапуска EDT
+окно Problems пусто до первого обновления.
 
-![SonarQube issues in the editor: underlines in a module and rows in the Problems view](docs/images/markers.png)
-<!-- TODO: owner — add a screenshot of the markers (editor underlines + Problems view). -->
+![Замечания SonarQube в редакторе: подчёркивания в модуле и строки в окне Problems](docs/images/markers.png)
+<!-- TODO: владельцу — добавить скриншот маркеров (подчёркивания в редакторе + окно Problems). -->
 
-## How it works
+## Как это работает
 
-**Server mode.** The plugin acts as a SonarQube Web API reader: it loads issues by project
-key and branch (`/api/issues/search`, paginated), rule descriptions (`/api/rules/show`), and
-detects the server edition to know whether branches are supported. On top of that, the **Run
-Branch Analysis** button can launch an analysis itself — with a local scanner (auto-downloaded
-or at a given path) or via a CI trigger — and wait for the server to process the report,
-after which the view refreshes.
+**Режим сервера.** Плагин выступает читателем Web API SonarQube: он загружает замечания по
+ключу проекта и ветке (`/api/issues/search` с пагинацией), описания правил (`/api/rules/show`)
+и определяет редакцию сервера, чтобы понять, поддерживаются ли ветки. Дополнительно кнопка
+**«Запустить анализ ветки»** может сама запустить анализ — локальным scanner (с
+автоскачиванием или по указанному пути) или через CI-триггер — и дождаться, пока сервер
+обработает отчёт, после чего окно обновляется.
 
-**Local mode.** The plugin runs the BSL Language Server native build in `--analyze` mode over
-the project's sources, gets a **SARIF** report, and builds the same issue tree, filters and
-markers from it. No SonarQube server and no Java are needed.
+**Локальный режим.** Плагин запускает нативную сборку BSL Language Server в режиме
+`--analyze` по исходникам проекта, получает отчёт в формате **SARIF** и строит из него то же
+дерево замечаний, фильтры и маркеры. Сервер SonarQube и Java при этом не нужны.
 
-## Building from source
+## Сборка из исходников
 
-Requires **JDK 17** and **Maven 3.9.4 or newer** (enforced by the build; there is no Maven wrapper).
+Нужны **JDK 17** и **Maven 3.9.4 или новее** (проверяется сборкой; Maven wrapper не входит в комплект).
 
 ```powershell
-$env:JAVA_HOME = '<path-to-jdk-17>'
+$env:JAVA_HOME = '<путь-к-jdk-17>'
 mvn clean verify
 ```
 
-The p2 repository is produced at
-`repositories/ru.jimmo.edt.sonarq.repository/target/repository/` (plus a zip archive of the
-same content).
+Готовый p2-репозиторий появится в
+`repositories/ru.jimmo.edt.sonarq.repository/target/repository/` (плюс zip-архив того же
+содержимого).
 
-## Known limitations
+## Известные ограничения
 
-- The server returns **at most 10,000 issues** (a SonarQube Web API ceiling); if you hit it,
-  narrow the filters on the server side.
-- Branches are supported only on commercial SonarQube editions; Community Edition shows the
-  single main branch.
-- In local mode the project's `src/` folder is analyzed (the conventional 1C configuration
-  layout), or the project root when there is no `src/`.
+- С сервера отдаётся **не более 10 000 замечаний** (ограничение Web API SonarQube); при
+  превышении сузьте фильтры на стороне сервера.
+- Ветки поддерживаются только на коммерческих редакциях SonarQube; на Community Edition
+  показывается единственная основная ветка.
+- В локальном режиме анализируется каталог `src/` проекта (типовая раскладка конфигурации
+  1С), а при его отсутствии — корень проекта.
 
-## Feedback
+## Обратная связь
 
-Questions, bugs and suggestions — via the **Issues** tab of the project's GitHub repository.
+Вопросы, ошибки и предложения — через раздел **Issues** репозитория проекта на GitHub.
 
-## License
+## Лицензия
 
-Licensed under the [Eclipse Public License 2.0](LICENSE).
+Проект распространяется под лицензией
+[Eclipse Public License 2.0](LICENSE).

@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build the p2 update site
+        run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Stage the update-site archive
+        run: |
+          mkdir -p dist
+          version="${GITHUB_REF_NAME#v}"
+          cp repositories/ru.jimmo.edt.sonarq.repository/target/ru.jimmo.edt.sonarq.repository.zip \
+             "dist/ru.jimmo.edt.sonarq.repository-${version}.zip"
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
