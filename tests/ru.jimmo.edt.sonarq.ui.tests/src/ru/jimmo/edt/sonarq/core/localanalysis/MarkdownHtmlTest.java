@@ -101,6 +101,24 @@ public class MarkdownHtmlTest
     }
 
     @Test
+    public void unsafeLinkSchemeRendersTextWithoutAnchor()
+    {
+        String html = MarkdownHtml.toHtml("Click [here](javascript:alert(1)) now.");
+
+        assertFalse(html.contains("<a "));
+        assertFalse(html.contains("javascript:"));
+        assertTrue(html.contains("here"));
+    }
+
+    @Test
+    public void mailtoLinkSchemeIsAllowed()
+    {
+        String html = MarkdownHtml.toHtml("Write [us](mailto:team@example.com).");
+
+        assertTrue(html.contains("<a href=\"mailto:team@example.com\">us</a>"));
+    }
+
+    @Test
     public void atxHeadingsAreShiftedByOneLevel()
     {
         assertEquals("<h2>One</h2>", MarkdownHtml.toHtml("# One"));

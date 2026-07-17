@@ -8,6 +8,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Renders a compact subset of Markdown to HTML, tuned to the rule descriptions the BSL Language
@@ -448,8 +449,21 @@ public final class MarkdownHtml
         }
         String linkText = text.substring(start + 1, closeBracket);
         String url = text.substring(closeBracket + 2, closeParen);
+        if (!hasSafeScheme(url))
+        {
+            // Unsafe scheme (e.g. javascript:) would execute in the Browser widget - keep the text only.
+            out.append(linkText);
+            return closeParen + 1;
+        }
         out.append("<a href=\"").append(url).append("\">") //$NON-NLS-1$ //$NON-NLS-2$
             .append(linkText).append("</a>"); //$NON-NLS-1$
         return closeParen + 1;
+    }
+
+    private static boolean hasSafeScheme(String url)
+    {
+        String lower = url.trim().toLowerCase(Locale.ROOT);
+        return lower.startsWith("http://") || lower.startsWith("https://") //$NON-NLS-1$ //$NON-NLS-2$
+            || lower.startsWith("mailto:"); //$NON-NLS-1$
     }
 }
