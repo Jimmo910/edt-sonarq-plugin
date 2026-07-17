@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.ui;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.core.runtime.preferences.IEclipsePreferences.IPreferenceChangeListener;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences.PreferenceChangeEvent;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.ui.IStartup;
@@ -23,12 +24,29 @@ import ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler;
  */
 public final class SonarqStartup implements IStartup
 {
+    private static IPreferenceChangeListener listener;
+
     @Override
     public void earlyStartup()
     {
         AutoSyncScheduler.applyPreferences();
-        InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID)
-            .addPreferenceChangeListener(SonarqStartup::onPreferenceChange);
+        listener = SonarqStartup::onPreferenceChange;
+        InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID).addPreferenceChangeListener(listener);
+    }
+
+    /**
+     * Detaches the preference listener and stops the background scheduler. Called when the plug-in stops so
+     * a dynamic update or uninstall leaves no stale callback or recurring timer bound to the old class
+     * loader.
+     */
+    public static void shutdown()
+    {
+        if (listener != null)
+        {
+            InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID).removePreferenceChangeListener(listener);
+            listener = null;
+        }
+        AutoSyncScheduler.stop();
     }
 
     private static void onPreferenceChange(PreferenceChangeEvent event)

@@ -199,6 +199,8 @@ https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline?token=<trigger_
 
 ## Сборка из исходников
 
+Нужны **JDK 17** и **Maven 3.9.4 или новее** (проверяется сборкой; Maven wrapper не входит в комплект).
+
 ```powershell
 $env:JAVA_HOME = '<путь-к-jdk-17>'
 mvn clean verify

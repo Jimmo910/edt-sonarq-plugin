@@ -717,6 +717,19 @@ public class SonarIssuesView extends ViewPart
         viewer.getControl().setFocus();
     }
 
+    @Override
+    public void dispose()
+    {
+        // Cancel any refresh or analysis still running for this view, so closing the view does not leave an
+        // ownerless download, analyzer or scanner process behind.
+        if (inFlightJob != null)
+        {
+            inFlightJob.cancel();
+            inFlightJob = null;
+        }
+        super.dispose();
+    }
+
     /** Lists the open workspace projects as a drop-down of the toolbar's Project action. */
     private final class ProjectMenuCreator implements IMenuCreator
     {

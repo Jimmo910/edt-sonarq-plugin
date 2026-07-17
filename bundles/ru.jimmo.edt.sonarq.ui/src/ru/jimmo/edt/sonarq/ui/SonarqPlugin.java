@@ -39,6 +39,7 @@ public class SonarqPlugin extends AbstractUIPlugin
     @Override
     public void stop(BundleContext context) throws Exception
     {
+        SonarqStartup.shutdown();
         instance = null;
         super.stop(context);
     }

@@ -293,6 +293,66 @@ public class SarifParserTest
     }
 
     @Test
+    public void plusSignInPathIsPreservedNotDecodedToSpace()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "tool": { "driver": { "rules": [] } },
+                  "results": [
+                    {
+                      "ruleId": "R1",
+                      "level": "warning",
+                      "message": { "text": "m" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "file:///E:/a+b/src/M.bsl" },
+                            "region": { "startLine": 1 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "E:\\a+b"); //$NON-NLS-1$
+        assertEquals("TestConfiguration:src/M.bsl", report.issues().get(0).componentKey()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void basePrefixIsNotStrippedAcrossASegmentBoundary()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "tool": { "driver": { "rules": [] } },
+                  "results": [
+                    {
+                      "ruleId": "R1",
+                      "level": "warning",
+                      "message": { "text": "m" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "file:///work/project-old/src/M.bsl" },
+                            "region": { "startLine": 1 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }""";
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY, "/work/project"); //$NON-NLS-1$
+        assertTrue(report.issues().get(0).componentKey().contains("project-old")); //$NON-NLS-1$
+    }
+
+    @Test
     public void uncFileUriKeepsAuthorityAndRelativizes()
     {
         String json = """

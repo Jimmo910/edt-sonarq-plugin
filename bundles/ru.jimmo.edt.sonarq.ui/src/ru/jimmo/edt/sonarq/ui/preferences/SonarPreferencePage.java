@@ -23,6 +23,7 @@ import org.eclipse.equinox.security.storage.StorageException;
 import org.eclipse.jface.preference.PreferencePage;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.events.FocusListener;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -41,6 +42,7 @@ import org.eclipse.ui.IWorkbenchPreferencePage;
 import org.osgi.service.prefs.BackingStoreException;
 
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchMode;
+import ru.jimmo.edt.sonarq.core.analysis.Processes;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
@@ -124,6 +126,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         new Label(composite, SWT.NONE).setText(Messages.PreferencePage_ServerUrl);
         urlText = new Text(composite, SWT.BORDER);
         urlText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        // Reload the token stored for whichever server the URL now names, so an old server's token is never
+        // left in the field to be sent to (or saved for) a different server after the URL is changed.
+        urlText.addFocusListener(FocusListener.focusLostAdapter(e ->
+            tokenText.setText(new SecureTokenStore().loadToken(urlText.getText().trim()))));
 
         new Label(composite, SWT.NONE).setText(Messages.PreferencePage_Token);
         tokenText = new Text(composite, SWT.BORDER | SWT.PASSWORD);
@@ -170,6 +176,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         new Label(group, SWT.NONE).setText(Messages.PreferencePage_CiUrl);
         ciUrlText = new Text(group, SWT.BORDER);
         ciUrlText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        ciUrlText.addFocusListener(FocusListener.focusLostAdapter(e ->
+            ciSecretText.setText(new SecureTokenStore().loadCiSecret(ciUrlText.getText().trim()))));
 
         new Label(group, SWT.NONE).setText(Messages.PreferencePage_CiSecret);
         ciSecretText = new Text(group, SWT.BORDER | SWT.PASSWORD);
@@ -318,7 +326,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
             Process process = new ProcessBuilder(path, "--version").redirectErrorStream(true).start(); //$NON-NLS-1$
             if (!process.waitFor(30, TimeUnit.SECONDS))
             {
-                process.destroy();
+                Processes.terminate(process);
                 return NLS.bind(Messages.PreferencePage_BslVerifyFail, "timeout"); //$NON-NLS-1$
             }
             String output = new String(process.getInputStream().readAllBytes(), Charset.defaultCharset());

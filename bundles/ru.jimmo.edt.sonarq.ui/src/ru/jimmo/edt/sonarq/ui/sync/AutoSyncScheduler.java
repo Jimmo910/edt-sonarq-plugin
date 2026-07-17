@@ -79,6 +79,19 @@ public final class AutoSyncScheduler
     }
 
     /**
+     * Cancels the recurring job and fences its generation so it cannot reschedule. Called on plug-in stop.
+     */
+    public static synchronized void stop()
+    {
+        generation++;
+        if (currentJob != null)
+        {
+            currentJob.cancel();
+            currentJob = null;
+        }
+    }
+
+    /**
      * Converts a preference interval expressed in minutes to milliseconds, flooring it at one minute so a
      * misconfigured (zero or negative) preference value cannot degenerate into a busy-reschedule loop.
      *

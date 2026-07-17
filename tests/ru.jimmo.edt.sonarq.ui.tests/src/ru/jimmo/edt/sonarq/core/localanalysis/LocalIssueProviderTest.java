@@ -235,14 +235,15 @@ public class LocalIssueProviderTest
     @Test
     public void outputDirIsRecreatedCleanBeforeAnalysis() throws Exception
     {
-        Path outputDir = stateDir.resolve("bsl-report").resolve(PROJECT_KEY);
-        Files.createDirectories(outputDir);
-        Path stale = outputDir.resolve("stale.txt");
-        Files.writeString(stale, "leftover");
-
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, runner);
+
+        provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+        Path outputDir = runner.capturedOutputDir;
+        assertTrue(outputDir.startsWith(stateDir.resolve("bsl-report")));
+        Path stale = outputDir.resolve("stale.txt");
+        Files.writeString(stale, "leftover");
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 

@@ -263,7 +263,8 @@ public final class SarifParser
         {
             return value;
         }
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream(value.length());
+        StringBuilder result = new StringBuilder(value.length());
+        ByteArrayOutputStream pending = new ByteArrayOutputStream();
         for (int i = 0; i < value.length(); i++)
         {
             char c = value.charAt(i);
@@ -271,18 +272,28 @@ public final class SarifParser
             int low = high >= 0 ? Character.digit(value.charAt(i + 2), 16) : -1;
             if (high >= 0 && low >= 0)
             {
-                bytes.write((high << 4) + low);
+                pending.write((high << 4) + low);
                 i += 2;
             }
             else
             {
-                for (byte b : String.valueOf(c).getBytes(StandardCharsets.UTF_8))
-                {
-                    bytes.write(b);
-                }
+                flushDecoded(pending, result);
+                // Append the literal character as-is, so a surrogate pair (a non-BMP character) is kept
+                // whole rather than each half being byte-encoded separately and corrupted.
+                result.append(c);
             }
         }
-        return bytes.toString(StandardCharsets.UTF_8);
+        flushDecoded(pending, result);
+        return result.toString();
+    }
+
+    private static void flushDecoded(ByteArrayOutputStream pending, StringBuilder result)
+    {
+        if (pending.size() > 0)
+        {
+            result.append(pending.toString(StandardCharsets.UTF_8));
+            pending.reset();
+        }
     }
 
     /**
@@ -343,6 +354,12 @@ public final class SarifParser
             return uri;
         }
         String remainder = uri.substring(base.length());
+        // Only strip when the base ends on a path-segment boundary, so base /work/project does not swallow
+        // the front of an unrelated /work/project-old/... path.
+        if (!remainder.isEmpty() && !remainder.startsWith(SLASH))
+        {
+            return uri;
+        }
         while (remainder.startsWith(SLASH))
         {
             remainder = remainder.substring(1);

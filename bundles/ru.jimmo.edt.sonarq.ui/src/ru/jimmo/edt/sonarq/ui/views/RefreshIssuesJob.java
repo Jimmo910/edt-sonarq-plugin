@@ -29,6 +29,7 @@ import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
+import ru.jimmo.edt.sonarq.ui.sync.ProjectAnalysisRule;
 
 /** Loads issues for a project in the background and reports the result to a callback. */
 public class RefreshIssuesJob extends Job
@@ -57,6 +58,9 @@ public class RefreshIssuesJob extends Job
         this.binding = binding;
         this.sessionBranch = sessionBranch;
         this.callback = callback;
+        // Serialize with the analysis job of the same project so replacement runs never race on the shared
+        // analyzer install and output directories; this rule does not conflict with resource operations.
+        setRule(new ProjectAnalysisRule(project.getName()));
     }
 
     @Override

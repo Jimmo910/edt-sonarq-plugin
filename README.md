@@ -199,6 +199,8 @@ markers from it. No SonarQube server and no Java are needed.
 
 ## Building from source
 
+Requires **JDK 17** and **Maven 3.9.4 or newer** (enforced by the build; there is no Maven wrapper).
+
 ```powershell
 $env:JAVA_HOME = '<path-to-jdk-17>'
 mvn clean verify

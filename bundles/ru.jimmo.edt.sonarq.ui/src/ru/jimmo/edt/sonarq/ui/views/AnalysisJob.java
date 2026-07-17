@@ -43,6 +43,7 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
+import ru.jimmo.edt.sonarq.ui.sync.ProjectAnalysisRule;
 
 /**
  * Runs a SonarQube analysis for one project as a user-visible background job.
@@ -92,6 +93,9 @@ public class AnalysisJob extends Job
         this.onSuccess = onSuccess;
         this.statusReporter = statusReporter;
         setUser(true);
+        // Serialize with the refresh job of the same project so a replacement run waits for the previous
+        // one to release instead of racing over the shared analyzer install and scannerwork directories.
+        setRule(new ProjectAnalysisRule(request.project().getName()));
     }
 
     @Override
