@@ -45,9 +45,13 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
  * always returns an empty list and {@link #branchAnalysisSupported()} always returns {@code false}.
  *
  * <p>A generated checks configuration ({@code configPath}) is passed to the language server, but a
- * project-local {@code .bsl-language-server.json} under {@code projectRoot} always takes priority: if that
- * file exists, the language server is left to discover it on its own (its normal, documented behavior) and
- * {@code configPath} is not passed at all, rather than risk two conflicting configuration sources.
+ * project-local {@code .bsl-language-server.json} always takes priority — looked up first under
+ * {@code projectRoot}, then under the analyzed source directory — and, when found, is passed explicitly via
+ * the {@code --configuration} flag instead of {@code configPath}. Live verification (2026-07-17) showed the
+ * language server only auto-discovers this file relative to the analyzed source directory, never relative to
+ * {@code projectRoot}: leaving discovery to the launcher would silently ignore a {@code projectRoot}-level
+ * file, so the project file is always passed explicitly, guaranteeing it applies regardless of the launcher's
+ * discovery quirks.
  *
  * <p>After a successful analysis, the parsed report's rule descriptions are persisted as a
  * {@link DiagnosticsCatalog} into the state directory, best-effort: a settings page can list every known
@@ -81,8 +85,9 @@ public final class LocalIssueProvider implements IIssueProvider
      * @param serverOverride a user-provided BSL Language Server executable, or {@code null} to use the
      *     managed download
      * @param configPath a generated checks configuration file to pass to the language server, or
-     *     {@code null} to run with its defaults; ignored when {@code projectRoot} has its own
-     *     {@code .bsl-language-server.json}
+     *     {@code null} to run with its defaults; overridden when a project-local
+     *     {@code .bsl-language-server.json} is found under {@code projectRoot} or the analyzed source
+     *     directory, which is then passed explicitly instead
      * @param runner runs the headless analysis, not {@code null}
      */
     public LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride,
@@ -107,7 +112,8 @@ public final class LocalIssueProvider implements IIssueProvider
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);
-            Path effectiveConfigPath = hasProjectConfigFile() ? null : configPath;
+            Path projectConfig = findProjectConfigFile(srcDir);
+            Path effectiveConfigPath = projectConfig != null ? projectConfig : configPath;
             Path sarif = runner.analyze(executable, srcDir, outputDir, effectiveConfigPath, monitor);
             SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
                 projectRoot.toString());
@@ -184,16 +190,25 @@ public final class LocalIssueProvider implements IIssueProvider
     }
 
     /**
-     * Tells whether {@code projectRoot} has its own {@code .bsl-language-server.json} configuration file.
+     * Looks for a project-local {@code .bsl-language-server.json}, first under {@code projectRoot}, then
+     * under {@code srcDir} (the directory actually analyzed).
      *
-     * <p>When it does, that project-local file takes priority over the generated {@code configPath}: the
-     * language server discovers it on its own, so {@code configPath} must not also be passed.
+     * <p>Both locations are checked explicitly, rather than relying on the language server's own discovery,
+     * because live verification (2026-07-17) showed the launcher only auto-discovers this file relative to
+     * the analyzed source directory, never relative to {@code projectRoot}.
      *
-     * @return {@code true} if the project defines its own language server configuration file
+     * @param srcDir the directory being analyzed, not {@code null}
+     * @return the found configuration file path, or {@code null} if neither location has one
      */
-    private boolean hasProjectConfigFile()
+    private Path findProjectConfigFile(Path srcDir)
     {
-        return Files.exists(projectRoot.resolve(PROJECT_CONFIG_FILE_NAME));
+        Path atProjectRoot = projectRoot.resolve(PROJECT_CONFIG_FILE_NAME);
+        if (Files.exists(atProjectRoot))
+        {
+            return atProjectRoot;
+        }
+        Path atSrcDir = srcDir.resolve(PROJECT_CONFIG_FILE_NAME);
+        return Files.exists(atSrcDir) ? atSrcDir : null;
     }
 
     /**

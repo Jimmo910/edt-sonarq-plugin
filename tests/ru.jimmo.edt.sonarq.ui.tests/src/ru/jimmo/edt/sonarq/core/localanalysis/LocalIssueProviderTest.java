@@ -8,7 +8,6 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -341,7 +340,8 @@ public class LocalIssueProviderTest
     {
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
-        Files.writeString(projectRoot.resolve(".bsl-language-server.json"), "{}");
+        Path projectConfigPath = projectRoot.resolve(".bsl-language-server.json");
+        Files.writeString(projectConfigPath, "{}");
         Path configPath = stateDir.resolve("generated-checks-config.json");
         Files.writeString(configPath, "{}");
         LocalIssueProvider provider =
@@ -349,7 +349,24 @@ public class LocalIssueProviderTest
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
-        assertNull(runner.capturedConfigPath);
+        assertEquals(projectConfigPath, runner.capturedConfigPath);
+    }
+
+    @Test
+    public void projectConfigFileInsideSrcDirIsPassedExplicitlyWhenNoProjectRootFileExists() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixture();
+        Path srcConfigPath = projectRoot.resolve("src").resolve(".bsl-language-server.json");
+        Files.writeString(srcConfigPath, "{}");
+        Path configPath = stateDir.resolve("generated-checks-config.json");
+        Files.writeString(configPath, "{}");
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, runner);
+
+        provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+
+        assertEquals(srcConfigPath, runner.capturedConfigPath);
     }
 
     @Test
