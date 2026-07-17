@@ -54,11 +54,11 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
     private static final int LOG_TAIL_LINES = 20;
 
     @Override
-    public Path analyze(Path serverExecutable, Path srcDir, Path outputDir, IProgressMonitor monitor)
-        throws IOException, InterruptedException
+    public Path analyze(Path serverExecutable, Path srcDir, Path outputDir, Path configPath,
+        IProgressMonitor monitor) throws IOException, InterruptedException
     {
         Files.createDirectories(outputDir);
-        List<String> command = BslAnalyzeCommand.build(serverExecutable, srcDir, outputDir);
+        List<String> command = BslAnalyzeCommand.build(serverExecutable, srcDir, outputDir, configPath);
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         Path logFile = outputDir.resolve(LOG_FILE_NAME);

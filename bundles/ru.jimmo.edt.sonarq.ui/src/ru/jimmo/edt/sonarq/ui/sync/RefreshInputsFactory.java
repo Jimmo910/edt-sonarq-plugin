@@ -113,8 +113,9 @@ public final class RefreshInputsFactory
         String overridePath = service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH,
             "", null); //$NON-NLS-1$
         Path override = overridePath.isBlank() ? null : Path.of(overridePath.trim());
+        // configPath is null for now; a follow-up task (K3) wires in the generated checks configuration.
         LocalIssueProvider provider =
-            new LocalIssueProvider(projectKey, projectRoot, stateDir, override, new ProcessAnalyzeRunner());
+            new LocalIssueProvider(projectKey, projectRoot, stateDir, override, null, new ProcessAnalyzeRunner());
         // Local component keys are <projectKey>:src/... already project-relative, so the mapping key is the
         // same effective key fed to the provider and the mapping prefix is always empty (the binding prefix,
         // which describes a server repository layout, must not be stripped from local paths).

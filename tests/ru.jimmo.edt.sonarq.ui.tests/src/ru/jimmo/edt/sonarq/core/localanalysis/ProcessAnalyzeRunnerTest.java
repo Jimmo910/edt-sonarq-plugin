@@ -154,7 +154,7 @@ public class ProcessAnalyzeRunnerTest
         {
             try
             {
-                runner.analyze(script, srcDir, outputDir, new NullProgressMonitor());
+                runner.analyze(script, srcDir, outputDir, null, new NullProgressMonitor());
             }
             catch (Throwable t)
             {

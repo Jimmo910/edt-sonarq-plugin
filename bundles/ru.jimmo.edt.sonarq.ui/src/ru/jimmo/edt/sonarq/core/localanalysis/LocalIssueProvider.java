@@ -43,11 +43,22 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
  * report directory, runs the analysis and parses the resulting report, caching its rule descriptions for
  * {@link #describeRule(String)}. Branches are not a local-analysis concept: {@link #listBranches(String)}
  * always returns an empty list and {@link #branchAnalysisSupported()} always returns {@code false}.
+ *
+ * <p>A generated checks configuration ({@code configPath}) is passed to the language server, but a
+ * project-local {@code .bsl-language-server.json} under {@code projectRoot} always takes priority: if that
+ * file exists, the language server is left to discover it on its own (its normal, documented behavior) and
+ * {@code configPath} is not passed at all, rather than risk two conflicting configuration sources.
+ *
+ * <p>After a successful analysis, the parsed report's rule descriptions are persisted as a
+ * {@link DiagnosticsCatalog} into the state directory, best-effort: a settings page can list every known
+ * diagnostic key/name without re-running an analysis, but a failure to write that cache must never fail the
+ * fetch itself, so any {@link IOException} from the write is swallowed.
  */
 public final class LocalIssueProvider implements IIssueProvider
 {
     private static final String BSL_REPORT_DIR = "bsl-report"; //$NON-NLS-1$
     private static final String SRC_DIR_NAME = "src"; //$NON-NLS-1$
+    private static final String PROJECT_CONFIG_FILE_NAME = ".bsl-language-server.json"; //$NON-NLS-1$
     private static final String EMPTY_DESCRIPTION = ""; //$NON-NLS-1$
     private static final int MAX_DIR_NAME_LENGTH = 80;
 
@@ -55,6 +66,7 @@ public final class LocalIssueProvider implements IIssueProvider
     private final Path projectRoot;
     private final Path stateDir;
     private final Path serverOverride;
+    private final Path configPath;
     private final AnalyzeRunner runner;
 
     private volatile Map<String, SonarRule> ruleCache = Map.of();
@@ -68,15 +80,19 @@ public final class LocalIssueProvider implements IIssueProvider
      *     into, not {@code null}
      * @param serverOverride a user-provided BSL Language Server executable, or {@code null} to use the
      *     managed download
+     * @param configPath a generated checks configuration file to pass to the language server, or
+     *     {@code null} to run with its defaults; ignored when {@code projectRoot} has its own
+     *     {@code .bsl-language-server.json}
      * @param runner runs the headless analysis, not {@code null}
      */
     public LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride,
-        AnalyzeRunner runner)
+        Path configPath, AnalyzeRunner runner)
     {
         this.projectKey = projectKey;
         this.projectRoot = projectRoot;
         this.stateDir = stateDir;
         this.serverOverride = serverOverride;
+        this.configPath = configPath;
         this.runner = runner;
     }
 
@@ -91,10 +107,12 @@ public final class LocalIssueProvider implements IIssueProvider
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);
-            Path sarif = runner.analyze(executable, srcDir, outputDir, monitor);
+            Path effectiveConfigPath = hasProjectConfigFile() ? null : configPath;
+            Path sarif = runner.analyze(executable, srcDir, outputDir, effectiveConfigPath, monitor);
             SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
                 projectRoot.toString());
             ruleCache = report.rules();
+            saveDiagnosticsCatalog(report);
             return new IssueSnapshot(query, report.issues(), report.issues().size(), Instant.now());
         }
         catch (IOException e)
@@ -163,6 +181,40 @@ public final class LocalIssueProvider implements IIssueProvider
             cleaned = cleaned.substring(0, MAX_DIR_NAME_LENGTH);
         }
         return '_' + cleaned + '_' + Integer.toHexString(key.hashCode());
+    }
+
+    /**
+     * Tells whether {@code projectRoot} has its own {@code .bsl-language-server.json} configuration file.
+     *
+     * <p>When it does, that project-local file takes priority over the generated {@code configPath}: the
+     * language server discovers it on its own, so {@code configPath} must not also be passed.
+     *
+     * @return {@code true} if the project defines its own language server configuration file
+     */
+    private boolean hasProjectConfigFile()
+    {
+        return Files.exists(projectRoot.resolve(PROJECT_CONFIG_FILE_NAME));
+    }
+
+    /**
+     * Persists the report's rule descriptions as a {@link DiagnosticsCatalog}, best-effort.
+     *
+     * <p>The catalog only feeds a settings page listing known diagnostics; a failure to write it must never
+     * fail the fetch, so any {@link IOException} is swallowed.
+     *
+     * @param report the parsed report to derive catalog entries from, not {@code null}
+     */
+    private void saveDiagnosticsCatalog(SarifReport report)
+    {
+        try
+        {
+            DiagnosticsCatalog.save(stateDir.resolve(DiagnosticsCatalog.CATALOG_FILE_NAME),
+                DiagnosticsCatalog.fromReport(report));
+        }
+        catch (IOException e)
+        {
+            // Best-effort cache for the checks preference page; the fetch itself already succeeded.
+        }
     }
 
     /**
