@@ -88,7 +88,7 @@ public final class LocalIssueProvider implements IIssueProvider
                 ? serverOverride
                 : BslServerInstaller.ensureServer(stateDir, url -> new URL(url).openStream(), monitor);
             Path srcDir = sourceDirectory();
-            Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(projectKey);
+            Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);
             Path sarif = runner.analyze(executable, srcDir, outputDir, monitor);
             SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
@@ -138,6 +138,24 @@ public final class LocalIssueProvider implements IIssueProvider
     public boolean branchAnalysisSupported()
     {
         return false;
+    }
+
+    /**
+     * Turns a SonarQube project key into a safe single path segment for the report directory. Real Sonar
+     * keys routinely contain characters that are illegal or dangerous in a file name ({@code :}, {@code /},
+     * {@code ..}), and the report directory is recursively deleted before each run, so the raw key must
+     * never reach the filesystem. The key itself is still used verbatim for component-key mapping.
+     *
+     * @param key the project key, not {@code null}
+     * @return a file-name-safe segment, never {@code null} or a path-traversal token
+     */
+    private static String safeDirName(String key)
+    {
+        // Allow only letters, digits, underscore and hyphen. Dots are deliberately excluded so the name
+        // can never be "."/".." nor end in a dot (which Windows silently trims), and separators/colons
+        // become underscores - the result is always a single, contained path segment.
+        String cleaned = key.replaceAll("[^A-Za-z0-9_-]", "_"); //$NON-NLS-1$ //$NON-NLS-2$
+        return cleaned.isEmpty() ? "_" : cleaned; //$NON-NLS-1$
     }
 
     /**

@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import com.google.gson.JsonArray;
@@ -119,11 +120,27 @@ public final class SarifParser
         }
         String html = MarkdownHtml.toHtml(description);
         String helpUri = asString(ruleObject, "helpUri"); //$NON-NLS-1$
-        if (helpUri.isEmpty())
+        if (helpUri.isEmpty() || !hasSafeScheme(helpUri))
         {
             return html;
         }
-        return html + "<p><a href=\"" + helpUri + "\">Documentation</a></p>"; //$NON-NLS-1$ //$NON-NLS-2$
+        return html + "<p><a href=\"" + escapeAttribute(helpUri) //$NON-NLS-1$
+            + "\">Documentation</a></p>"; //$NON-NLS-1$
+    }
+
+    private static boolean hasSafeScheme(String url)
+    {
+        String lower = url.trim().toLowerCase(Locale.ROOT);
+        return lower.startsWith("http://") || lower.startsWith("https://") //$NON-NLS-1$ //$NON-NLS-2$
+            || lower.startsWith("mailto:"); //$NON-NLS-1$
+    }
+
+    private static String escapeAttribute(String value)
+    {
+        return value.replace("&", "&amp;") //$NON-NLS-1$ //$NON-NLS-2$
+            .replace("\"", "&quot;") //$NON-NLS-1$ //$NON-NLS-2$
+            .replace("<", "&lt;") //$NON-NLS-1$ //$NON-NLS-2$
+            .replace(">", "&gt;"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     private static List<SonarIssue> parseResults(JsonObject run, String projectKey, String uriBasePrefix)

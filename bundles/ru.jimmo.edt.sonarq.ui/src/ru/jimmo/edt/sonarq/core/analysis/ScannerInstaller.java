@@ -146,14 +146,18 @@ public final class ScannerInstaller
      */
     private static void markBinExecutable(Path scannerRoot) throws IOException
     {
-        Path binDir = scannerRoot.resolve(DIR_PREFIX + SCANNER_VERSION + '-' + osClassifier()).resolve(BIN_DIR);
-        if (!Files.isDirectory(binDir))
+        if (!Files.isDirectory(scannerRoot))
         {
             return;
         }
-        try (Stream<Path> files = Files.walk(binDir))
+        // Mark every file under any bin directory executable, not just the scanner launcher: the
+        // sonar-scanner-cli distribution bundles its own JRE, whose jre/bin/java must be runnable on POSIX.
+        try (Stream<Path> files = Files.walk(scannerRoot))
         {
-            files.filter(Files::isRegularFile).forEach(file -> file.toFile().setExecutable(true, false));
+            files.filter(Files::isRegularFile)
+                .filter(file -> file.getParent() != null
+                    && BIN_DIR.equals(file.getParent().getFileName().toString()))
+                .forEach(file -> file.toFile().setExecutable(true, false));
         }
     }
 

@@ -251,6 +251,21 @@ public class LocalIssueProviderTest
     }
 
     @Test
+    public void projectKeyWithPathUnsafeCharactersDoesNotEscapeReportDirectory() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixture();
+        LocalIssueProvider provider =
+            new LocalIssueProvider("com.example:module/../..", projectRoot, stateDir, override, runner);
+
+        provider.fetchIssues(new IssueQuery("com.example:module/../..", null), new NullProgressMonitor());
+
+        Path reportRoot = stateDir.resolve("bsl-report");
+        assertTrue(runner.capturedOutputDir.startsWith(reportRoot));
+        assertEquals(reportRoot, runner.capturedOutputDir.getParent());
+    }
+
+    @Test
     public void srcSubdirectoryIsUsedAsAnalysisRootWhenPresent() throws Exception
     {
         FakeRunner runner = new FakeRunner();

@@ -10,8 +10,8 @@
   <packaging>pom</packaging>
 
   <name>BOM</name>
-  <description>Safe, repeatable Git project actions for 1C:Enterprise Development Tools.</description>
-  <url>https://github.com/Jimmo910/edt-sonarq</url>
+  <description>SonarQube issues viewer for 1C:Enterprise (BSL) code inside 1C:EDT.</description>
+  <url>https://github.com/Jimmo910/edt-sonarq-plugin</url>
 
   <licenses>
     <license>
@@ -33,20 +33,20 @@
   </developers>
 
   <scm>
-    <connection>scm:git:https://github.com/Jimmo910/edt-sonarq.git</connection>
-    <developerConnection>scm:git:ssh://git@github.com/Jimmo910/edt-sonarq.git</developerConnection>
-    <url>https://github.com/Jimmo910/edt-sonarq</url>
+    <connection>scm:git:https://github.com/Jimmo910/edt-sonarq-plugin.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/Jimmo910/edt-sonarq-plugin.git</developerConnection>
+    <url>https://github.com/Jimmo910/edt-sonarq-plugin</url>
     <tag>HEAD</tag>
   </scm>
 
   <issueManagement>
     <system>GitHub</system>
-    <url>https://github.com/Jimmo910/edt-sonarq/issues</url>
+    <url>https://github.com/Jimmo910/edt-sonarq-plugin/issues</url>
   </issueManagement>
 
   <ciManagement>
     <system>GitHub Actions</system>
-    <url>https://github.com/Jimmo910/edt-sonarq/actions</url>
+    <url>https://github.com/Jimmo910/edt-sonarq-plugin/actions</url>
   </ciManagement>
 
   <properties>

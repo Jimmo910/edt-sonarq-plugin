@@ -38,6 +38,9 @@ public class RuleDescriptionPanel extends Composite
         try
         {
             browser = new Browser(this, SWT.NONE);
+            // Rule descriptions are HTML from the server (or the local analyzer); never let them run
+            // scripts in the embedded browser - the pane only ever renders static documentation.
+            browser.setJavascriptEnabled(false);
         }
         catch (SWTError e)
         {
@@ -53,7 +56,7 @@ public class RuleDescriptionPanel extends Composite
     public void showRule(SonarRule rule)
     {
         String title = "<h3>" + escapeHtml(rule.name()) //$NON-NLS-1$
-            + " (" + rule.key() + ")</h3>"; //$NON-NLS-1$ //$NON-NLS-2$
+            + " (" + escapeHtml(rule.key()) + ")</h3>"; //$NON-NLS-1$ //$NON-NLS-2$
         if (browser != null)
         {
             browser.setText(RuleHtml.wrap(title + rule.htmlDescription()));

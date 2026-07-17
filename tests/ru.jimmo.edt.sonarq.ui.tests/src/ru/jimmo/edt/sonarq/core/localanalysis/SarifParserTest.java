@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -402,6 +403,26 @@ public class SarifParserTest
         SonarRule rule = report.rules().get("MethodSize"); //$NON-NLS-1$
         assertTrue(rule.htmlDescription()
             .contains("<p><a href=\"https://example.org/rules/MethodSize\">Documentation</a></p>")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void unsafeHelpUriSchemeIsNotRenderedAsLink()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "tool": { "driver": { "rules": [
+                    { "id": "R1", "name": "Rule 1", "fullDescription": { "text": "Body" },
+                      "helpUri": "javascript:alert(1)" }
+                  ] } },
+                  "results": []
+                }
+              ]
+            }""";
+        SonarRule rule = SarifParser.parse(json, PROJECT_KEY).rules().get("R1"); //$NON-NLS-1$
+        assertFalse(rule.htmlDescription().contains("<a ")); //$NON-NLS-1$
+        assertFalse(rule.htmlDescription().contains("javascript:")); //$NON-NLS-1$
     }
 
     @Test
