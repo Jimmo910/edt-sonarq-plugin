@@ -168,10 +168,33 @@ overwriting an already-analyzed branch).
   - **Use a local executable** — set the **BSL Language Server executable** path yourself
     (**Browse…** and **Verify** buttons; **Verify** runs the file with `--version`).
 - Every **Refresh** runs a fresh local analysis.
-- Rules are the ones bundled with the BSL Language Server. A `.bsl-language-server.json` file
-  at the project root is picked up automatically.
+- Which checks run is configured separately — see [Choosing which checks
+  run](#choosing-which-checks-run) below; every check bundled with the BSL Language Server is
+  enabled by default.
 - Branches, the analysis-launch button and the CI settings do not apply in this mode — the
   project is analyzed as a whole.
+
+### Choosing which checks run
+
+Which diagnostics local analysis reports is configured on a separate page: **Preferences** →
+**SonarQube** → **BSL Checks** (the `BslChecksPreferencePage` class).
+
+- A checkbox table lists every known BSL Language Server diagnostic (**Key** and **Name**
+  columns); a checked row is enabled, an unchecked one is disabled. Every diagnostic is enabled
+  by default.
+- The filter field searches by key or name; **Enable All** / **Disable All** flip every
+  diagnostic regardless of the current filter. The **"Disabled N of M"** label below the table
+  tracks how many are currently disabled.
+- The catalog of known diagnostics is filled in automatically after every successful local
+  analysis, or on demand with the **Fetch Checks List** button, which analyzes an empty
+  temporary folder to obtain the full list without a single real issue. If the BSL Language
+  Server has not been downloaded yet, the first use of either the button or a local analysis
+  downloads it — about 170 MB, and requires internet access.
+- The selection made on this page is applied through a generated BSL Language Server
+  configuration file, passed to the analysis via the `--configuration` flag. If the project
+  already has its own `.bsl-language-server.json` (at the project root or under `src/`), that
+  file always takes priority: analysis uses it instead of the generated one, and the page's
+  selection is ignored for that project.
 
 ## Editor markers
 

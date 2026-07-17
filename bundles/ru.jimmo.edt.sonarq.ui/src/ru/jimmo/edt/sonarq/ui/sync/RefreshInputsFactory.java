@@ -6,8 +6,11 @@
 
 package ru.jimmo.edt.sonarq.ui.sync;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IPath;
@@ -16,6 +19,7 @@ import org.eclipse.core.runtime.preferences.IPreferencesService;
 
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslConfigWriter;
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.localanalysis.ProcessAnalyzeRunner;
 import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
@@ -113,11 +117,50 @@ public final class RefreshInputsFactory
         String overridePath = service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH,
             "", null); //$NON-NLS-1$
         Path override = overridePath.isBlank() ? null : Path.of(overridePath.trim());
-        LocalIssueProvider provider =
-            new LocalIssueProvider(projectKey, projectRoot, stateDir, override, new ProcessAnalyzeRunner());
+        Path configPath = resolveConfigPath(stateDir, service);
+        LocalIssueProvider provider = new LocalIssueProvider(projectKey, projectRoot, stateDir, override,
+            configPath, new ProcessAnalyzeRunner());
         // Local component keys are <projectKey>:src/... already project-relative, so the mapping key is the
         // same effective key fed to the provider and the mapping prefix is always empty (the binding prefix,
         // which describes a server repository layout, must not be stripped from local paths).
         return Optional.of(new ProjectRefreshInputs(project, binding, null, provider, projectKey, "")); //$NON-NLS-1$
+    }
+
+    /**
+     * Resolves the generated checks configuration path from
+     * {@link PreferenceConstants#PREF_DISABLED_BSL_DIAGNOSTICS}, writing it under the plugin state
+     * directory.
+     *
+     * <p>A failure to write the configuration file must never fail the refresh: it is logged and
+     * {@code null} is returned, so the analysis simply runs with every diagnostic enabled instead.
+     *
+     * @param stateDir the plugin state directory to write the configuration file under, not {@code null}
+     * @param service the preferences service to read the disabled-diagnostics preference from, not
+     *     {@code null}
+     * @return the generated configuration path, or {@code null} when no diagnostics are disabled or the
+     *     configuration file could not be written
+     */
+    private static Path resolveConfigPath(Path stateDir, IPreferencesService service)
+    {
+        String stored = service.getString(SonarqPlugin.PLUGIN_ID,
+            PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, "", null); //$NON-NLS-1$
+        Set<String> disabled = new HashSet<>();
+        for (String key : stored.split(",")) //$NON-NLS-1$
+        {
+            String trimmed = key.trim();
+            if (!trimmed.isEmpty())
+            {
+                disabled.add(trimmed);
+            }
+        }
+        try
+        {
+            return BslConfigWriter.write(stateDir, disabled);
+        }
+        catch (IOException e)
+        {
+            SonarqPlugin.getInstance().getLog().error(e.getMessage(), e);
+            return null;
+        }
     }
 }

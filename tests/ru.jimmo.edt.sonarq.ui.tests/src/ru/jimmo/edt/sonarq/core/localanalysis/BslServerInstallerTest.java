@@ -18,6 +18,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -225,6 +230,89 @@ public class BslServerInstallerTest
         catch (OperationCanceledException e)
         {
             // expected
+        }
+    }
+
+    @Test
+    public void concurrentEnsureServerCallsInstallOnlyOnce() throws Exception
+    {
+        byte[] archive = validZip();
+        AtomicInteger downloads = new AtomicInteger();
+        CountDownLatch downloadStarted = new CountDownLatch(1);
+        CountDownLatch releaseDownload = new CountDownLatch(1);
+        // The second call can only ever reach this callback if the lock failed to serialize the two
+        // callers (both would then observe "not installed" and both would download).
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            downloadStarted.countDown();
+            try
+            {
+                releaseDownload.await(5, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return new ByteArrayInputStream(archive);
+        };
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try
+        {
+            Future<Path> first = executor.submit(
+                () -> BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor()));
+            assertTrue("first call should have started downloading", downloadStarted.await(5, TimeUnit.SECONDS));
+
+            // The second caller must block on the install lock (held by the first, still mid-download)
+            // rather than racing it; releasing the first only after submitting the second means the second
+            // call's tryLock attempts genuinely overlap with the first holding the lock.
+            Future<Path> second = executor.submit(
+                () -> BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor()));
+            releaseDownload.countDown();
+
+            Path firstPath = first.get(10, TimeUnit.SECONDS);
+            Path secondPath = second.get(10, TimeUnit.SECONDS);
+
+            assertEquals(firstPath, secondPath);
+            assertEquals(1, downloads.get());
+        }
+        finally
+        {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void cancelledMonitorWhileLockHeldAbortsWithoutDownloading() throws InterruptedException
+    {
+        DownloadFunction download = url ->
+        {
+            fail("must not download when the monitor is already cancelled");
+            return null;
+        };
+        NullProgressMonitor monitor = new NullProgressMonitor();
+        monitor.setCanceled(true);
+
+        // Hold the lock from this thread (reentrant, so this does not itself block) to prove the
+        // cancellation check runs before ensureServer ever attempts to proceed with the install.
+        BslServerInstaller.INSTALL_LOCK.lock();
+        try
+        {
+            BslServerInstaller.ensureServer(stateDir, download, monitor);
+            fail("expected OperationCanceledException");
+        }
+        catch (OperationCanceledException e)
+        {
+            // expected
+        }
+        catch (IOException e)
+        {
+            fail("expected OperationCanceledException, got IOException: " + e.getMessage());
+        }
+        finally
+        {
+            BslServerInstaller.INSTALL_LOCK.unlock();
         }
     }
 }

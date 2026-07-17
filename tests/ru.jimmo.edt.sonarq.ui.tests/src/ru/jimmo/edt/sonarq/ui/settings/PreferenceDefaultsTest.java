@@ -37,5 +37,8 @@ public class PreferenceDefaultsTest
             service.getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_AUTO_SYNC, true, null));
         assertEquals(15,
             service.getInt(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_AUTO_SYNC_MINUTES, -1, null));
+        assertEquals("",
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, null,
+                null));
     }
 }

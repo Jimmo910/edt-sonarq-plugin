@@ -6,6 +6,7 @@
 
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -93,6 +94,29 @@ public class ProcessAnalyzeRunnerTest
     }
 
     /**
+     * Writes a throwaway "server executable" that prints its working directory to stdout and exits
+     * immediately, ignoring any arguments, so the child process's actual working directory can be
+     * observed without spawning the real native launcher.
+     *
+     * @param dir the directory to write the script into, not {@code null}
+     * @return the script path, never {@code null}
+     * @throws IOException if the script cannot be written
+     */
+    private static Path writePrintCwdScript(Path dir) throws IOException
+    {
+        if (isWindows())
+        {
+            Path script = dir.resolve("sonarq-print-cwd.bat");
+            Files.writeString(script, "@echo off\r\necho %CD%\r\n");
+            return script;
+        }
+        Path script = dir.resolve("sonarq-print-cwd.sh");
+        Files.writeString(script, "#!/bin/sh\npwd\n");
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    /**
      * Snapshots the process ids of the current JVM's direct child processes.
      *
      * @return the child process ids, never {@code null}
@@ -154,7 +178,7 @@ public class ProcessAnalyzeRunnerTest
         {
             try
             {
-                runner.analyze(script, srcDir, outputDir, new NullProgressMonitor());
+                runner.analyze(script, srcDir, outputDir, null, new NullProgressMonitor());
             }
             catch (Throwable t)
             {
@@ -173,6 +197,31 @@ public class ProcessAnalyzeRunnerTest
 
         waitUntil(() -> !isAlive(childPid), DEATH_TIMEOUT_MILLIS,
             "analysis process (pid " + childPid + ") was not destroyed after the calling thread was interrupted");
+    }
+
+    /**
+     * Regression test for the drive-mismatch crash fixed alongside this test: the analysis process's
+     * working directory must be pinned to {@code srcDir}, not inherited from the calling process, because
+     * the BSL Language Server relativizes analyzed file paths against its working directory and throws
+     * when that directory sits on a different drive than the sources being analyzed (Windows-only
+     * failure mode; verified live 2026-07-17).
+     */
+    @Test
+    public void analyzeSetsTheProcessWorkingDirectoryToSrcDir() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-cwd-test");
+        Path script = writePrintCwdScript(scratchDir);
+        Path srcDir = scratchDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Path outputDir = scratchDir.resolve("out");
+        Files.createDirectories(outputDir);
+
+        ProcessAnalyzeRunner runner = new ProcessAnalyzeRunner();
+        runner.analyze(script, srcDir, outputDir, null, new NullProgressMonitor());
+
+        Path logFile = outputDir.resolve("analyze.log");
+        String logged = Files.readString(logFile).trim();
+        assertEquals(srcDir.toRealPath(), Path.of(logged).toRealPath());
     }
 
     /**
