@@ -31,7 +31,8 @@ public final class ScannerInstaller
     private static final String DIR_PREFIX = "sonar-scanner-"; //$NON-NLS-1$
     private static final String ZIP_SUFFIX = ".zip"; //$NON-NLS-1$
     private static final String OS_WINDOWS = "windows-x64"; //$NON-NLS-1$
-    private static final String OS_MAC = "macosx-aarch64"; //$NON-NLS-1$
+    private static final String OS_MAC_ARM = "macosx-aarch64"; //$NON-NLS-1$
+    private static final String OS_MAC_INTEL = "macosx-x64"; //$NON-NLS-1$
     private static final String OS_LINUX = "linux-x64"; //$NON-NLS-1$
     private static final String SCANNER_DIR = "scanner"; //$NON-NLS-1$
     private static final String BIN_DIR = "bin"; //$NON-NLS-1$
@@ -195,7 +196,9 @@ public final class ScannerInstaller
         }
         if (os.contains("mac")) //$NON-NLS-1$
         {
-            return OS_MAC;
+            String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT); //$NON-NLS-1$ //$NON-NLS-2$
+            boolean arm = arch.contains("aarch64") || arch.contains("arm"); //$NON-NLS-1$ //$NON-NLS-2$
+            return arm ? OS_MAC_ARM : OS_MAC_INTEL;
         }
         return OS_LINUX;
     }

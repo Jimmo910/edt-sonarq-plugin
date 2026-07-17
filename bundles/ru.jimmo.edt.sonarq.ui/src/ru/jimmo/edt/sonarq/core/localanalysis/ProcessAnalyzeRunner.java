@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 
+import ru.jimmo.edt.sonarq.core.analysis.Processes;
+
 /**
  * Runs the BSL Language Server native launcher as an external process.
  *
@@ -72,8 +74,7 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
             {
                 if (monitor != null && monitor.isCanceled())
                 {
-                    process.destroy();
-                    process.waitFor();
+                    Processes.terminate(process);
                     join(pump);
                     throw new OperationCanceledException();
                 }
@@ -82,8 +83,7 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         catch (InterruptedException e)
         {
             // The calling thread gave up waiting; the process must not be left running behind it.
-            process.destroy();
-            process.waitFor();
+            Processes.terminate(process);
             join(pump);
             throw e;
         }

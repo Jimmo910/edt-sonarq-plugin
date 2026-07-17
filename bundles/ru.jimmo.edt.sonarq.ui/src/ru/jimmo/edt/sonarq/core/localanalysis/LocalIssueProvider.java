@@ -7,7 +7,6 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import java.io.IOException;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +18,7 @@ import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 
+import ru.jimmo.edt.sonarq.core.analysis.TimeoutDownloads;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
@@ -86,7 +86,7 @@ public final class LocalIssueProvider implements IIssueProvider
         {
             Path executable = serverOverride != null
                 ? serverOverride
-                : BslServerInstaller.ensureServer(stateDir, url -> new URL(url).openStream(), monitor);
+                : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, monitor);
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);

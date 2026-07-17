@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -102,7 +103,7 @@ public final class BslServerInstaller
         Path serverRoot = stateDir.resolve(SERVER_DIR);
         Path executable = expectedExecutable(serverRoot);
         Path marker = serverRoot.resolve(MARKER_FILE);
-        if (Files.exists(executable) && Files.exists(marker))
+        if (Files.exists(executable) && isMarkedForCurrentVersion(marker))
         {
             return executable;
         }
@@ -144,8 +145,27 @@ public final class BslServerInstaller
         {
             markBinExecutable(serverRoot);
         }
-        Files.createFile(marker);
+        Files.writeString(marker, VERSION, StandardCharsets.UTF_8);
         return executable;
+    }
+
+    /**
+     * Tells whether the completion marker records the currently pinned version, so a version bump forces
+     * a fresh download instead of reusing a launcher extracted for an older release.
+     *
+     * @param marker the completion marker file, not {@code null}
+     * @return {@code true} if the marker exists and holds the current {@link #VERSION}
+     */
+    private static boolean isMarkedForCurrentVersion(Path marker)
+    {
+        try
+        {
+            return Files.exists(marker) && VERSION.equals(Files.readString(marker, StandardCharsets.UTF_8).trim());
+        }
+        catch (IOException e)
+        {
+            return false;
+        }
     }
 
     /**

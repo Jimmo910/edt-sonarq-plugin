@@ -10,7 +10,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,6 +37,8 @@ import ru.jimmo.edt.sonarq.core.analysis.ReportTaskParser;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerCommandBuilder;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerInstaller;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerLaunch;
+import ru.jimmo.edt.sonarq.core.analysis.TimeoutDownloads;
+import ru.jimmo.edt.sonarq.core.analysis.Processes;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
@@ -228,8 +229,7 @@ public class AnalysisJob extends Job
             Path candidate = Path.of(path);
             return Files.isRegularFile(candidate) ? candidate : null;
         }
-        return ScannerInstaller.ensureScanner(request.stateLocation(),
-            url -> new URL(url).openStream(), monitor);
+        return ScannerInstaller.ensureScanner(request.stateLocation(), TimeoutDownloads::open, monitor);
     }
 
     /**
@@ -262,15 +262,24 @@ public class AnalysisJob extends Job
         Thread pump = new Thread(() -> pumpToConsole(process, console), CONSOLE_PUMP_THREAD);
         pump.setDaemon(true);
         pump.start();
-        while (!process.waitFor(PROCESS_POLL_MILLIS, TimeUnit.MILLISECONDS))
+        try
         {
-            if (monitor.isCanceled())
+            while (!process.waitFor(PROCESS_POLL_MILLIS, TimeUnit.MILLISECONDS))
             {
-                process.destroy();
-                process.waitFor();
-                join(pump);
-                return Status.CANCEL_STATUS;
+                if (monitor.isCanceled())
+                {
+                    Processes.terminate(process);
+                    join(pump);
+                    return Status.CANCEL_STATUS;
+                }
             }
+        }
+        catch (InterruptedException e)
+        {
+            // The job thread gave up waiting; the scanner (which still holds the token) must not run on.
+            Processes.terminate(process);
+            join(pump);
+            throw e;
         }
         join(pump);
         int exit = process.exitValue();
