@@ -40,6 +40,15 @@ import ru.jimmo.edt.sonarq.core.analysis.Processes;
  * scope, but the interrupted-thread teardown path is covered by a headless test that runs a throwaway
  * long-lived script in its place (see {@code ProcessAnalyzeRunnerTest}); command construction alone is
  * covered by {@code BslAnalyzeCommandTest}.
+ *
+ * <p>The child process's working directory is pinned to the analyzed source directory (see
+ * {@link #analyze}) because the BSL Language Server relativizes each analyzed file's path against the
+ * process's current working directory; if that directory sits on a different drive than the sources
+ * (Windows only), {@code Path.relativize} throws {@code IllegalArgumentException: 'other' has different
+ * root}, surfacing as {@code IllegalStateException: Error analyzing files ...}. This was only masked so
+ * far because the test stand and its workspace happen to share the same drive letter. Verified live
+ * 2026-07-17: the exact launcher invocation crashes when the process cwd is on {@code C:} while the
+ * source tree is on {@code E:}, and succeeds once the cwd is moved onto the source tree's drive.
  */
 public final class ProcessAnalyzeRunner implements AnalyzeRunner
 {
@@ -60,6 +69,7 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         Files.createDirectories(outputDir);
         List<String> command = BslAnalyzeCommand.build(serverExecutable, srcDir, outputDir, configPath);
         ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(srcDir.toFile());
         builder.redirectErrorStream(true);
         Path logFile = outputDir.resolve(LOG_FILE_NAME);
 
