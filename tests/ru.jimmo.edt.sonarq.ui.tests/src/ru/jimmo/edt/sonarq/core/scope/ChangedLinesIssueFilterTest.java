@@ -114,4 +114,16 @@ public class ChangedLinesIssueFilterTest
         assertEquals(List.of(fileLevel),
             ChangedLinesIssueFilter.keepChanged(List.of(fileLevel), "proj", root, cl));
     }
+
+    @Test
+    public void issueOutsideProjectKeyIsKeptEvenWhenNothingChanged()
+    {
+        Path root = Path.of("C:/repo/proj");
+        SonarIssue outsideProject = issue("otherProject:src/X.bsl", 999);
+        ChangedLines cl = fake(root.toFile(), Set.of(), Set.of());
+
+        List<SonarIssue> out = ChangedLinesIssueFilter.keepChanged(List.of(outsideProject), "proj", root, cl);
+
+        assertEquals(List.of(outsideProject), out);
+    }
 }

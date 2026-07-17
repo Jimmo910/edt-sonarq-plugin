@@ -67,6 +67,9 @@ public final class GitChangedLines implements ChangedLines
             File workTree = repository.getWorkTree();
             return new GitChangedLines(workTree, collectRanges(repository, baseId));
         }
+        // Broad catch: JGit signals "not a usable repo / bad ref" via unchecked exceptions
+        // (RevisionSyntaxException, IllegalArgumentException from build(), NoWorkTreeException); all of
+        // them must degrade to an unavailable result rather than propagate.
         catch (Exception e)
         {
             return unavailable();

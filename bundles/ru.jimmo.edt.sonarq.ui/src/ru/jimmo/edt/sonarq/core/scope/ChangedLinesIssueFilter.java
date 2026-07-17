@@ -75,6 +75,6 @@ public final class ChangedLinesIssueFilter
     {
         Path rel = workTreeRoot.relativize(projectRoot);
         String text = rel.toString().replace('\\', '/');
-        return text.equals(".") ? EMPTY : text; //$NON-NLS-1$
+        return text;
     }
 }
