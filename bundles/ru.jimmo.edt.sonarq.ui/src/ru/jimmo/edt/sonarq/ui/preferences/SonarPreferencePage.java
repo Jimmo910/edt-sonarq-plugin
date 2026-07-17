@@ -322,12 +322,17 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
                 return NLS.bind(Messages.PreferencePage_BslVerifyFail, "timeout"); //$NON-NLS-1$
             }
             String output = new String(process.getInputStream().readAllBytes(), Charset.defaultCharset());
-            String firstLine = output.lines().findFirst().orElse("").trim(); //$NON-NLS-1$
+            // The native launcher prints JVM warnings first; prefer the "version: ..." line for display.
+            String display = output.lines().map(String::trim)
+                .filter(line -> line.toLowerCase(Locale.ROOT).startsWith("version")) //$NON-NLS-1$
+                .findFirst()
+                .orElseGet(() -> output.lines().map(String::trim)
+                    .filter(line -> !line.isEmpty()).findFirst().orElse("")); //$NON-NLS-1$
             if (output.toLowerCase(Locale.ROOT).contains("bsl")) //$NON-NLS-1$
             {
-                return NLS.bind(Messages.PreferencePage_BslVerifyOk, firstLine);
+                return NLS.bind(Messages.PreferencePage_BslVerifyOk, display);
             }
-            return NLS.bind(Messages.PreferencePage_BslVerifyFail, firstLine);
+            return NLS.bind(Messages.PreferencePage_BslVerifyFail, display);
         }
         catch (IOException e)
         {
