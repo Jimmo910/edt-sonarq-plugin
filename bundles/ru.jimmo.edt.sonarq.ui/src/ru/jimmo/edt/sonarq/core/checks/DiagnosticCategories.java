@@ -79,22 +79,56 @@ public final class DiagnosticCategories
             {
                 return new DiagnosticCategories(List.of());
             }
-            try (InputStreamReader reader = new InputStreamReader(stream, StandardCharsets.UTF_8))
-            {
-                JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-                JsonArray diagnostics = root.getAsJsonArray(DIAGNOSTICS_MEMBER);
-                List<CategoryEntry> entries = new ArrayList<>();
-                for (JsonElement element : diagnostics)
-                {
-                    entries.add(toEntry(element.getAsJsonObject()));
-                }
-                return new DiagnosticCategories(entries);
-            }
+            return parse(stream);
         }
-        catch (IOException | RuntimeException e)
+        catch (IOException e)
         {
             return new DiagnosticCategories(List.of());
         }
+    }
+
+    /**
+     * Parses a diagnostic category catalog document, per-entry resilient: a single malformed diagnostic
+     * (missing {@code "key"}/{@code "name"}, or a non-object array element) is skipped rather than fatal,
+     * so the rest of a community-contributed catalog still loads. A malformed top-level document (not
+     * JSON, or the {@code "diagnostics"} member missing or not an array) still yields an empty instance,
+     * same as before. Extracted from {@link #load()} so this per-entry behavior is unit-testable without
+     * the bundled resource; does not close {@code in}.
+     *
+     * @param in the JSON document to parse, not {@code null}
+     * @return the parsed catalog, never {@code null}; empty when the document is malformed
+     */
+    static DiagnosticCategories parse(InputStream in)
+    {
+        JsonArray diagnostics;
+        try
+        {
+            JsonObject root =
+                JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
+            diagnostics = root.getAsJsonArray(DIAGNOSTICS_MEMBER);
+        }
+        catch (RuntimeException e)
+        {
+            return new DiagnosticCategories(List.of());
+        }
+        if (diagnostics == null)
+        {
+            return new DiagnosticCategories(List.of());
+        }
+        List<CategoryEntry> entries = new ArrayList<>();
+        for (JsonElement element : diagnostics)
+        {
+            try
+            {
+                entries.add(toEntry(element.getAsJsonObject()));
+            }
+            catch (RuntimeException e)
+            {
+                // A single malformed entry must not collapse the whole catalog; skip it and keep parsing
+                // the rest, so one bad community-contributed entry cannot silently empty the catalog.
+            }
+        }
+        return new DiagnosticCategories(entries);
     }
 
     private static CategoryEntry toEntry(JsonObject object)

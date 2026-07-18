@@ -152,7 +152,7 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
      * @param edtCheck the duplicated EDT check id, or {@code null} when {@code category} is not
      *     {@link DiagnosticCategory#EDT_DUPLICATE}
      */
-    private record DiagKey(String key, String name, DiagnosticCategory category, String edtCheck)
+    record DiagKey(String key, String name, DiagnosticCategory category, String edtCheck)
     {
     }
 
@@ -537,7 +537,7 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
      * @param fetched the previously fetched diagnostics catalog, not {@code null}
      * @return the merged, key-sorted list of displayed diagnostics, never {@code null}
      */
-    private static List<DiagKey> mergeDisplayedKeys(DiagnosticCategories categories,
+    static List<DiagKey> mergeDisplayedKeys(DiagnosticCategories categories,
         List<DiagnosticsCatalog.Entry> fetched)
     {
         Map<String, String> fetchedNames = new HashMap<>();
@@ -626,20 +626,32 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
 
     /**
      * Refreshes the "Disabled N of M" counter label from the currently displayed diagnostics and disabled
-     * set.
+     * set. N counts only disabled keys that are part of the currently displayed set, so N never exceeds M
+     * even when {@link #disabledKeys} also holds keys hidden from the current bundled/fetched catalog
+     * merge (e.g. a diagnostic disabled by a previous version of this page that is absent from both the
+     * bundled catalog and the cached fetched catalog).
      */
     private void updateCounter()
     {
-        counterLabel.setText(
-            NLS.bind(Messages.BslChecksPage_Counter, disabledKeys.size(), allDiagKeys.size()));
+        long displayedDisabled =
+            allDiagKeys.stream().filter(diagKey -> disabledKeys.contains(diagKey.key())).count();
+        counterLabel.setText(NLS.bind(Messages.BslChecksPage_Counter, displayedDisabled, allDiagKeys.size()));
     }
 
     /**
-     * Clears the disabled set, checking every diagnostic regardless of the active text filter.
+     * Removes only the currently displayed diagnostic keys from the disabled set, checking every displayed
+     * diagnostic regardless of the active text filter. Unlike {@link #performDefaults()}, this leaves
+     * disabled keys outside the displayed set untouched (e.g. a diagnostic absent from both the bundled and
+     * cached fetched catalog), so they are not silently discarded on OK.
      */
     private void enableAll()
     {
-        disabledKeys.clear();
+        Set<String> displayedKeys = new HashSet<>();
+        for (DiagKey diagKey : allDiagKeys)
+        {
+            displayedKeys.add(diagKey.key());
+        }
+        disabledKeys.removeAll(displayedKeys);
         treeViewer.refresh();
         updateCounter();
     }

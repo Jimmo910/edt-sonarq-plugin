@@ -11,6 +11,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,5 +75,49 @@ public class DiagnosticCategoriesTest
         assertEquals(all.size(), all.stream().map(CategoryEntry::key).distinct().count());
         assertTrue(all.stream()
             .allMatch(e -> (e.category() == DiagnosticCategory.EDT_DUPLICATE) == (e.edtCheck() != null)));
+    }
+
+    @Test
+    public void parseSkipsEntryMissingRequiredMember()
+    {
+        String json = "{\"diagnostics\":["
+            + "{\"key\":\"GoodOne\",\"name\":\"Good One\",\"category\":\"general\"},"
+            + "{\"name\":\"MissingKey\",\"category\":\"general\"},"
+            + "{\"key\":\"GoodTwo\",\"name\":\"Good Two\",\"category\":\"needs-tuning\"}"
+            + "]}";
+
+        DiagnosticCategories c = DiagnosticCategories.parse(toStream(json));
+
+        List<CategoryEntry> all = c.all();
+        assertEquals(2, all.size());
+        assertEquals(DiagnosticCategory.GENERAL, c.categoryOf("GoodOne"));
+        assertEquals(DiagnosticCategory.NEEDS_TUNING, c.categoryOf("GoodTwo"));
+    }
+
+    @Test
+    public void parseSkipsNonObjectArrayElement()
+    {
+        String json = "{\"diagnostics\":["
+            + "{\"key\":\"GoodOne\",\"name\":\"Good One\",\"category\":\"general\"},"
+            + "\"not-an-object\","
+            + "{\"key\":\"GoodTwo\",\"name\":\"Good Two\",\"category\":\"general\"}"
+            + "]}";
+
+        DiagnosticCategories c = DiagnosticCategories.parse(toStream(json));
+
+        assertEquals(2, c.all().size());
+    }
+
+    @Test
+    public void parseOfMalformedTopLevelDocumentIsEmpty()
+    {
+        assertTrue(DiagnosticCategories.parse(toStream("not json")).all().isEmpty());
+        assertTrue(DiagnosticCategories.parse(toStream("{}")).all().isEmpty());
+        assertTrue(DiagnosticCategories.parse(toStream("{\"diagnostics\":{}}")).all().isEmpty());
+    }
+
+    private static InputStream toStream(String json)
+    {
+        return new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8));
     }
 }
