@@ -61,6 +61,7 @@ public final class Messages extends NLS
     public static String IssuesView_FilterText_Hint;
     public static String IssuesView_GroupByFile;
     public static String IssuesView_GroupByRule;
+    public static String IssuesView_GroupBySeverity;
     public static String IssuesView_ProjectMenu;
     public static String IssuesView_RefreshAction;
     public static String IssuesView_RunAnalysisAction;

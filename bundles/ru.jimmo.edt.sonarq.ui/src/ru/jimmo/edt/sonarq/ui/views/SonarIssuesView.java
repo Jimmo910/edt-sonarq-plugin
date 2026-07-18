@@ -54,6 +54,7 @@ import org.eclipse.swt.widgets.Link;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.swt.widgets.TreeColumn;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.eclipse.ui.part.ViewPart;
 
@@ -90,6 +91,14 @@ public class SonarIssuesView extends ViewPart
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss"); //$NON-NLS-1$
 
+    /** Width, in pixels, of the sash between the issue tree and the rule description pane (issue #4). */
+    private static final int SASH_WIDTH = 6;
+
+    private static final int LOCATION_COLUMN_WIDTH = 260;
+    private static final int SEVERITY_COLUMN_WIDTH = 90;
+    private static final int RULE_COLUMN_WIDTH = 140;
+    private static final int MESSAGE_COLUMN_WIDTH = 400;
+
     private TreeViewer viewer;
     private Label statusLabel;
     private Link errorDetailsLink;
@@ -110,6 +119,8 @@ public class SonarIssuesView extends ViewPart
     private RuleDescriptionPanel rulePanel;
     private IIssueProvider currentProvider;
     private String requestedRuleKey;
+    private TreeColumn severityColumn;
+    private TreeColumn ruleColumn;
 
     @Override
     public void createPartControl(Composite parent)
@@ -121,6 +132,9 @@ public class SonarIssuesView extends ViewPart
 
         SashForm sash = new SashForm(root, SWT.VERTICAL);
         sash.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        // Issue #4: the default 1px sash is nearly invisible and hard to grab with the mouse; a wider sash
+        // is still a thin divider but is actually discoverable and draggable.
+        sash.setSashWidth(SASH_WIDTH);
 
         Composite treePane = new Composite(sash, SWT.NONE);
         treePane.setLayout(new GridLayout(1, false));
@@ -239,6 +253,7 @@ public class SonarIssuesView extends ViewPart
         toolBar.add(new Separator());
         toolBar.add(createGroupByFileAction());
         toolBar.add(createGroupByRuleAction());
+        toolBar.add(createGroupBySeverityAction());
         toolBar.update(true);
     }
 
@@ -331,6 +346,21 @@ public class SonarIssuesView extends ViewPart
         return action;
     }
 
+    private Action createGroupBySeverityAction()
+    {
+        Action action = new Action(Messages.IssuesView_GroupBySeverity, IAction.AS_RADIO_BUTTON)
+        {
+            @Override
+            public void run()
+            {
+                grouping = IssueGrouping.BY_SEVERITY;
+                rebuildTree();
+            }
+        };
+        applyToolbarIcon(action, "icons/severity.png", Messages.IssuesView_GroupBySeverity); //$NON-NLS-1$
+        return action;
+    }
+
     /**
      * Switches a toolbar action from a text label to an icon, moving its label to the hover tooltip
      * (issue #4 point 7): JFace renders a toolbar {@link Action} icon-only once an image descriptor is set,
@@ -350,9 +380,65 @@ public class SonarIssuesView extends ViewPart
         action.setToolTipText(tooltip);
     }
 
+    /** A hideable column of the issue tree; see {@link #hiddenColumnFor} (issue #3). */
+    enum IssueColumn
+    {
+        /** The location/line-number column; never auto-hidden. */
+        LOCATION,
+
+        /** The severity column. */
+        SEVERITY,
+
+        /** The rule column. */
+        RULE,
+
+        /** The message column; never auto-hidden. */
+        MESSAGE
+    }
+
+    /**
+     * Decides which issue-tree column merely repeats the active grouping's header on every row, and should
+     * therefore auto-hide (issue #3): grouping by Rule repeats the rule key in the Rule column on every
+     * row, and grouping by Severity repeats the severity in the Severity column on every row. Grouping by
+     * File hides nothing, since the Location column then shows each row's line number, which is useful.
+     *
+     * <p>Pure and SWT-free by design, so it can be unit-tested without a display.
+     *
+     * @param activeGrouping the active grouping mode, not {@code null}
+     * @return the column to hide, or {@link Optional#empty()} when no column is redundant
+     */
+    static Optional<IssueColumn> hiddenColumnFor(IssueGrouping activeGrouping)
+    {
+        return switch (activeGrouping)
+        {
+            case BY_RULE -> Optional.of(IssueColumn.RULE);
+            case BY_SEVERITY -> Optional.of(IssueColumn.SEVERITY);
+            case BY_FILE -> Optional.empty();
+        };
+    }
+
+    /**
+     * Hides whichever column {@link #hiddenColumnFor} reports for the current {@link #grouping}, and
+     * restores the other one. Hiding zeroes the column's width and disables resizing rather than disposing
+     * the column, so the tree's column indices stay stable and {@link #createColumns()} only ever runs
+     * once.
+     */
+    private void applyColumnVisibility()
+    {
+        IssueColumn columnToHide = hiddenColumnFor(grouping).orElse(null);
+        setColumnHidden(severityColumn, SEVERITY_COLUMN_WIDTH, columnToHide == IssueColumn.SEVERITY);
+        setColumnHidden(ruleColumn, RULE_COLUMN_WIDTH, columnToHide == IssueColumn.RULE);
+    }
+
+    private static void setColumnHidden(TreeColumn column, int visibleWidth, boolean hidden)
+    {
+        column.setWidth(hidden ? 0 : visibleWidth);
+        column.setResizable(!hidden);
+    }
+
     private void createColumns()
     {
-        addColumn(Messages.IssuesView_Column_Location, 260, element ->
+        addColumn(Messages.IssuesView_Column_Location, LOCATION_COLUMN_WIDTH, element ->
         {
             if (element instanceof IssueGroup group)
             {
@@ -361,15 +447,15 @@ public class SonarIssuesView extends ViewPart
             int line = ((IssueEntry)element).issue().line();
             return line > 0 ? String.valueOf(line) : ""; //$NON-NLS-1$
         });
-        addColumn(Messages.IssuesView_Column_Severity, 90,
+        severityColumn = addColumn(Messages.IssuesView_Column_Severity, SEVERITY_COLUMN_WIDTH,
             element -> element instanceof IssueEntry entry ? entry.issue().severity().name() : ""); //$NON-NLS-1$
-        addColumn(Messages.IssuesView_Column_Rule, 140,
+        ruleColumn = addColumn(Messages.IssuesView_Column_Rule, RULE_COLUMN_WIDTH,
             element -> element instanceof IssueEntry entry ? entry.issue().ruleKey() : ""); //$NON-NLS-1$
-        addColumn(Messages.IssuesView_Column_Message, 400,
+        addColumn(Messages.IssuesView_Column_Message, MESSAGE_COLUMN_WIDTH,
             element -> element instanceof IssueEntry entry ? entry.issue().message() : ""); //$NON-NLS-1$
     }
 
-    private void addColumn(String title, int width, Function<Object, String> textProvider)
+    private TreeColumn addColumn(String title, int width, Function<Object, String> textProvider)
     {
         TreeViewerColumn column = new TreeViewerColumn(viewer, SWT.NONE);
         column.getColumn().setText(title);
@@ -402,6 +488,7 @@ public class SonarIssuesView extends ViewPart
                 return null;
             }
         });
+        return column.getColumn();
     }
 
     /**
@@ -419,6 +506,7 @@ public class SonarIssuesView extends ViewPart
 
     private void rebuildTree()
     {
+        applyColumnVisibility();
         if (snapshot == null)
         {
             viewer.setInput(List.of());
