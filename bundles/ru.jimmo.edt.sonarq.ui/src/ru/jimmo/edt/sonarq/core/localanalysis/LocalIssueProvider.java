@@ -32,6 +32,10 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.scope.ChangedLines;
 import ru.jimmo.edt.sonarq.core.scope.ChangedLinesIssueFilter;
 import ru.jimmo.edt.sonarq.core.scope.GitChangedLines;
+// Layering compromise: this "core" package has no NLS/logging facility of its own (see the class javadoc),
+// but the progress phase text it reports is user-visible, so it borrows the UI bundle's Messages rather than
+// showing English text on a Russian EDT (issue #4).
+import ru.jimmo.edt.sonarq.ui.Messages;
 
 /**
  * Loads issues by running the BSL Language Server locally against a project's sources, instead of
@@ -82,13 +86,6 @@ public final class LocalIssueProvider implements IIssueProvider
     private static final String PROJECT_CONFIG_FILE_NAME = ".bsl-language-server.json"; //$NON-NLS-1$
     private static final String EMPTY_DESCRIPTION = ""; //$NON-NLS-1$
     private static final int MAX_DIR_NAME_LENGTH = 80;
-    // Coarse, two-phase progress for the Progress view. This class has no NLS/logging facility of its own
-    // (see the class javadoc), so - like ProcessAnalyzeRunner's out-of-memory hint - these are plain English
-    // literals rather than Messages keys.
-    private static final String PROGRESS_TASK_NAME = "Local BSL analysis"; //$NON-NLS-1$
-    private static final String PROGRESS_PREPARE_ENGINE = "Preparing analysis engine"; //$NON-NLS-1$
-    private static final String PROGRESS_ANALYZING = "Analyzing sources"; //$NON-NLS-1$
-    private static final int PROGRESS_TOTAL_WORK = 2;
 
     private final String projectKey;
     private final Path projectRoot;
@@ -170,20 +167,18 @@ public final class LocalIssueProvider implements IIssueProvider
         beginProgress(monitor);
         try
         {
-            reportProgress(monitor, PROGRESS_PREPARE_ENGINE);
+            reportProgress(monitor, Messages.LocalProgress_PrepareEngine);
             Path executable = serverOverride != null
                 ? serverOverride
                 : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, monitor);
             configureHeapBestEffort();
-            tick(monitor);
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);
             Path projectConfig = findProjectConfigFile(srcDir);
             Path effectiveConfigPath = projectConfig != null ? projectConfig : configPath;
-            reportProgress(monitor, PROGRESS_ANALYZING);
+            reportProgress(monitor, Messages.LocalProgress_Analyzing);
             Path sarif = runner.analyze(executable, srcDir, outputDir, effectiveConfigPath, monitor);
-            tick(monitor);
             SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
                 projectRoot.toString());
             ruleCache = report.rules();
@@ -220,7 +215,14 @@ public final class LocalIssueProvider implements IIssueProvider
     }
 
     /**
-     * Starts the coarse, two-phase progress reporting for one {@link #fetchIssues} call, best-effort.
+     * Starts indeterminate progress reporting for one {@link #fetchIssues} call, best-effort.
+     *
+     * <p>The BSL Language Server CLI reports no per-file progress, so any fixed total this class could pick
+     * would be fake: an earlier version reported a two-step total and called {@code worked(1)} after the
+     * "preparing the engine" phase, which left the Progress view bar frozen at a misleading 50% for the
+     * entire "analyzing sources" phase (issue #4). {@link IProgressMonitor#UNKNOWN} makes the platform render
+     * an animated, indeterminate bar instead, so {@link #fetchIssues} must never call {@code worked(...)} on
+     * this monitor - doing so on an unknown-total task has undefined display behaviour.
      *
      * @param monitor the progress monitor, or {@code null} to skip progress reporting entirely
      */
@@ -228,7 +230,7 @@ public final class LocalIssueProvider implements IIssueProvider
     {
         if (monitor != null)
         {
-            monitor.beginTask(PROGRESS_TASK_NAME, PROGRESS_TOTAL_WORK);
+            monitor.beginTask(Messages.LocalProgress_Task, IProgressMonitor.UNKNOWN);
         }
     }
 
@@ -243,19 +245,6 @@ public final class LocalIssueProvider implements IIssueProvider
         if (monitor != null)
         {
             monitor.subTask(phaseName);
-        }
-    }
-
-    /**
-     * Marks one unit of the two-phase progress as complete, best-effort.
-     *
-     * @param monitor the progress monitor, or {@code null} to skip progress reporting entirely
-     */
-    private static void tick(IProgressMonitor monitor)
-    {
-        if (monitor != null)
-        {
-            monitor.worked(1);
         }
     }
 

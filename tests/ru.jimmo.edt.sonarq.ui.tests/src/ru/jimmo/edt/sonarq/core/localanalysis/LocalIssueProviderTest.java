@@ -34,6 +34,7 @@ import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.scope.ChangedLines;
+import ru.jimmo.edt.sonarq.ui.Messages;
 
 /** Tests for {@link LocalIssueProvider}. */
 public class LocalIssueProviderTest
@@ -41,9 +42,9 @@ public class LocalIssueProviderTest
     private static final String PROJECT_KEY = "TestConfiguration";
 
     /**
-     * Records the sequence of progress calls it receives, for asserting the coarse two-phase progress
-     * {@link LocalIssueProvider#fetchIssues} reports (issue #4 point 2). Every other {@link IProgressMonitor}
-     * method is a no-op; cancellation is never requested by these tests.
+     * Records the sequence of progress calls it receives, for asserting the indeterminate progress
+     * {@link LocalIssueProvider#fetchIssues} reports (issue #4 point 2/3). Every other
+     * {@link IProgressMonitor} method is a no-op; cancellation is never requested by these tests.
      */
     private static final class RecordingProgressMonitor implements IProgressMonitor
     {
@@ -566,14 +567,17 @@ public class LocalIssueProviderTest
     }
 
     /**
-     * Regression test for issue #4 point 2: local analysis was reported with no progress feedback beyond a
-     * bare, indeterminate spinner. {@link LocalIssueProvider#fetchIssues} must now report a coarse,
-     * two-phase progress ("preparing the analysis engine", then "analyzing sources") so the Progress view
-     * shows what is happening, and always call {@code done()} even though no caller wraps the monitor in a
+     * Regression test for issue #4 point 2 (initial report): local analysis was reported with no progress
+     * feedback beyond a bare, indeterminate spinner. A follow-up fix then reported a coarse, fixed two-step
+     * total and called {@code worked(1)} after the first phase, which left the Progress view bar frozen at a
+     * misleading 50% for the entire "analyzing sources" phase (issue #4 point 3) - the language server gives
+     * no per-file progress, so any fixed total is fake. {@link LocalIssueProvider#fetchIssues} must report an
+     * {@link IProgressMonitor#UNKNOWN}-total task, localized phase names via {@code subTask}, and never call
+     * {@code worked(...)}, and must always call {@code done()} even though no caller wraps the monitor in a
      * {@code SubMonitor}.
      */
     @Test
-    public void fetchIssuesReportsCoarseTwoPhaseProgress() throws Exception
+    public void fetchIssuesReportsIndeterminateLocalizedProgress() throws Exception
     {
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
@@ -584,11 +588,9 @@ public class LocalIssueProviderTest
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), monitor);
 
         assertEquals(List.of(
-            "beginTask(Local BSL analysis,2)",
-            "subTask(Preparing analysis engine)",
-            "worked(1)",
-            "subTask(Analyzing sources)",
-            "worked(1)",
+            "beginTask(" + Messages.LocalProgress_Task + "," + IProgressMonitor.UNKNOWN + ")",
+            "subTask(" + Messages.LocalProgress_PrepareEngine + ")",
+            "subTask(" + Messages.LocalProgress_Analyzing + ")",
             "done()"),
             monitor.events);
     }

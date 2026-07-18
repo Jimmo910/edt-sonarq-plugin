@@ -78,6 +78,9 @@ public final class Messages extends NLS
     public static String IssuesView_Status_UnmappedCount;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
+    public static String LocalProgress_Analyzing;
+    public static String LocalProgress_PrepareEngine;
+    public static String LocalProgress_Task;
     public static String MarkerSyncJob_Name;
     public static String PreferencePage_AutoSync;
     public static String PreferencePage_AutoSyncMinutes;
