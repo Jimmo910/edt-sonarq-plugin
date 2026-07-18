@@ -60,9 +60,9 @@ public final class RuleHtml
     }
 
     /**
-     * Converts an HTML fragment to plain text, for the {@link RuleDescriptionPanel} {@code StyledText}
-     * fallback used where no HTML {@code Browser} is available or preferred (see
-     * {@link RuleDescriptionPanel#preferBrowser(String)}).
+     * Converts an HTML fragment to plain text, for a read-only text rendering of rule HTML where no HTML
+     * {@code Browser} is available or preferred (for example on GTK, or when persisting a description into
+     * the diagnostics catalog).
      *
      * <p>Block-level tags ({@code <p>}, {@code <div>}, headings, {@code <li>}, table rows/cells,
      * {@code <pre>}) and {@code <br>} are turned into line breaks (and a {@code "- "} bullet for list
