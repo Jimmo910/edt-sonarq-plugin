@@ -311,6 +311,30 @@ public class LocalIssueProviderTest
         assertTrue(rule.htmlDescription().contains("Methods should not be too long."));
     }
 
+    /**
+     * Phase-1 verification for the issue #4 follow-up (AndreiRch: the rule description pane showed nothing
+     * on Linux/GTK). Before assuming the pane's HTML/plain-text rendering is at fault, this confirms the
+     * description CONTENT reaching {@link LocalIssueProvider#describeRule(String)} is genuinely non-empty
+     * for a typical local-analysis rule - i.e. the bug is isolated to rendering (see
+     * {@code RuleDescriptionPanelTest} and {@code RuleHtmlTest}), not to empty or missing data from the
+     * local analyzer.
+     */
+    @Test
+    public void describeRuleAfterFetchReturnsNonEmptyHtmlDescription() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixture();
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
+
+        provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+        SonarRule rule = provider.describeRule("MethodSize");
+
+        assertFalse("rule description content must not be empty - a blank pane must be a rendering bug, "
+            + "not a data bug", rule.htmlDescription().isBlank());
+        assertTrue(rule.htmlDescription().contains("too long"));
+    }
+
     @Test
     public void describeRuleBeforeAnyFetchReturnsEmptyRule() throws Exception
     {
