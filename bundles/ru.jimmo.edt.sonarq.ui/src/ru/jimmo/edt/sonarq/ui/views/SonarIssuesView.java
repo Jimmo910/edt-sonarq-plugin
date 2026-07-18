@@ -89,6 +89,8 @@ public class SonarIssuesView extends ViewPart
 
     private TreeViewer viewer;
     private Label statusLabel;
+    private Link errorDetailsLink;
+    private String lastErrorMessage;
     private Composite bannerComposite;
     private Label bannerLabel;
     private Link bannerLink;
@@ -172,11 +174,37 @@ public class SonarIssuesView extends ViewPart
             }
         });
 
-        statusLabel = new Label(root, SWT.NONE);
+        createStatusRow(root);
+
+        createToolBar();
+    }
+
+    /**
+     * Creates the status row: a status label that fills the available width, plus an initially hidden
+     * "Details" link shown only while an error status is displayed (see {@link #setErrorDetailsVisible}).
+     * The link only ever opens its dialog from its own {@link SelectionListener} - i.e. on an explicit user
+     * click - never automatically, so a background refresh (see {@link ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler})
+     * can never pop it up.
+     *
+     * @param root the parent composite, not {@code null}
+     */
+    private void createStatusRow(Composite root)
+    {
+        Composite statusRow = new Composite(root, SWT.NONE);
+        statusRow.setLayout(new GridLayout(2, false));
+        statusRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        statusLabel = new Label(statusRow, SWT.NONE);
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
 
-        createToolBar();
+        errorDetailsLink = new Link(statusRow, SWT.NONE);
+        errorDetailsLink.setText("<a>" + Messages.IssuesView_Error_DetailsLink + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$
+        GridData linkData = new GridData(SWT.RIGHT, SWT.CENTER, false, false);
+        linkData.exclude = true;
+        errorDetailsLink.setLayoutData(linkData);
+        errorDetailsLink.setVisible(false);
+        errorDetailsLink.addSelectionListener(SelectionListener.widgetSelectedAdapter(event -> showErrorDetails()));
     }
 
     private void createBanner(Composite root)
@@ -388,8 +416,23 @@ public class SonarIssuesView extends ViewPart
         boundProjectKey = refreshInputs.mappingProjectKey();
         boundPathPrefix = refreshInputs.mappingPathPrefix();
         IIssueProvider refreshedProvider = refreshInputs.provider();
+        applyRunningStatus();
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
             result -> onRefreshFinished(generation, refreshedProvider, result)));
+    }
+
+    /**
+     * Shows a neutral in-progress status the moment a refresh is actually scheduled, clearing any error (or
+     * stale success) text left over from a previous run so it does not linger on screen until this run
+     * completes (issue #4 point 4).
+     */
+    private void applyRunningStatus()
+    {
+        lastErrorMessage = null;
+        statusLabel.setText(Messages.IssuesView_Status_Running);
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
+        statusLabel.getParent().layout();
     }
 
     /**
@@ -477,7 +520,12 @@ public class SonarIssuesView extends ViewPart
     {
         if (!statusLabel.isDisposed())
         {
+            // Clears any error tooltip/Details link left over from a previous refresh so it does not linger
+            // next to an unrelated branch-analysis status line (see #applyErrorStatus).
+            lastErrorMessage = null;
             statusLabel.setText(text);
+            statusLabel.setToolTipText(null);
+            setErrorDetailsVisible(false);
             statusLabel.getParent().layout();
         }
     }
@@ -602,13 +650,68 @@ public class SonarIssuesView extends ViewPart
             currentProvider = providerAfterRefresh(currentProvider, refreshedProvider, !result.isError());
             if (result.isError())
             {
-                statusLabel.setText(NLS.bind(Messages.IssuesView_Status_Error, result.errorMessage()));
+                applyErrorStatus(result.errorMessage());
                 return;
             }
             setInput(result.snapshot(), result.branchState());
             updateStatusAndBanner();
             scheduleMarkerSync();
         });
+    }
+
+    /**
+     * Shows a refresh failure on the status line: only the message's first line, as the one-line headline
+     * (see {@link #headlineOf}), with the full multi-line message (e.g. a {@code ProcessAnalyzeRunner}
+     * failure carries a "Full log: ..." path and a log tail after the headline) set as the label's tooltip
+     * and available on demand through the "Details" link (see {@link #showErrorDetails}). The link is never
+     * opened automatically from here - only its own click handler does that - so a background refresh (see
+     * {@link ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler}) can never pop up a dialog.
+     *
+     * @param errorMessage the full error message reported by the refresh job, not {@code null}
+     */
+    private void applyErrorStatus(String errorMessage)
+    {
+        lastErrorMessage = errorMessage;
+        statusLabel.setText(NLS.bind(Messages.IssuesView_Status_Error, headlineOf(errorMessage)));
+        statusLabel.setToolTipText(errorMessage);
+        setErrorDetailsVisible(true);
+        statusLabel.getParent().layout();
+    }
+
+    /**
+     * Extracts the first line of a (possibly multi-line) message, for use as a one-line status headline.
+     *
+     * @param message the full message, not {@code null}
+     * @return the first line, or {@code message} unchanged if it has no line break
+     */
+    static String headlineOf(String message)
+    {
+        return message.lines().findFirst().orElse(""); //$NON-NLS-1$
+    }
+
+    /**
+     * Opens the full error message in a read-only dialog. Called only from {@link #errorDetailsLink}'s own
+     * {@link SelectionListener} - i.e. only in direct response to an explicit user click - never from
+     * {@link #onRefreshFinished}, which can also run under the unattended background auto-sync timer.
+     */
+    private void showErrorDetails()
+    {
+        if (lastErrorMessage != null)
+        {
+            MessageDialog.openError(getSite().getShell(), Messages.IssuesView_Error_DetailsTitle, lastErrorMessage);
+        }
+    }
+
+    /**
+     * Shows or hides the "Details" link, which only makes sense while an error status is displayed.
+     *
+     * @param visible {@code true} to show the link, {@code false} to hide and exclude it from the layout
+     */
+    private void setErrorDetailsVisible(boolean visible)
+    {
+        ((GridData)errorDetailsLink.getLayoutData()).exclude = !visible;
+        errorDetailsLink.setVisible(visible);
+        errorDetailsLink.getParent().layout();
     }
 
     /**
@@ -677,7 +780,10 @@ public class SonarIssuesView extends ViewPart
 
     private void updateStatusAndBanner()
     {
+        lastErrorMessage = null;
         statusLabel.setText(buildStatusText());
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
         statusLabel.getParent().layout();
         updateBanner();
     }
@@ -701,6 +807,12 @@ public class SonarIssuesView extends ViewPart
         {
             text += "  " + NLS.bind(Messages.IssuesView_Status_Truncated, //$NON-NLS-1$
                 new Object[] { Integer.valueOf(count), Integer.valueOf(snapshot.serverTotal()) });
+        }
+        long unmapped = IssueTreeBuilder.countUnmapped(
+            IssueTreeBuilder.toEntries(snapshot.issues(), boundProjectKey, boundPathPrefix));
+        if (unmapped > 0)
+        {
+            text += NLS.bind(Messages.IssuesView_Status_UnmappedCount, Long.valueOf(unmapped));
         }
         return text;
     }

@@ -83,6 +83,30 @@ public class IssueTreeBuilderTest
     }
 
     @Test
+    public void countUnmappedIsZeroWhenEveryEntryMapped()
+    {
+        List<IssueEntry> entries =
+            IssueTreeBuilder.toEntries(List.of(issue("p:src/A.bsl", "bsl:R1", 1)), "p", null);
+        assertEquals(0, IssueTreeBuilder.countUnmapped(entries));
+    }
+
+    /**
+     * Regression test for issue #4 point 5: the status line should surface how many issues are shown in the
+     * tree but not as Problems-view markers (i.e. did not map to a workspace file), using the same mapping
+     * the tree and marker sync use.
+     */
+    @Test
+    public void countUnmappedCountsOnlyEntriesWithoutARelativePath()
+    {
+        List<IssueEntry> entries = IssueTreeBuilder.toEntries(List.of(
+            issue("p:src/A.bsl", "bsl:R1", 1),
+            issue("other:src/X.bsl", "bsl:R1", 1),
+            issue("other:src/Y.bsl", "bsl:R1", 2)),
+            "p", null);
+        assertEquals(2, IssueTreeBuilder.countUnmapped(entries));
+    }
+
+    @Test
     public void toEntriesPreservesInputOrderAndCount()
     {
         List<SonarIssue> issues = List.of(

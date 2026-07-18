@@ -123,6 +123,33 @@ public class SonarIssuesViewTest
             (executable, srcDir, outputDir, configPath, monitor) -> outputDir.resolve("not-run-yet.sarif"));
     }
 
+    /**
+     * Regression test for issue #4 point 3: a multi-line error message (e.g. {@code ProcessAnalyzeRunner}'s
+     * "<reason>\nFull log: <path>\n<tail>") must show only its first line as the status headline, with the
+     * full message reserved for the tooltip and the on-demand Details dialog.
+     */
+    @Test
+    public void headlineOfReturnsOnlyTheFirstLineOfAMultilineMessage()
+    {
+        String message = "BSL Language Server ran out of memory. Increase 'BSL LS max heap'." + System.lineSeparator()
+            + "Full log: C:/state/bsl-report/analyze.log" + System.lineSeparator() + "...tail of the log...";
+
+        assertEquals("BSL Language Server ran out of memory. Increase 'BSL LS max heap'.",
+            SonarIssuesView.headlineOf(message));
+    }
+
+    @Test
+    public void headlineOfReturnsTheWholeMessageWhenItHasNoLineBreak()
+    {
+        assertEquals("boom", SonarIssuesView.headlineOf("boom"));
+    }
+
+    @Test
+    public void headlineOfReturnsEmptyStringForAnEmptyMessage()
+    {
+        assertEquals("", SonarIssuesView.headlineOf(""));
+    }
+
     private static String sarifWithFullDescription()
     {
         return """

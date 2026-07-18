@@ -53,6 +53,8 @@ public final class Messages extends NLS
     public static String IssuesView_Column_Message;
     public static String IssuesView_Column_Rule;
     public static String IssuesView_Column_Severity;
+    public static String IssuesView_Error_DetailsLink;
+    public static String IssuesView_Error_DetailsTitle;
     public static String IssuesView_FileMissing_Tooltip;
     public static String IssuesView_FilterText_Hint;
     public static String IssuesView_GroupByFile;
@@ -67,7 +69,9 @@ public final class Messages extends NLS
     public static String IssuesView_Status_Loaded;
     public static String IssuesView_Status_LoadedNoBranch;
     public static String IssuesView_Status_NotConfigured;
+    public static String IssuesView_Status_Running;
     public static String IssuesView_Status_Truncated;
+    public static String IssuesView_Status_UnmappedCount;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
     public static String MarkerSyncJob_Name;
@@ -122,6 +126,7 @@ public final class Messages extends NLS
     public static String PropertyPage_ScopeGroup;
     public static String PropertyPage_Subsystems;
     public static String PropertyPage_SubsystemsHint;
+    public static String RefreshJob_LocalName;
     public static String RefreshJob_Name;
     public static String RuleJob_Name;
     public static String RulePanel_LoadFailed;

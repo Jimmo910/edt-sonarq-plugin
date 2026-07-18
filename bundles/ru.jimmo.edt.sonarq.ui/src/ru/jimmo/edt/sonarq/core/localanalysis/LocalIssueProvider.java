@@ -81,6 +81,13 @@ public final class LocalIssueProvider implements IIssueProvider
     private static final String PROJECT_CONFIG_FILE_NAME = ".bsl-language-server.json"; //$NON-NLS-1$
     private static final String EMPTY_DESCRIPTION = ""; //$NON-NLS-1$
     private static final int MAX_DIR_NAME_LENGTH = 80;
+    // Coarse, two-phase progress for the Progress view. This class has no NLS/logging facility of its own
+    // (see the class javadoc), so - like ProcessAnalyzeRunner's out-of-memory hint - these are plain English
+    // literals rather than Messages keys.
+    private static final String PROGRESS_TASK_NAME = "Local BSL analysis"; //$NON-NLS-1$
+    private static final String PROGRESS_PREPARE_ENGINE = "Preparing analysis engine"; //$NON-NLS-1$
+    private static final String PROGRESS_ANALYZING = "Analyzing sources"; //$NON-NLS-1$
+    private static final int PROGRESS_TOTAL_WORK = 2;
 
     private final String projectKey;
     private final Path projectRoot;
@@ -159,18 +166,23 @@ public final class LocalIssueProvider implements IIssueProvider
     @Override
     public IssueSnapshot fetchIssues(IssueQuery query, IProgressMonitor monitor) throws SonarServerException
     {
+        beginProgress(monitor);
         try
         {
+            reportProgress(monitor, PROGRESS_PREPARE_ENGINE);
             Path executable = serverOverride != null
                 ? serverOverride
                 : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, monitor);
             configureHeapBestEffort();
+            tick(monitor);
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);
             Path projectConfig = findProjectConfigFile(srcDir);
             Path effectiveConfigPath = projectConfig != null ? projectConfig : configPath;
+            reportProgress(monitor, PROGRESS_ANALYZING);
             Path sarif = runner.analyze(executable, srcDir, outputDir, effectiveConfigPath, monitor);
+            tick(monitor);
             SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
                 projectRoot.toString());
             ruleCache = report.rules();
@@ -191,6 +203,53 @@ public final class LocalIssueProvider implements IIssueProvider
         {
             Thread.currentThread().interrupt();
             throw new SonarServerException(e.getMessage(), e);
+        }
+        finally
+        {
+            if (monitor != null)
+            {
+                monitor.done();
+            }
+        }
+    }
+
+    /**
+     * Starts the coarse, two-phase progress reporting for one {@link #fetchIssues} call, best-effort.
+     *
+     * @param monitor the progress monitor, or {@code null} to skip progress reporting entirely
+     */
+    private static void beginProgress(IProgressMonitor monitor)
+    {
+        if (monitor != null)
+        {
+            monitor.beginTask(PROGRESS_TASK_NAME, PROGRESS_TOTAL_WORK);
+        }
+    }
+
+    /**
+     * Reports the start of a named phase, best-effort.
+     *
+     * @param monitor the progress monitor, or {@code null} to skip progress reporting entirely
+     * @param phaseName the phase name to show, not {@code null}
+     */
+    private static void reportProgress(IProgressMonitor monitor, String phaseName)
+    {
+        if (monitor != null)
+        {
+            monitor.subTask(phaseName);
+        }
+    }
+
+    /**
+     * Marks one unit of the two-phase progress as complete, best-effort.
+     *
+     * @param monitor the progress monitor, or {@code null} to skip progress reporting entirely
+     */
+    private static void tick(IProgressMonitor monitor)
+    {
+        if (monitor != null)
+        {
+            monitor.worked(1);
         }
     }
 
