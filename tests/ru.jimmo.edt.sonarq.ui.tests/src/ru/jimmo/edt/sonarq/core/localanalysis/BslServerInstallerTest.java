@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -17,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -281,6 +283,80 @@ public class BslServerInstallerTest
         {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    public void configureHeapReplacesExistingXmxLineAndRemovesTheOldOne() throws IOException
+    {
+        Path cfg = stateDir.resolve("bsl-ls").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(cfg.getParent());
+        Files.writeString(cfg, "[JavaOptions]\njava-options=--other-flag\njava-options=-Xmx4g\n");
+
+        BslServerInstaller.configureHeap(stateDir, 8);
+
+        String content = Files.readString(cfg, StandardCharsets.UTF_8);
+        assertTrue("expected the new -Xmx8g line, got: " + content, content.contains("java-options=-Xmx8g"));
+        assertFalse("expected the old -Xmx4g line to be gone, got: " + content, content.contains("-Xmx4g"));
+        assertTrue("expected unrelated lines to survive, got: " + content, content.contains("--other-flag"));
+    }
+
+    @Test
+    public void configureHeapIsIdempotentAcrossRepeatedCalls() throws IOException
+    {
+        Path cfg = stateDir.resolve("bsl-ls").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(cfg.getParent());
+        Files.writeString(cfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+
+        BslServerInstaller.configureHeap(stateDir, 8);
+        BslServerInstaller.configureHeap(stateDir, 8);
+
+        List<String> lines = Files.readAllLines(cfg, StandardCharsets.UTF_8);
+        long xmxLines = lines.stream().filter(line -> line.contains("-Xmx")).count();
+        assertEquals(1, xmxLines);
+        assertTrue(lines.contains("java-options=-Xmx8g"));
+    }
+
+    @Test
+    public void configureHeapFindsCfgUnderLinuxLibAppLayout() throws IOException
+    {
+        Path cfg = stateDir.resolve("bsl-ls").resolve("lib").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(cfg.getParent());
+        Files.writeString(cfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+
+        BslServerInstaller.configureHeap(stateDir, 12);
+
+        String content = Files.readString(cfg, StandardCharsets.UTF_8);
+        assertTrue(content.contains("java-options=-Xmx12g"));
+        assertFalse(content.contains("-Xmx4g"));
+    }
+
+    @Test
+    public void configureHeapClampsBelowMinimumToOne() throws IOException
+    {
+        Path cfg = stateDir.resolve("bsl-ls").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(cfg.getParent());
+        Files.writeString(cfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+
+        BslServerInstaller.configureHeap(stateDir, 0);
+
+        String content = Files.readString(cfg, StandardCharsets.UTF_8);
+        assertTrue(content.contains("java-options=-Xmx1g"));
+    }
+
+    @Test
+    public void configureHeapOnMissingServerDirectoryDoesNotThrow() throws IOException
+    {
+        // stateDir exists but has no "bsl-ls" subdirectory at all (server never installed).
+        BslServerInstaller.configureHeap(stateDir, 8);
+        // No exception means success; nothing else to assert.
+    }
+
+    @Test
+    public void configureHeapOnMissingCfgFileDoesNotThrow() throws IOException
+    {
+        Files.createDirectories(stateDir.resolve("bsl-ls").resolve("app"));
+        BslServerInstaller.configureHeap(stateDir, 8);
+        // No exception means success; nothing else to assert.
     }
 
     @Test

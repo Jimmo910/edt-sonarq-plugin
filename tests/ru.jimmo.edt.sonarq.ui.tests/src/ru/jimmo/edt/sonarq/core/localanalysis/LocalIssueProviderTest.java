@@ -236,7 +236,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         IssueSnapshot snapshot = provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -255,7 +255,7 @@ public class LocalIssueProviderTest
     public void describeRuleBeforeAnyFetchReturnsEmptyRule() throws Exception
     {
         LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "",
-            new FakeRunner());
+            4, new FakeRunner());
 
         SonarRule rule = provider.describeRule("bsl:Unknown");
 
@@ -270,7 +270,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.ioFailure = new IOException("boom");
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         try
         {
@@ -289,7 +289,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.interruptedFailure = new InterruptedException("cancelled");
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         try
         {
@@ -308,7 +308,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.runtimeFailure = new OperationCanceledException();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
     }
@@ -319,7 +319,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -332,7 +332,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
         Path outputDir = runner.capturedOutputDir;
@@ -352,7 +352,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider =
-            new LocalIssueProvider("com.example:module/../..", projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider("com.example:module/../..", projectRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery("com.example:module/../..", null), new NullProgressMonitor());
 
@@ -367,7 +367,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -381,7 +381,7 @@ public class LocalIssueProviderTest
         Files.createDirectories(bareRoot);
         FakeRunner runner = new FakeRunner();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, bareRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, bareRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -392,7 +392,7 @@ public class LocalIssueProviderTest
     public void listBranchesIsAlwaysEmpty() throws Exception
     {
         LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "",
-            new FakeRunner());
+            4, new FakeRunner());
 
         assertTrue(provider.listBranches(PROJECT_KEY).isEmpty());
     }
@@ -401,7 +401,7 @@ public class LocalIssueProviderTest
     public void branchAnalysisIsNeverSupported() throws Exception
     {
         LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "",
-            new FakeRunner());
+            4, new FakeRunner());
 
         assertFalse(provider.branchAnalysisSupported());
     }
@@ -414,7 +414,7 @@ public class LocalIssueProviderTest
         Path configPath = stateDir.resolve("generated-checks-config.json");
         Files.writeString(configPath, "{}");
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -431,7 +431,7 @@ public class LocalIssueProviderTest
         Path configPath = stateDir.resolve("generated-checks-config.json");
         Files.writeString(configPath, "{}");
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -448,7 +448,7 @@ public class LocalIssueProviderTest
         Path configPath = stateDir.resolve("generated-checks-config.json");
         Files.writeString(configPath, "{}");
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, configPath, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -461,7 +461,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
         LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", runner);
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
 
         provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -480,7 +480,7 @@ public class LocalIssueProviderTest
         runner.sarifJson = sarifFixtureTwoIssuesOnLines10And11();
         ChangedLines onlyLine10 = changedLinesFixture(10);
         LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null,
-            "base", runner, (dir, ref) -> onlyLine10);
+            "base", 4, runner, (dir, ref) -> onlyLine10);
 
         IssueSnapshot snapshot = provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
 
@@ -495,7 +495,7 @@ public class LocalIssueProviderTest
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixtureTwoIssuesOnLines10And11();
         LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "",
-            runner, (dir, ref) ->
+            4, runner, (dir, ref) ->
             {
                 throw new AssertionError("changed-lines source must not be consulted for a blank base branch");
             });
@@ -504,5 +504,37 @@ public class LocalIssueProviderTest
 
         assertEquals(2, snapshot.issues().size());
         assertEquals(2, snapshot.serverTotal());
+    }
+
+    @Test
+    public void maxHeapGbAccessorReturnsConstructorValue()
+    {
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 9, new FakeRunner());
+
+        assertEquals(9, provider.maxHeapGb());
+    }
+
+    /**
+     * Regression test for issue #5: {@link LocalIssueProvider#fetchIssues} must rewrite the bundled
+     * launcher's pinned heap limit to {@code maxHeapGb} before running the analysis, so a large
+     * configuration does not keep hitting the 4 GB default baked into the jpackage app-image.
+     */
+    @Test
+    public void fetchIssuesConfiguresBundledHeapBeforeAnalysis() throws Exception
+    {
+        Path cfg = stateDir.resolve("bsl-ls").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(cfg.getParent());
+        Files.writeString(cfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixture();
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 9, runner);
+
+        provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+
+        String content = Files.readString(cfg, StandardCharsets.UTF_8);
+        assertTrue("expected the heap to be rewritten to 9g, got: " + content, content.contains("-Xmx9g"));
+        assertFalse("expected the old 4g default to be gone, got: " + content, content.contains("-Xmx4g"));
     }
 }

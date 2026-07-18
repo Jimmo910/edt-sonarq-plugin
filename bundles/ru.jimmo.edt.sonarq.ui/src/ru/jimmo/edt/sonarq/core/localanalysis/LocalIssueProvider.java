@@ -45,10 +45,12 @@ import ru.jimmo.edt.sonarq.core.scope.GitChangedLines;
  * mapping server-backed issues use for markers and navigation.
  *
  * <p>Every {@link #fetchIssues(IssueQuery, IProgressMonitor)} call resolves the language server
- * executable (a user override, or a managed download via {@link BslServerInstaller}), recreates a clean
- * report directory, runs the analysis and parses the resulting report, caching its rule descriptions for
- * {@link #describeRule(String)}. Branches are not a local-analysis concept: {@link #listBranches(String)}
- * always returns an empty list and {@link #branchAnalysisSupported()} always returns {@code false}.
+ * executable (a user override, or a managed download via {@link BslServerInstaller}), rewrites the
+ * bundled launcher's pinned JVM heap limit to {@link #maxHeapGb} (best-effort - see
+ * {@link BslServerInstaller#configureHeap}), recreates a clean report directory, runs the analysis and
+ * parses the resulting report, caching its rule descriptions for {@link #describeRule(String)}. Branches
+ * are not a local-analysis concept: {@link #listBranches(String)} always returns an empty list and
+ * {@link #branchAnalysisSupported()} always returns {@code false}.
  *
  * <p>A generated checks configuration ({@code configPath}) is passed to the language server, but a
  * project-local {@code .bsl-language-server.json} always takes priority — looked up first under
@@ -86,6 +88,7 @@ public final class LocalIssueProvider implements IIssueProvider
     private final Path serverOverride;
     private final Path configPath;
     private final String baseBranch;
+    private final int maxHeapGb;
     private final AnalyzeRunner runner;
     private final BiFunction<File, String, ChangedLines> changedLinesSource;
 
@@ -106,12 +109,14 @@ public final class LocalIssueProvider implements IIssueProvider
      *     directory, which is then passed explicitly instead
      * @param baseBranch the git base branch or commit to filter changed lines against, not {@code null};
      *     blank means no base-branch filtering
+     * @param maxHeapGb the maximum JVM heap, in gigabytes, to configure the bundled BSL Language Server
+     *     with before each analysis (see {@link BslServerInstaller#configureHeap})
      * @param runner runs the headless analysis, not {@code null}
      */
     public LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride,
-        Path configPath, String baseBranch, AnalyzeRunner runner)
+        Path configPath, String baseBranch, int maxHeapGb, AnalyzeRunner runner)
     {
-        this(projectKey, projectRoot, stateDir, serverOverride, configPath, baseBranch, runner,
+        this(projectKey, projectRoot, stateDir, serverOverride, configPath, baseBranch, maxHeapGb, runner,
             GitChangedLines::compute);
     }
 
@@ -130,12 +135,15 @@ public final class LocalIssueProvider implements IIssueProvider
      *     directory, which is then passed explicitly instead
      * @param baseBranch the git base branch or commit to filter changed lines against, not {@code null};
      *     blank means no base-branch filtering
+     * @param maxHeapGb the maximum JVM heap, in gigabytes, to configure the bundled BSL Language Server
+     *     with before each analysis (see {@link BslServerInstaller#configureHeap})
      * @param runner runs the headless analysis, not {@code null}
      * @param changedLinesSource resolves the changed lines for a work-tree directory and base ref, not
      *     {@code null}; production code always passes {@link GitChangedLines#compute(File, String)}
      */
     LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride, Path configPath,
-        String baseBranch, AnalyzeRunner runner, BiFunction<File, String, ChangedLines> changedLinesSource)
+        String baseBranch, int maxHeapGb, AnalyzeRunner runner,
+        BiFunction<File, String, ChangedLines> changedLinesSource)
     {
         this.projectKey = projectKey;
         this.projectRoot = projectRoot;
@@ -143,6 +151,7 @@ public final class LocalIssueProvider implements IIssueProvider
         this.serverOverride = serverOverride;
         this.configPath = configPath;
         this.baseBranch = baseBranch;
+        this.maxHeapGb = maxHeapGb;
         this.runner = runner;
         this.changedLinesSource = changedLinesSource;
     }
@@ -155,6 +164,7 @@ public final class LocalIssueProvider implements IIssueProvider
             Path executable = serverOverride != null
                 ? serverOverride
                 : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, monitor);
+            configureHeapBestEffort();
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
             recreateOutputDir(outputDir);
@@ -213,6 +223,19 @@ public final class LocalIssueProvider implements IIssueProvider
     public Path configPath()
     {
         return configPath;
+    }
+
+    /**
+     * The maximum BSL Language Server JVM heap, in gigabytes, this provider was built with.
+     *
+     * <p>Exposed so callers that build the provider (the refresh-inputs factory) can assert which
+     * preference value was resolved, without running a fetch.
+     *
+     * @return the configured maximum heap, in gigabytes
+     */
+    public int maxHeapGb()
+    {
+        return maxHeapGb;
     }
 
     @Override
@@ -278,6 +301,28 @@ public final class LocalIssueProvider implements IIssueProvider
         }
         Path atSrcDir = srcDir.resolve(PROJECT_CONFIG_FILE_NAME);
         return Files.exists(atSrcDir) ? atSrcDir : null;
+    }
+
+    /**
+     * Rewrites the bundled BSL Language Server's pinned heap limit to {@link #maxHeapGb}, best-effort.
+     *
+     * <p>A failure to rewrite the configuration file must never fail the analysis about to run: the
+     * language server would simply keep whatever heap limit it already had (see
+     * {@link BslServerInstaller#configureHeap}). This layer has no logging facility of its own (it must
+     * stay usable headless, without the UI bundle's plugin log), so any {@link IOException} is swallowed,
+     * matching the existing best-effort pattern used for {@link #saveDiagnosticsCatalog}.
+     */
+    private void configureHeapBestEffort()
+    {
+        try
+        {
+            BslServerInstaller.configureHeap(stateDir, maxHeapGb);
+        }
+        catch (IOException e)
+        {
+            // Best-effort heap tweak; the analysis itself must still run with whatever heap the bundled
+            // launcher already has configured.
+        }
     }
 
     /**

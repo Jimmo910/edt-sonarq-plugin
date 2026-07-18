@@ -58,6 +58,10 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
     private static final String SARIF_FILE_NAME = "bsl-ls.sarif"; //$NON-NLS-1$
     private static final String PUMP_THREAD_NAME = "sonarq-bsl-ls-output"; //$NON-NLS-1$
     private static final String EMPTY = ""; //$NON-NLS-1$
+    private static final String OUT_OF_MEMORY_MARKER = "OutOfMemoryError"; //$NON-NLS-1$
+    private static final String OUT_OF_MEMORY_HINT =
+        "BSL Language Server ran out of memory. Increase 'BSL LS max heap' in Settings -> SonarQube, " //$NON-NLS-1$
+            + "then retry."; //$NON-NLS-1$
 
     private static final long POLL_MILLIS = 500L;
     private static final long PUMP_JOIN_MILLIS = 2000L;
@@ -104,7 +108,10 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         int exit = process.exitValue();
         if (exit != 0)
         {
-            throw new IOException("The BSL Language Server exited with code " + exit //$NON-NLS-1$
+            String hint = logContainsOutOfMemory(logFile)
+                ? OUT_OF_MEMORY_HINT + System.lineSeparator()
+                : EMPTY;
+            throw new IOException(hint + "The BSL Language Server exited with code " + exit //$NON-NLS-1$
                 + " while analyzing the sources (this usually means it failed to parse a module)." //$NON-NLS-1$
                 + System.lineSeparator() + "Full log: " + logFile.toAbsolutePath() //$NON-NLS-1$
                 + System.lineSeparator() + tailLog(logFile));
@@ -155,6 +162,27 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         catch (IOException e)
         {
             return EMPTY;
+        }
+    }
+
+    /**
+     * Tells whether the log file's content mentions an {@code OutOfMemoryError}, so a non-zero exit caused
+     * by the bundled BSL Language Server running out of its (configurable, see
+     * {@code BslServerInstaller#configureHeap}) heap limit can be reported with an actionable hint instead
+     * of a bare exit code - the language server itself gives no other indication of the cause.
+     *
+     * @param logFile the merged output log file, not {@code null}
+     * @return {@code true} if the log file could be read and its content contains the marker
+     */
+    private static boolean logContainsOutOfMemory(Path logFile)
+    {
+        try
+        {
+            return Files.readString(logFile, StandardCharsets.UTF_8).contains(OUT_OF_MEMORY_MARKER);
+        }
+        catch (IOException e)
+        {
+            return false;
         }
     }
 

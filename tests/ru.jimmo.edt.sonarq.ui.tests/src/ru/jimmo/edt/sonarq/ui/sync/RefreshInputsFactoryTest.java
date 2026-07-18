@@ -59,6 +59,8 @@ public class RefreshInputsFactoryTest
 
     private String savedDisabled;
 
+    private String savedMaxHeapGb;
+
     @Before
     public void setUp() throws CoreException, BackingStoreException
     {
@@ -66,8 +68,10 @@ public class RefreshInputsFactoryTest
         savedUrl = node.get(PreferenceConstants.PREF_SERVER_URL, ""); //$NON-NLS-1$
         savedMode = node.get(PreferenceConstants.PREF_MODE, null);
         savedDisabled = node.get(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, null);
+        savedMaxHeapGb = node.get(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, null);
         node.remove(PreferenceConstants.PREF_SERVER_URL);
         node.remove(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS);
+        node.remove(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB);
         node.flush();
         project = ResourcesPlugin.getWorkspace().getRoot().getProject("refresh-inputs-test"); //$NON-NLS-1$
         if (!project.exists())
@@ -104,6 +108,14 @@ public class RefreshInputsFactoryTest
         else
         {
             node.put(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, savedDisabled);
+        }
+        if (savedMaxHeapGb == null)
+        {
+            node.remove(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB);
+        }
+        else
+        {
+            node.put(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, savedMaxHeapGb);
         }
         node.flush();
         if (project.exists())
@@ -285,6 +297,47 @@ public class RefreshInputsFactoryTest
         ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
         LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
         assertNull(provider.configPath());
+    }
+
+    @Test
+    public void localModeDefaultsMaxHeapGbToFourWhenPreferenceIsUnset() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+
+        assertEquals(4, provider.maxHeapGb());
+    }
+
+    @Test
+    public void localModeThreadsConfiguredMaxHeapGbIntoProvider() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.putInt(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, 12);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+
+        assertEquals(12, provider.maxHeapGb());
+    }
+
+    @Test
+    public void localModeClampsMaxHeapGbToOneWhenPreferenceIsNonPositive() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.putInt(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, 0);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+
+        assertEquals(1, provider.maxHeapGb());
     }
 
     @Test

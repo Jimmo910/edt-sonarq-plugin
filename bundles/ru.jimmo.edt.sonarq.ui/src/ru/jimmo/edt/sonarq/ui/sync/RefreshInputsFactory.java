@@ -119,12 +119,32 @@ public final class RefreshInputsFactory
             "", null); //$NON-NLS-1$
         Path override = overridePath.isBlank() ? null : Path.of(overridePath.trim());
         Path configPath = resolveConfigPath(stateDir, service, binding.subsystems());
+        int maxHeapGb = resolveMaxHeapGb(service);
         LocalIssueProvider provider = new LocalIssueProvider(projectKey, projectRoot, stateDir, override,
-            configPath, binding.baseBranch(), new ProcessAnalyzeRunner());
+            configPath, binding.baseBranch(), maxHeapGb, new ProcessAnalyzeRunner());
         // Local component keys are <projectKey>:src/... already project-relative, so the mapping key is the
         // same effective key fed to the provider and the mapping prefix is always empty (the binding prefix,
         // which describes a server repository layout, must not be stripped from local paths).
         return Optional.of(new ProjectRefreshInputs(project, binding, null, provider, projectKey, "")); //$NON-NLS-1$
+    }
+
+    /**
+     * Resolves {@link PreferenceConstants#PREF_BSL_LS_MAX_HEAP_GB}, clamped to a sane floor.
+     *
+     * <p>{@link IPreferencesService#getInt} already falls back to
+     * {@link PreferenceConstants#DEFAULT_BSL_LS_MAX_HEAP_GB} when the stored value is missing or not a
+     * number; the extra clamp only guards against a stored value that parses fine but is zero or negative
+     * (for example, a hand-edited preferences file), so the language server is never handed a nonsensical
+     * heap limit.
+     *
+     * @param service the preferences service to read the preference from, not {@code null}
+     * @return the maximum heap, in gigabytes, always at least 1
+     */
+    private static int resolveMaxHeapGb(IPreferencesService service)
+    {
+        int stored = service.getInt(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB,
+            PreferenceConstants.DEFAULT_BSL_LS_MAX_HEAP_GB, null);
+        return Math.max(1, stored);
     }
 
     /**

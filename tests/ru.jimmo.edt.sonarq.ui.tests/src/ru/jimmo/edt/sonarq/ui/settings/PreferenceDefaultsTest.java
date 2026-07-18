@@ -40,5 +40,7 @@ public class PreferenceDefaultsTest
         assertEquals("",
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, null,
                 null));
+        assertEquals("4",
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, null, null));
     }
 }
