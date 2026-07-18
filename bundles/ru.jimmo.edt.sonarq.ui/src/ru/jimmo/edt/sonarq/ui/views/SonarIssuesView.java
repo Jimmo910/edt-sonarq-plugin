@@ -18,7 +18,6 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.resources.WorkspaceJob;
 import org.eclipse.core.runtime.CoreException;
-import org.eclipse.core.runtime.ICoreRunnable;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -44,10 +43,8 @@ import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.TreeViewerColumn;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.custom.SashForm;
 import org.eclipse.swt.events.SelectionListener;
 import org.eclipse.swt.graphics.Color;
-import org.eclipse.swt.layout.FillLayout;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
@@ -66,13 +63,11 @@ import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchConfig;
 import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
-import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
@@ -91,16 +86,13 @@ import ru.jimmo.edt.sonarq.ui.suppress.SuppressionApplier;
 import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
 import ru.jimmo.edt.sonarq.ui.sync.RefreshInputsFactory;
 
-/** The SonarQube Issues view: an issue tree with a rule description pane. */
+/** The SonarQube Issues view: a full-height tree of issues grouped by file, rule or severity. */
 public class SonarIssuesView extends ViewPart
 {
     /** The view id. */
     public static final String VIEW_ID = "ru.jimmo.edt.sonarq.ui.views.issues"; //$NON-NLS-1$
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss"); //$NON-NLS-1$
-
-    /** Width, in pixels, of the sash between the issue tree and the rule description pane (issue #4). */
-    private static final int SASH_WIDTH = 6;
 
     private static final int LOCATION_COLUMN_WIDTH = 260;
     private static final int SEVERITY_COLUMN_WIDTH = 90;
@@ -125,9 +117,6 @@ public class SonarIssuesView extends ViewPart
     private long refreshGeneration;
     private int missingFileMarkerCount;
     private Job inFlightJob;
-    private RuleDescriptionPanel rulePanel;
-    private IIssueProvider currentProvider;
-    private String requestedRuleKey;
     private TreeColumn severityColumn;
     private TreeColumn ruleColumn;
 
@@ -139,16 +128,7 @@ public class SonarIssuesView extends ViewPart
 
         createBanner(root);
 
-        SashForm sash = new SashForm(root, SWT.VERTICAL);
-        sash.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-        // Issue #4: the default 1px sash is nearly invisible and hard to grab with the mouse; a wider sash
-        // is still a thin divider but is actually discoverable and draggable.
-        sash.setSashWidth(SASH_WIDTH);
-
-        Composite treePane = new Composite(sash, SWT.NONE);
-        treePane.setLayout(new GridLayout(1, false));
-
-        Text filterText = new Text(treePane, SWT.SEARCH | SWT.ICON_SEARCH | SWT.BORDER);
+        Text filterText = new Text(root, SWT.SEARCH | SWT.ICON_SEARCH | SWT.BORDER);
         filterText.setMessage(Messages.IssuesView_FilterText_Hint);
         filterText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         filterText.addModifyListener(event ->
@@ -157,32 +137,13 @@ public class SonarIssuesView extends ViewPart
             viewer.refresh();
         });
 
-        viewer = new TreeViewer(treePane, SWT.MULTI | SWT.H_SCROLL | SWT.V_SCROLL | SWT.FULL_SELECTION);
+        viewer = new TreeViewer(root, SWT.MULTI | SWT.H_SCROLL | SWT.V_SCROLL | SWT.FULL_SELECTION);
         viewer.getTree().setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
         viewer.getTree().setHeaderVisible(true);
         viewer.setContentProvider(new IssueTreeContentProvider());
         viewer.addFilter(new IssueViewerFilter(state));
         createColumns();
         ColumnViewerToolTipSupport.enableFor(viewer);
-
-        Composite detail = new Composite(sash, SWT.NONE);
-        detail.setLayout(new FillLayout());
-        rulePanel = new RuleDescriptionPanel(detail);
-        sash.setWeights(new int[] { 70, 30 });
-
-        viewer.addSelectionChangedListener(event ->
-        {
-            Object element = ((IStructuredSelection)event.getSelection()).getFirstElement();
-            if (element instanceof IssueEntry entry)
-            {
-                requestRuleDescription(entry.issue().ruleKey());
-            }
-            else
-            {
-                requestedRuleKey = null;
-                rulePanel.showMessage(""); //$NON-NLS-1$
-            }
-        });
 
         viewer.addDoubleClickListener(event ->
         {
@@ -649,7 +610,7 @@ public class SonarIssuesView extends ViewPart
         applyRunningStatus();
         showEngineDownloadHintIfNeeded();
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, refreshedProvider, result)));
+            result -> onRefreshFinished(generation, result)));
     }
 
     /**
@@ -857,55 +818,7 @@ public class SonarIssuesView extends ViewPart
             NLS.bind(Messages.Analysis_Confirm_MainBody, displayBranch));
     }
 
-    private void requestRuleDescription(String ruleKey)
-    {
-        requestedRuleKey = ruleKey;
-        if (currentProvider == null)
-        {
-            rulePanel.showMessage(""); //$NON-NLS-1$
-            return;
-        }
-        rulePanel.showMessage(Messages.RulePanel_Loading);
-        IIssueProvider provider = currentProvider;
-        ICoreRunnable runnable = monitor -> loadRuleDescription(provider, ruleKey);
-        Job.createSystem(Messages.RuleJob_Name, runnable).schedule();
-    }
-
-    private void loadRuleDescription(IIssueProvider provider, String ruleKey)
-    {
-        try
-        {
-            SonarRule rule = provider.describeRule(ruleKey);
-            Display.getDefault().asyncExec(() -> applyRuleIfCurrent(ruleKey, rule));
-        }
-        catch (SonarServerException e)
-        {
-            Display.getDefault().asyncExec(() -> applyFailureIfCurrent(ruleKey, e.getMessage()));
-        }
-        catch (RuntimeException e)
-        {
-            Platform.getLog(getClass()).error(e.getMessage(), e);
-            Display.getDefault().asyncExec(() -> applyFailureIfCurrent(ruleKey, String.valueOf(e)));
-        }
-    }
-
-    private void applyRuleIfCurrent(String ruleKey, SonarRule rule)
-    {
-        if (!rulePanel.isDisposed() && ruleKey.equals(requestedRuleKey))
-        {
-            rulePanel.showRule(rule);
-        }
-    }
-
-    private void applyFailureIfCurrent(String ruleKey, String detail)
-    {
-        if (!rulePanel.isDisposed() && ruleKey.equals(requestedRuleKey))
-        {
-            rulePanel.showMessage(NLS.bind(Messages.RulePanel_LoadFailed, detail));
-        }
-    }
-
-    private void onRefreshFinished(long generation, IIssueProvider refreshedProvider, RefreshResult result)
+    private void onRefreshFinished(long generation, RefreshResult result)
     {
         Display.getDefault().asyncExec(() ->
         {
@@ -917,7 +830,6 @@ public class SonarIssuesView extends ViewPart
             {
                 return;
             }
-            currentProvider = providerAfterRefresh(currentProvider, refreshedProvider, !result.isError());
             if (result.isError())
             {
                 applyErrorStatus(result.errorMessage());
@@ -985,29 +897,6 @@ public class SonarIssuesView extends ViewPart
         ((GridData)errorDetailsLink.getLayoutData()).exclude = !visible;
         errorDetailsLink.setVisible(visible);
         errorDetailsLink.getParent().layout();
-    }
-
-    /**
-     * Decides which provider should serve rule-description lookups once a refresh attempt finishes.
-     *
-     * <p>A refresh always builds a brand-new {@link IIssueProvider}; in local analysis mode its rule
-     * description cache starts empty and is populated only by that instance's own successful
-     * {@link IIssueProvider#fetchIssues} call. Switching to it before that call succeeds would make
-     * {@link #requestRuleDescription} miss the cache for a rule the previous, still-displayed snapshot
-     * already knows in full, silently degrading its description down to just the rule name (issue #4 point
-     * 6) - so the previous provider keeps serving lookups until the new one proves itself by completing
-     * successfully.
-     *
-     * @param previousProvider the provider that served lookups before this refresh, or {@code null} before
-     *     the first successful refresh has ever completed
-     * @param refreshedProvider the provider this refresh attempt built and ran, not {@code null}
-     * @param refreshSucceeded whether this refresh attempt completed successfully
-     * @return {@code refreshedProvider} when {@code refreshSucceeded}, {@code previousProvider} otherwise
-     */
-    static IIssueProvider providerAfterRefresh(IIssueProvider previousProvider, IIssueProvider refreshedProvider,
-        boolean refreshSucceeded)
-    {
-        return refreshSucceeded ? refreshedProvider : previousProvider;
     }
 
     /**

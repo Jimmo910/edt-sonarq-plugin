@@ -316,8 +316,7 @@ public class LocalIssueProviderTest
      * on Linux/GTK). Before assuming the pane's HTML/plain-text rendering is at fault, this confirms the
      * description CONTENT reaching {@link LocalIssueProvider#describeRule(String)} is genuinely non-empty
      * for a typical local-analysis rule - i.e. the bug is isolated to rendering (see
-     * {@code RuleDescriptionPanelTest} and {@code RuleHtmlTest}), not to empty or missing data from the
-     * local analyzer.
+     * {@code RuleHtmlTest}), not to empty or missing data from the local analyzer.
      */
     @Test
     public void describeRuleAfterFetchReturnsNonEmptyHtmlDescription() throws Exception
