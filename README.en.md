@@ -30,6 +30,10 @@ against the project's sources, with no server involved.
 - **Run analysis from the view** — a toolbar action (local scanner or CI trigger).
 - **Serverless local mode** — analysis by the BSL Language Server straight from the sources,
   with no SonarQube server and no Java install required.
+- **Configurable checks** — a "BSL Checks" page that groups checks by category (EDT validator
+  duplicates, needs-tuning, inappropriate, other) with an "Apply recommended profile" button.
+- **Local analysis scope** — per project: a base branch (show issues only on lines changed
+  relative to it) and a subsystem filter.
 
 ## Requirements
 
@@ -286,6 +290,11 @@ same content).
   single main branch.
 - In local mode the project's `src/` folder is analyzed (the conventional 1C configuration
   layout), or the project root when there is no `src/`.
+- The check-category mapping (the "BSL Checks" page) is a deliberately incomplete first cut
+  bundled with the plugin; it is refined by the community via pull requests (see
+  [issue #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
+- The subsystem filter matches by subsystem name (as the BSL Language Server itself does), so
+  same-named subsystems under different parents are filtered together.
 
 ## Feedback
 
