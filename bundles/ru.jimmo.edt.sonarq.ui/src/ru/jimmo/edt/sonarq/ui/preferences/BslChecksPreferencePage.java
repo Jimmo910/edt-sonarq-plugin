@@ -12,13 +12,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
@@ -50,6 +50,7 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.program.Program;
 import org.eclipse.swt.widgets.Button;
+import org.eclipse.swt.widgets.Combo;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
@@ -75,27 +76,36 @@ import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 
 /**
- * Workspace preference page for choosing which BSL Language Server diagnostics local analysis reports,
- * grouped by {@link DiagnosticCategory}.
+ * Workspace preference page for choosing which BSL Language Server diagnostics local analysis reports.
  *
  * <p>The displayed set of diagnostics is the union of the bundled {@link DiagnosticCategories} catalog
  * (shipped with the plugin, always available) and any previously fetched catalog cached in the plugin
  * state directory by {@link DiagnosticsCatalog} - written automatically after every successful local
  * analysis run, or on demand by the <em>Fetch Checks List</em> button on this page, which runs the language
  * server against an empty temporary source directory (yielding zero issues but the full rule catalog).
- * Merging the two means this page works fully grouped even before the user has ever fetched or analyzed
+ * Merging the two means this page works fully populated even before the user has ever fetched or analyzed
  * anything (see {@link #mergeDisplayedKeys(DiagnosticCategories, List)}). A diagnostic is disabled when its
  * key is <em>unchecked</em> in the tree; the set of disabled keys is stored, comma-joined, in
- * {@link PreferenceConstants#PREF_DISABLED_BSL_DIAGNOSTICS} - unchanged from the previous flat-table
- * version of this page, so existing preference values remain valid.
+ * {@link PreferenceConstants#PREF_DISABLED_BSL_DIAGNOSTICS} - unchanged from the previous flat-table and
+ * curated-category versions of this page, so existing preference values remain valid.
+ *
+ * <p>The tree groups diagnostics by the BSL Language Server's own taxonomy, chosen from the "Group by"
+ * combo ({@link GroupBy}): by {@link GroupBy#TYPE type}, by {@link GroupBy#TAG tag} (a multi-tag diagnostic
+ * appears once under each of its tags, as a distinct {@link TagLeaf} per tag), or {@link GroupBy#NONE not
+ * grouped at all}. The curated {@link DiagnosticCategory} is no longer a visual tree group - it still drives
+ * {@link #applyRecommendedProfile()} and the EDT-duplicate tooltip ({@link #rowTooltip(Object)}), read via
+ * {@link DiagKey#category()}.
  *
  * <p>The checked state of every row is derived from a single {@code disabledKeys} model set through an
  * {@link ICheckStateProvider}, rather than tracked as independent widget state: this keeps <em>Enable
- * All</em>/<em>Disable All</em>/<em>Apply Recommended Profile</em> and a catalog refresh trivially correct
- * regardless of the current text filter or tree expansion, since the filter only ever hides rows in the
- * underlying {@link Tree} widget and never touches the model. A category (parent) node reports itself
- * checked when at least one child is enabled, and grayed when its children are a mix of enabled and
- * disabled; toggling a category's checkbox enables or disables every diagnostic in that category.
+ * All</em>/<em>Disable All</em>/<em>Apply Recommended Profile</em> and a catalog refresh or grouping change
+ * trivially correct regardless of the current text filter or tree expansion, since the filter only ever
+ * hides rows in the underlying {@link Tree} widget and never touches the model. A group (parent) node
+ * reports itself checked when at least one of its leaves is enabled, and grayed when its leaves are a mix
+ * of enabled and disabled; toggling a group's checkbox enables or disables every diagnostic in that group.
+ * Because a leaf's checked state always derives from the underlying diagnostic key rather than the leaf
+ * object itself, toggling one {@link TagLeaf} of a multi-tag diagnostic and refreshing reflects under every
+ * other tag it appears under too.
  */
 public class BslChecksPreferencePage extends PreferencePage implements IWorkbenchPreferencePage
 {
@@ -103,6 +113,8 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
         "https://1c-syntax.github.io/bsl-language-server/diagnostics/"; //$NON-NLS-1$
     private static final String EMPTY_TEXT = ""; //$NON-NLS-1$
     private static final String LIST_SEPARATOR = ","; //$NON-NLS-1$
+    private static final String TAG_SEPARATOR = ", "; //$NON-NLS-1$
+    private static final String NO_TAGS_DISPLAY = "-"; //$NON-NLS-1$
     private static final String TEMP_SRC_PREFIX = "sonarq-bsl-checks-src"; //$NON-NLS-1$
     private static final String TEMP_REPORT_PREFIX = "sonarq-bsl-checks-report"; //$NON-NLS-1$
     private static final String CATALOG_PROJECT_KEY = "bsl-checks-catalog"; //$NON-NLS-1$
@@ -120,9 +132,13 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
 
     private List<DiagKey> allDiagKeys = List.of();
 
-    private List<CategoryNode> categoryNodes = List.of();
+    private List<Object> rootNodes = List.of();
+
+    private GroupBy groupBy = GroupBy.TYPE;
 
     private Text filterText;
+
+    private Combo groupByCombo;
 
     private Composite treeArea;
 
@@ -143,26 +159,66 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     private Button fetchButton;
 
     /**
-     * One diagnostic leaf tree node: a displayed key with its resolved name, category and (for
-     * {@link DiagnosticCategory#EDT_DUPLICATE}) the id of the EDT built-in check it duplicates.
+     * How the tree groups displayed diagnostics: a purely visual choice made from the "Group by" combo,
+     * distinct from the curated {@link DiagnosticCategory}, which no longer groups the tree but still
+     * drives {@link #applyRecommendedProfile()} and the EDT-duplicate tooltip.
+     */
+    private enum GroupBy
+    {
+        /** No parent nodes: every diagnostic is a root-level leaf. */
+        NONE,
+
+        /** One parent per distinct BSL Language Server diagnostic type. */
+        TYPE,
+
+        /** One parent per distinct BSL Language Server diagnostic tag; a multi-tag diagnostic appears once
+         *  under each of its tags. */
+        TAG
+    }
+
+    /**
+     * One diagnostic leaf: a displayed key with its resolved name, category, BSL Language Server type and
+     * tags, and (for {@link DiagnosticCategory#EDT_DUPLICATE}) the id of the EDT built-in check it
+     * duplicates.
      *
      * @param key the diagnostic (rule) key, not {@code null}
      * @param name the resolved human-readable name, not {@code null}
-     * @param category the resolved category, not {@code null}
+     * @param category the resolved reason category, not {@code null}; not a visual tree group (see
+     *     {@link GroupBy}), but still drives {@link #applyRecommendedProfile()} and the EDT-duplicate
+     *     tooltip
      * @param edtCheck the duplicated EDT check id, or {@code null} when {@code category} is not
      *     {@link DiagnosticCategory#EDT_DUPLICATE}
+     * @param type the BSL Language Server's own diagnostic type, e.g. {@code Code smell}, not {@code null};
+     *     {@code ""} when unknown
+     * @param tags the BSL Language Server's own diagnostic tags, not {@code null}; empty when unknown
      */
-    record DiagKey(String key, String name, DiagnosticCategory category, String edtCheck)
+    record DiagKey(String key, String name, DiagnosticCategory category, String edtCheck, String type,
+        List<String> tags)
     {
     }
 
     /**
-     * A category (parent) tree node grouping its child {@link DiagKey} leaves.
+     * A group (parent) tree node, used for {@link GroupBy#TYPE} and {@link GroupBy#TAG}: its label is the
+     * grouped type or tag, and its children are {@link DiagKey} leaves ({@link GroupBy#TYPE}) or
+     * {@link TagLeaf} leaves ({@link GroupBy#TAG}).
      *
-     * @param category the grouped category, not {@code null}
-     * @param children the diagnostics in this category, not {@code null}, not empty
+     * @param label the group label: a raw BSL type, a raw tag, or {@link Messages#BslChecksPage_NoTags},
+     *     not {@code null}
+     * @param children the leaves in this group, not {@code null}, not empty
      */
-    private record CategoryNode(DiagnosticCategory category, List<DiagKey> children)
+    private record GroupNode(String label, List<Object> children)
+    {
+    }
+
+    /**
+     * One (tag, diagnostic) pairing: a distinct leaf node object used for {@link GroupBy#TAG}, so a
+     * multi-tag diagnostic can appear as several distinct tree elements (one per tag) while its checkbox
+     * state is always derived from the single underlying {@link #diagKey()}.
+     *
+     * @param tag the tag this leaf appears under, not {@code null}
+     * @param diagKey the underlying diagnostic, not {@code null}
+     */
+    private record TagLeaf(String tag, DiagKey diagKey)
     {
     }
 
@@ -177,6 +233,15 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     {
         Composite composite = new Composite(parent, SWT.NONE);
         composite.setLayout(new GridLayout(2, false));
+
+        Label groupByLabel = new Label(composite, SWT.NONE);
+        groupByLabel.setText(Messages.BslChecksPage_GroupByLabel);
+
+        groupByCombo = new Combo(composite, SWT.READ_ONLY);
+        groupByCombo.setItems(new String[] {Messages.BslChecksPage_GroupBy_None, Messages.BslChecksPage_GroupBy_Type,
+            Messages.BslChecksPage_GroupBy_Tag});
+        groupByCombo.select(groupBy.ordinal());
+        groupByCombo.addSelectionListener(SelectionListener.widgetSelectedAdapter(event -> onGroupByChanged()));
 
         filterText = new Text(composite, SWT.SEARCH | SWT.ICON_SEARCH | SWT.BORDER);
         filterText.setMessage(Messages.BslChecksPage_Filter_Hint);
@@ -212,9 +277,19 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     }
 
     /**
-     * Builds the checkbox tree (columns Key/Name; category parents grouping diagnostic leaves, filtered by
-     * {@link #filterText}) and the hint label shown instead when no diagnostic is displayed, stacked in
-     * {@link #treeArea}.
+     * Reacts to a "Group by" combo selection change: rebuilds the tree under the newly selected grouping
+     * mode. Neither the displayed diagnostic set nor {@link #disabledKeys} is affected.
+     */
+    private void onGroupByChanged()
+    {
+        groupBy = GroupBy.values()[groupByCombo.getSelectionIndex()];
+        rebuildDisplayedKeys();
+    }
+
+    /**
+     * Builds the checkbox tree (columns Key/Name; group parents grouping diagnostic leaves per
+     * {@link #groupBy}, filtered by {@link #filterText}) and the hint label shown instead when no
+     * diagnostic is displayed, stacked in {@link #treeArea}.
      *
      * @param parent the page composite, not {@code null}
      */
@@ -238,17 +313,17 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             @Override
             public String getText(Object element)
             {
-                if (element instanceof CategoryNode categoryNode)
+                if (element instanceof GroupNode groupNode)
                 {
-                    return categoryTitle(categoryNode.category());
+                    return groupNode.label();
                 }
-                return ((DiagKey)element).key();
+                return diagKeyOf(element).key();
             }
 
             @Override
             public String getToolTipText(Object element)
             {
-                return evidenceTooltip(element);
+                return rowTooltip(element);
             }
         });
 
@@ -260,17 +335,17 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             @Override
             public String getText(Object element)
             {
-                if (element instanceof CategoryNode categoryNode)
+                if (element instanceof GroupNode groupNode)
                 {
-                    return groupCounterText(categoryNode);
+                    return groupCounterText(groupNode);
                 }
-                return ((DiagKey)element).name();
+                return diagKeyOf(element).name();
             }
 
             @Override
             public String getToolTipText(Object element)
             {
-                return evidenceTooltip(element);
+                return rowTooltip(element);
             }
         });
 
@@ -279,15 +354,15 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             @Override
             public Object[] getElements(Object inputElement)
             {
-                return categoryNodes.toArray();
+                return rootNodes.toArray();
             }
 
             @Override
             public Object[] getChildren(Object parentElement)
             {
-                if (parentElement instanceof CategoryNode categoryNode)
+                if (parentElement instanceof GroupNode groupNode)
                 {
-                    return categoryNode.children().toArray();
+                    return groupNode.children().toArray();
                 }
                 return new Object[0];
             }
@@ -295,18 +370,24 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             @Override
             public Object getParent(Object element)
             {
-                if (!(element instanceof DiagKey diagKey))
+                if (element instanceof GroupNode)
                 {
                     return null;
                 }
-                return categoryNodes.stream().filter(node -> node.children().contains(diagKey)).findFirst()
-                    .orElse(null);
+                for (Object root : rootNodes)
+                {
+                    if (root instanceof GroupNode groupNode && groupNode.children().contains(element))
+                    {
+                        return groupNode;
+                    }
+                }
+                return null;
             }
 
             @Override
             public boolean hasChildren(Object element)
             {
-                return element instanceof CategoryNode categoryNode && !categoryNode.children().isEmpty();
+                return element instanceof GroupNode groupNode && !groupNode.children().isEmpty();
             }
         });
         treeViewer.addFilter(new ViewerFilter()
@@ -319,11 +400,12 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
                 {
                     return true;
                 }
-                if (element instanceof CategoryNode categoryNode)
+                if (element instanceof GroupNode groupNode)
                 {
-                    return categoryNode.children().stream().anyMatch(child -> matchesFilter(child, query));
+                    return groupNode.children().stream()
+                        .anyMatch(child -> matchesFilter(diagKeyOf(child), query));
                 }
-                return matchesFilter((DiagKey)element, query);
+                return matchesFilter(diagKeyOf(element), query);
             }
         });
         treeViewer.setCheckStateProvider(new ICheckStateProvider()
@@ -331,24 +413,25 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             @Override
             public boolean isChecked(Object element)
             {
-                if (element instanceof CategoryNode categoryNode)
+                if (element instanceof GroupNode groupNode)
                 {
-                    return categoryNode.children().stream().anyMatch(child -> !disabledKeys.contains(child.key()));
+                    return groupNode.children().stream()
+                        .anyMatch(child -> !disabledKeys.contains(diagKeyOf(child).key()));
                 }
-                return !disabledKeys.contains(((DiagKey)element).key());
+                return !disabledKeys.contains(diagKeyOf(element).key());
             }
 
             @Override
             public boolean isGrayed(Object element)
             {
-                if (!(element instanceof CategoryNode categoryNode))
+                if (!(element instanceof GroupNode groupNode))
                 {
                     return false;
                 }
-                boolean anyEnabled =
-                    categoryNode.children().stream().anyMatch(child -> !disabledKeys.contains(child.key()));
-                boolean anyDisabled =
-                    categoryNode.children().stream().anyMatch(child -> disabledKeys.contains(child.key()));
+                boolean anyEnabled = groupNode.children().stream()
+                    .anyMatch(child -> !disabledKeys.contains(diagKeyOf(child).key()));
+                boolean anyDisabled = groupNode.children().stream()
+                    .anyMatch(child -> disabledKeys.contains(diagKeyOf(child).key()));
                 return anyEnabled && anyDisabled;
             }
         });
@@ -356,26 +439,43 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
         {
             Object element = event.getElement();
             boolean checked = event.getChecked();
-            if (element instanceof CategoryNode categoryNode)
+            if (element instanceof GroupNode groupNode)
             {
-                for (DiagKey child : categoryNode.children())
+                for (Object child : groupNode.children())
                 {
-                    setEnabled(child.key(), checked);
+                    setEnabled(diagKeyOf(child).key(), checked);
                 }
             }
             else
             {
-                setEnabled(((DiagKey)element).key(), checked);
+                setEnabled(diagKeyOf(element).key(), checked);
             }
             // A single native checkbox toggle only updates the clicked row's own widget; refreshing keeps
-            // the parent category's derived checked/grayed indicator (and, for a group toggle, every
-            // sibling leaf) in sync with the disabledKeys model.
+            // the parent group's derived checked/grayed indicator (and, for a group toggle, every sibling
+            // leaf - plus, in tag grouping, every other tag the same diagnostic appears under) in sync with
+            // the disabledKeys model.
             treeViewer.refresh();
             updateCounter();
         });
 
         hintLabel = new Label(treeArea, SWT.WRAP);
         hintLabel.setText(Messages.BslChecksPage_Empty);
+    }
+
+    /**
+     * Resolves the underlying {@link DiagKey} of a tree leaf, whichever grouping mode produced it.
+     *
+     * @param leaf a tree leaf: a {@link DiagKey} ({@link GroupBy#NONE}/{@link GroupBy#TYPE}) or a
+     *     {@link TagLeaf} ({@link GroupBy#TAG})
+     * @return the underlying diagnostic, never {@code null}
+     */
+    private static DiagKey diagKeyOf(Object leaf)
+    {
+        if (leaf instanceof TagLeaf tagLeaf)
+        {
+            return tagLeaf.diagKey();
+        }
+        return (DiagKey)leaf;
     }
 
     /**
@@ -392,51 +492,54 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     }
 
     /**
-     * The tooltip for an {@link DiagnosticCategory#EDT_DUPLICATE} leaf, naming the EDT check it duplicates.
+     * The tooltip for a diagnostic leaf: its BSL Language Server type and tags, plus (for
+     * {@link DiagnosticCategory#EDT_DUPLICATE}) the EDT check it duplicates.
      *
-     * @param element the tree element, may be a {@link CategoryNode} or a {@link DiagKey}
-     * @return the tooltip text, or {@code null} when {@code element} is not an EDT-duplicate leaf
+     * @param element the tree element, a {@link GroupNode} or a leaf
+     * @return the tooltip text, or {@code null} for a group node
      */
-    private static String evidenceTooltip(Object element)
+    private static String rowTooltip(Object element)
     {
-        if (element instanceof DiagKey diagKey && diagKey.category() == DiagnosticCategory.EDT_DUPLICATE)
+        if (element instanceof GroupNode)
         {
-            return NLS.bind(Messages.BslChecksPage_EvidenceTooltip, diagKey.edtCheck());
+            return null;
         }
-        return null;
+        DiagKey diagKey = diagKeyOf(element);
+        StringBuilder tooltip = new StringBuilder();
+        tooltip.append(NLS.bind(Messages.BslChecksPage_RowTooltip_Type, diagKey.type()));
+        tooltip.append('\n');
+        tooltip.append(NLS.bind(Messages.BslChecksPage_RowTooltip_Tags, tagsDisplay(diagKey.tags())));
+        if (diagKey.category() == DiagnosticCategory.EDT_DUPLICATE)
+        {
+            tooltip.append('\n');
+            tooltip.append(NLS.bind(Messages.BslChecksPage_EvidenceTooltip, diagKey.edtCheck()));
+        }
+        return tooltip.toString();
     }
 
     /**
-     * The localized title of a category, shown in the Key column of its parent tree row.
+     * Renders a diagnostic's tags for display.
      *
-     * @param category the category, not {@code null}
-     * @return the localized title, never {@code null}
+     * @param tags the diagnostic's tags, not {@code null}
+     * @return {@link #NO_TAGS_DISPLAY} when {@code tags} is empty, otherwise its elements joined with
+     *     {@link #TAG_SEPARATOR}
      */
-    private static String categoryTitle(DiagnosticCategory category)
+    private static String tagsDisplay(List<String> tags)
     {
-        switch (category)
-        {
-            case EDT_DUPLICATE:
-                return Messages.BslChecksPage_Cat_EdtDuplicate;
-            case NEEDS_TUNING:
-                return Messages.BslChecksPage_Cat_NeedsTuning;
-            case INAPPROPRIATE:
-                return Messages.BslChecksPage_Cat_Inappropriate;
-            default:
-                return Messages.BslChecksPage_Cat_General;
-        }
+        return tags.isEmpty() ? NO_TAGS_DISPLAY : String.join(TAG_SEPARATOR, tags);
     }
 
     /**
-     * The "disabled n of m" counter shown in the Name column of a category's parent tree row.
+     * The "disabled n of m" counter shown in the Name column of a group's parent tree row.
      *
-     * @param categoryNode the category node, not {@code null}
+     * @param groupNode the group node, not {@code null}
      * @return the localized counter text, never {@code null}
      */
-    private String groupCounterText(CategoryNode categoryNode)
+    private String groupCounterText(GroupNode groupNode)
     {
-        long disabled = categoryNode.children().stream().filter(child -> disabledKeys.contains(child.key())).count();
-        return NLS.bind(Messages.BslChecksPage_GroupCounter, disabled, categoryNode.children().size());
+        long disabled =
+            groupNode.children().stream().filter(child -> disabledKeys.contains(diagKeyOf(child).key())).count();
+        return NLS.bind(Messages.BslChecksPage_GroupCounter, disabled, groupNode.children().size());
     }
 
     /**
@@ -513,13 +616,13 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     }
 
     /**
-     * Merges the bundled category catalog with {@link #fetchedCatalog} into {@link #allDiagKeys}, groups
-     * the result into {@link #categoryNodes} and reloads the tree.
+     * Merges the bundled category catalog with {@link #fetchedCatalog} into {@link #allDiagKeys}, arranges
+     * the result into {@link #rootNodes} per the current {@link #groupBy} and reloads the tree.
      */
     private void rebuildDisplayedKeys()
     {
         allDiagKeys = mergeDisplayedKeys(categories, fetchedCatalog);
-        categoryNodes = groupByCategory(allDiagKeys);
+        rootNodes = buildRootNodes(allDiagKeys, groupBy);
         reloadTree();
     }
 
@@ -527,11 +630,11 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
      * Merges the bundled category catalog with a previously fetched diagnostics catalog into the flat,
      * key-sorted list of diagnostics to display.
      *
-     * <p>The bundled catalog contributes every known key's category and (for
-     * {@link DiagnosticCategory#EDT_DUPLICATE}) its EDT evidence; a diagnostic's name comes from the
+     * <p>The bundled catalog contributes every known key's category, BSL Language Server type/tags and
+     * (for {@link DiagnosticCategory#EDT_DUPLICATE}) its EDT evidence; a diagnostic's name comes from the
      * bundled catalog when known, otherwise from the fetched catalog, falling back to the key itself. A key
-     * present only in the fetched catalog is displayed under {@link DiagnosticCategory#GENERAL}, since the
-     * bundled catalog has no classification for it.
+     * present only in the fetched catalog is displayed under {@link DiagnosticCategory#GENERAL} with an
+     * empty type and no tags, since the bundled catalog has no classification for it.
      *
      * @param categories the bundled category catalog, not {@code null}
      * @param fetched the previously fetched diagnostics catalog, not {@code null}
@@ -558,33 +661,123 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             {
                 name = fetchedNames.getOrDefault(key, key);
             }
-            result.add(new DiagKey(key, name, categories.categoryOf(key), categories.edtCheckOf(key)));
+            result.add(new DiagKey(key, name, categories.categoryOf(key), categories.edtCheckOf(key),
+                categories.typeOf(key), categories.tagsOf(key)));
         }
         return result;
     }
 
     /**
-     * Groups a key-sorted diagnostic list into category tree nodes, in {@link DiagnosticCategory}
-     * declaration order, omitting categories with no displayed diagnostic.
+     * Groups diagnostic keys by their BSL Language Server type: the pure, SWT-free core of the
+     * {@link GroupBy#TYPE} tree. A diagnostic contributes to exactly one entry.
      *
      * @param diagKeys the diagnostics to group, not {@code null}
-     * @return the non-empty category nodes, in category declaration order, never {@code null}
+     * @return the diagnostic keys grouped by type, type-sorted, never {@code null}
      */
-    private static List<CategoryNode> groupByCategory(List<DiagKey> diagKeys)
+    static Map<String, List<String>> groupKeysByType(List<DiagKey> diagKeys)
     {
-        Map<DiagnosticCategory, List<DiagKey>> byCategory = new EnumMap<>(DiagnosticCategory.class);
+        Map<String, List<String>> result = new TreeMap<>();
         for (DiagKey diagKey : diagKeys)
         {
-            byCategory.computeIfAbsent(diagKey.category(), key -> new ArrayList<>()).add(diagKey);
+            result.computeIfAbsent(diagKey.type(), type -> new ArrayList<>()).add(diagKey.key());
         }
-        List<CategoryNode> nodes = new ArrayList<>();
-        for (DiagnosticCategory category : DiagnosticCategory.values())
+        return result;
+    }
+
+    /**
+     * Groups diagnostic keys by their BSL Language Server tags: the pure, SWT-free core of the
+     * {@link GroupBy#TAG} tree. A diagnostic with several tags contributes to each of their entries; a
+     * diagnostic with no tags contributes to the {@link Messages#BslChecksPage_NoTags} entry instead.
+     *
+     * @param diagKeys the diagnostics to group, not {@code null}
+     * @return the diagnostic keys grouped by tag (plus the no-tags bucket), tag-sorted, never {@code null}
+     */
+    static Map<String, List<String>> groupKeysByTag(List<DiagKey> diagKeys)
+    {
+        Map<String, List<String>> result = new TreeMap<>();
+        for (DiagKey diagKey : diagKeys)
         {
-            List<DiagKey> children = byCategory.get(category);
-            if (children != null && !children.isEmpty())
+            List<String> tags = diagKey.tags();
+            if (tags.isEmpty())
             {
-                nodes.add(new CategoryNode(category, List.copyOf(children)));
+                result.computeIfAbsent(Messages.BslChecksPage_NoTags, tag -> new ArrayList<>()).add(diagKey.key());
             }
+            else
+            {
+                for (String tag : tags)
+                {
+                    result.computeIfAbsent(tag, key -> new ArrayList<>()).add(diagKey.key());
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Indexes diagnostics by key, for {@link #buildGroupNodes(Map, List, boolean)} to resolve a grouped key
+     * back to its full {@link DiagKey}.
+     *
+     * @param diagKeys the diagnostics to index, not {@code null}
+     * @return the diagnostics keyed by {@link DiagKey#key()}, never {@code null}
+     */
+    private static Map<String, DiagKey> indexByKey(List<DiagKey> diagKeys)
+    {
+        Map<String, DiagKey> byKey = new HashMap<>();
+        for (DiagKey diagKey : diagKeys)
+        {
+            byKey.put(diagKey.key(), diagKey);
+        }
+        return byKey;
+    }
+
+    /**
+     * Builds the tree's root nodes for the current {@link GroupBy} mode: group parents for
+     * {@link GroupBy#TYPE} and {@link GroupBy#TAG}, or the flat, key-sorted leaves themselves for
+     * {@link GroupBy#NONE}.
+     *
+     * @param diagKeys the diagnostics to arrange, not {@code null}
+     * @param groupBy the grouping mode, not {@code null}
+     * @return the root-level tree elements, never {@code null}
+     */
+    private static List<Object> buildRootNodes(List<DiagKey> diagKeys, GroupBy groupBy)
+    {
+        switch (groupBy)
+        {
+            case TYPE:
+                return buildGroupNodes(groupKeysByType(diagKeys), diagKeys, false);
+            case TAG:
+                return buildGroupNodes(groupKeysByTag(diagKeys), diagKeys, true);
+            default:
+                return List.copyOf(diagKeys);
+        }
+    }
+
+    /**
+     * Converts a label-to-keys grouping into {@link GroupNode}s with fully resolved leaves.
+     *
+     * @param keysByLabel the diagnostic keys grouped by (type or tag) label, label-sorted, not {@code null}
+     * @param diagKeys the full diagnostic list, used to resolve each key back to its {@link DiagKey}, not
+     *     {@code null}
+     * @param wrapAsTagLeaf {@code true} to wrap each leaf as a {@link TagLeaf} (tag grouping, where the same
+     *     diagnostic can appear under several labels), {@code false} to use the {@link DiagKey} itself
+     *     directly (type grouping, single membership)
+     * @return the group nodes, in {@code keysByLabel} order, never {@code null}
+     */
+    private static List<Object> buildGroupNodes(Map<String, List<String>> keysByLabel, List<DiagKey> diagKeys,
+        boolean wrapAsTagLeaf)
+    {
+        Map<String, DiagKey> byKey = indexByKey(diagKeys);
+        List<Object> nodes = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : keysByLabel.entrySet())
+        {
+            String label = entry.getKey();
+            List<Object> children = new ArrayList<>();
+            for (String key : entry.getValue())
+            {
+                DiagKey diagKey = byKey.get(key);
+                children.add(wrapAsTagLeaf ? new TagLeaf(label, diagKey) : diagKey);
+            }
+            nodes.add(new GroupNode(label, children));
         }
         return nodes;
     }
@@ -603,13 +796,13 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     }
 
     /**
-     * Re-populates the tree from {@link #categoryNodes}. Since the checked state is derived entirely from
+     * Re-populates the tree from {@link #rootNodes}. Since the checked state is derived entirely from
      * {@link #disabledKeys} (a set of diagnostic keys, not tree rows), replacing the input this way
      * automatically preserves whichever disabled keys are still present in the new displayed set.
      */
     private void reloadTree()
     {
-        treeViewer.setInput(categoryNodes);
+        treeViewer.setInput(rootNodes);
         updateEmptyState();
         updateCounter();
     }

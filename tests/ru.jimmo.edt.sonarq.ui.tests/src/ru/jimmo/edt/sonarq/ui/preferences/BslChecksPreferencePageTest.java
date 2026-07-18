@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -20,6 +21,7 @@ import ru.jimmo.edt.sonarq.core.checks.CategoryEntry;
 import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategories;
 import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategory;
 import ru.jimmo.edt.sonarq.core.localanalysis.DiagnosticsCatalog;
+import ru.jimmo.edt.sonarq.ui.Messages;
 
 /** Tests for the pure (SWT-free) parts of {@link BslChecksPreferencePage}. */
 public class BslChecksPreferencePageTest
@@ -73,5 +75,58 @@ public class BslChecksPreferencePageTest
         BslChecksPreferencePage.DiagKey fetchedOnly = merged.stream()
             .filter(diagKey -> diagKey.key().equals("TotallyNewDiagnosticXYZ")).findFirst().orElseThrow();
         assertEquals(DiagnosticCategory.GENERAL, fetchedOnly.category());
+        // A key unknown to the bundled catalog has no known type or tags either.
+        assertEquals("", fetchedOnly.type());
+        assertTrue(fetchedOnly.tags().isEmpty());
+    }
+
+    @Test
+    public void mergeDisplayedKeysCarriesTypeAndTagsFromBundledCatalog()
+    {
+        DiagnosticCategories categories = DiagnosticCategories.load();
+
+        List<BslChecksPreferencePage.DiagKey> merged = BslChecksPreferencePage.mergeDisplayedKeys(categories,
+            List.of());
+
+        BslChecksPreferencePage.DiagKey unusedLocalVariable = merged.stream()
+            .filter(diagKey -> diagKey.key().equals("UnusedLocalVariable")).findFirst().orElseThrow();
+        assertEquals(categories.typeOf("UnusedLocalVariable"), unusedLocalVariable.type());
+        assertEquals(categories.tagsOf("UnusedLocalVariable"), unusedLocalVariable.tags());
+        assertFalse(unusedLocalVariable.type().isEmpty());
+    }
+
+    @Test
+    public void groupKeysByTypeGroupsBySingleTypeWithCorrectCounts()
+    {
+        List<BslChecksPreferencePage.DiagKey> diagKeys = List.of(
+            new BslChecksPreferencePage.DiagKey("A", "Name A", DiagnosticCategory.GENERAL, null, "Code smell",
+                List.of()),
+            new BslChecksPreferencePage.DiagKey("B", "Name B", DiagnosticCategory.GENERAL, null, "Error", List.of()),
+            new BslChecksPreferencePage.DiagKey("C", "Name C", DiagnosticCategory.GENERAL, null, "Code smell",
+                List.of()));
+
+        Map<String, List<String>> byType = BslChecksPreferencePage.groupKeysByType(diagKeys);
+
+        assertEquals(Set.of("Code smell", "Error"), byType.keySet());
+        assertEquals(List.of("A", "C"), byType.get("Code smell"));
+        assertEquals(List.of("B"), byType.get("Error"));
+    }
+
+    @Test
+    public void groupKeysByTagPutsMultiTagKeyUnderEachTagAndNoTagKeyUnderNoTagsBucket()
+    {
+        List<BslChecksPreferencePage.DiagKey> diagKeys = List.of(
+            new BslChecksPreferencePage.DiagKey("A", "Name A", DiagnosticCategory.GENERAL, null, "Code smell",
+                List.of("clumsy", "standard")),
+            new BslChecksPreferencePage.DiagKey("B", "Name B", DiagnosticCategory.GENERAL, null, "Error",
+                List.of()));
+
+        Map<String, List<String>> byTag = BslChecksPreferencePage.groupKeysByTag(diagKeys);
+
+        assertEquals(Set.of("clumsy", "standard", Messages.BslChecksPage_NoTags), byTag.keySet());
+        assertTrue(byTag.get("clumsy").contains("A"));
+        assertTrue(byTag.get("standard").contains("A"));
+        assertTrue(byTag.get(Messages.BslChecksPage_NoTags).contains("B"));
+        assertFalse(byTag.get("clumsy").contains("B"));
     }
 }

@@ -25,10 +25,6 @@ public final class Messages extends NLS
     public static String Analysis_ServerProcessing;
     public static String AutoSyncJob_Name;
     public static String BslChecksPage_ApplyProfile;
-    public static String BslChecksPage_Cat_EdtDuplicate;
-    public static String BslChecksPage_Cat_General;
-    public static String BslChecksPage_Cat_Inappropriate;
-    public static String BslChecksPage_Cat_NeedsTuning;
     public static String BslChecksPage_Column_Key;
     public static String BslChecksPage_Column_Name;
     public static String BslChecksPage_Counter;
@@ -43,8 +39,15 @@ public final class Messages extends NLS
     public static String BslChecksPage_FetchJob_Name;
     public static String BslChecksPage_FetchWarning;
     public static String BslChecksPage_Filter_Hint;
+    public static String BslChecksPage_GroupByLabel;
+    public static String BslChecksPage_GroupBy_None;
+    public static String BslChecksPage_GroupBy_Tag;
+    public static String BslChecksPage_GroupBy_Type;
     public static String BslChecksPage_GroupCounter;
+    public static String BslChecksPage_NoTags;
     public static String BslChecksPage_ProfileHint;
+    public static String BslChecksPage_RowTooltip_Tags;
+    public static String BslChecksPage_RowTooltip_Type;
     public static String IssuesView_BranchMissing;
     public static String IssuesView_Column_Location;
     public static String IssuesView_Column_Message;
