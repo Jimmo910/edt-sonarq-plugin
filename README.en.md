@@ -68,8 +68,6 @@ against the project's sources, with no server involved.
 
 **Window** → **Show View** → **Other…** → **SonarQube** category → **SonarQube Issues**.
 
-![SonarQube Issues view: the grouped issue tree, the toolbar filters and the rule description pane](docs/images/issues-view.png)
-<!-- TODO: owner — add a screenshot of the SonarQube Issues view (tree + toolbar + rule pane). -->
 
 ## The Issues view
 
@@ -125,8 +123,6 @@ Also in the view:
 - **Timeout (seconds)** — the HTTP request timeout.
 - **Test Connection** verifies the URL and token and reports the server version.
 
-![The SonarQube preference page: mode, server URL, token, and the Analysis launch and Editor markers groups](docs/images/preferences.png)
-<!-- TODO: owner — add a screenshot of the Preferences → SonarQube page. -->
 
 ### 2. Project binding
 
@@ -277,8 +273,6 @@ The **Editor markers** group on the preference page:
 Markers are **transient**: they are rebuilt on every refresh, and after an EDT restart the
 Problems view is empty until the first refresh.
 
-![SonarQube issues in the editor: underlines in a module and rows in the Problems view](docs/images/markers.png)
-<!-- TODO: owner — add a screenshot of the markers (editor underlines + Problems view). -->
 
 ## How it works
 
