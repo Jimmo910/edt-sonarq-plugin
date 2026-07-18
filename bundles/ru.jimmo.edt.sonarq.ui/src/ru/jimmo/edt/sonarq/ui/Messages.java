@@ -145,8 +145,6 @@ public final class Messages extends NLS
     public static String PropertyPage_SubsystemsHint;
     public static String RefreshJob_LocalName;
     public static String RefreshJob_Name;
-    public static String RuleJob_Name;
-    public static String RulePanel_LoadFailed;
     public static String RulePanel_Loading;
     public static String Suppress_ResolutionLabel;
 

@@ -73,9 +73,11 @@ against the project's sources, with no server involved.
 
 ## The Issues view
 
-The toolbar sits at the top of the view, the issue tree below it, the rule description pane
-under the tree, and a status line at the very bottom. Toolbar buttons show icons rather than
-text labels — the name and purpose of each button is shown in its hover tooltip.
+The toolbar sits at the top of the view, the issue tree fills the rest, and a status line sits
+at the very bottom. Toolbar buttons show icons rather than text labels — the name and purpose of
+each button is shown in its hover tooltip. The rule description now lives on the **BSL Checks**
+settings page (see [Choosing which checks run](#choosing-which-checks-run)) rather than in a pane
+inside this view.
 
 | Control | What it does |
 |---|---|
@@ -85,7 +87,7 @@ text labels — the name and purpose of each button is shown in its hover toolti
 | **Severity** | Multi-select of severities: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. |
 | **Type** | Filter by type: BUG, VULNERABILITY, CODE_SMELL. |
 | **Filter by rule or message** field | Free-text filter over the rule key and the message text. |
-| **Group by File** / **by Rule** / **by Severity** | Toggle the tree structure. The column used for grouping is auto-hidden (it would just repeat the group headers). |
+| **Group by File** / **by Rule** / **by Severity** | Toggle the tree structure. **By Severity** builds a two-level tree: severity → rule → issues. The column(s) used for grouping are auto-hidden so they don't repeat the group headers (by Severity hides both the Severity and Rule columns). |
 
 Also in the view:
 
@@ -103,8 +105,8 @@ Also in the view:
   phases (including downloading the BSL Language Server engine on first run, ~170 MB) — instead
   of the server-mode "downloading" wording; the status and error text are cleared on every new
   run (**Refresh** or switching project), so nothing stale lingers from a previous run.
-- **Double-click** an issue to open the corresponding module at the reported line; a **single
-  click** loads the rule description into the bottom pane.
+- **Double-click** an issue to open the corresponding module at the reported line. For a rule's
+  description, open the **BSL Checks** settings page and select the check in the tree.
 - Issues whose **file is not found locally** are shown greyed out; a tooltip explains that
   navigation is unavailable.
 - When the current git branch has not been analyzed on the server yet, a banner appears above
@@ -212,6 +214,12 @@ Which diagnostics local analysis reports is configured on a separate page: **Pre
   when the group is a mix of enabled and disabled) and its own **"Disabled N of M"** count. A
   checked diagnostic is enabled, an unchecked one is disabled. Every diagnostic is enabled by
   default.
+- **Description of the selected check.** Selecting a check in the tree shows its description
+  below — name, type and tags, then the BSL Language Server description text — plus an **Open the
+  rule's online documentation** link. This helps you decide whether a check is worth keeping. The
+  description texts come from a catalog populated after the first local analysis or via the
+  **Fetch Checks List** button (see below); until the catalog is filled, a hint to run an
+  analysis is shown instead.
 - The **Apply Recommended Profile** button and the "Duplicates EDT check: …" tooltip are
   independent of the tree's grouping — they use a separate, plugin-bundled classification of
   reasons (EDT validator duplicates, needs-tuning, not-a-good-fit, other) and disable the
