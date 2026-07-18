@@ -11,8 +11,9 @@ import java.util.List;
 import org.eclipse.jface.viewers.ITreeContentProvider;
 
 /**
- * Exposes a {@code List<IssueGroup>} input as a two-level tree: {@link IssueGroup} nodes with
- * {@link IssueEntry} leaves.
+ * Exposes the issue-tree input as a tree. By-file and by-rule inputs are two-level ({@link IssueGroup} nodes
+ * over {@link IssueEntry} leaves); the by-severity input is three-level ({@link IssueSuperGroup} nodes over
+ * {@link IssueGroup} nodes over {@link IssueEntry} leaves).
  */
 public class IssueTreeContentProvider implements ITreeContentProvider
 {
@@ -29,6 +30,10 @@ public class IssueTreeContentProvider implements ITreeContentProvider
     @Override
     public Object[] getChildren(Object parentElement)
     {
+        if (parentElement instanceof IssueSuperGroup superGroup)
+        {
+            return superGroup.groups().toArray();
+        }
         if (parentElement instanceof IssueGroup group)
         {
             return group.entries().toArray();
@@ -45,6 +50,6 @@ public class IssueTreeContentProvider implements ITreeContentProvider
     @Override
     public boolean hasChildren(Object element)
     {
-        return element instanceof IssueGroup;
+        return element instanceof IssueSuperGroup || element instanceof IssueGroup;
     }
 }

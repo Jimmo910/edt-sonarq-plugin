@@ -9,8 +9,10 @@ package ru.jimmo.edt.sonarq.ui.views;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 import org.eclipse.core.resources.IFile;
@@ -154,6 +156,10 @@ public class SonarIssuesView extends ViewPart
                 {
                     IssueNavigation.open(getSite().getPage(), selectedProject, entry);
                 }
+            }
+            else if (element instanceof IssueSuperGroup superGroup)
+            {
+                viewer.setExpandedState(superGroup, !viewer.getExpandedState(superGroup));
             }
             else if (element instanceof IssueGroup group)
             {
@@ -369,37 +375,38 @@ public class SonarIssuesView extends ViewPart
     }
 
     /**
-     * Decides which issue-tree column merely repeats the active grouping's header on every row, and should
-     * therefore auto-hide (issue #3): grouping by Rule repeats the rule key in the Rule column on every
-     * row, and grouping by Severity repeats the severity in the Severity column on every row. Grouping by
-     * File hides nothing, since the Location column then shows each row's line number, which is useful.
+     * Decides which issue-tree columns merely repeat the active grouping's structure on every row, and
+     * should therefore auto-hide (issue #3): grouping by Rule repeats the rule key in the Rule column on
+     * every row; grouping by Severity nests rule groups under each severity (see {@link IssueSuperGroup}),
+     * so both the Severity column and the Rule column repeat the enclosing node's value on every row.
+     * Grouping by File hides nothing, since the Location column then shows each row's line number, which is
+     * useful.
      *
      * <p>Pure and SWT-free by design, so it can be unit-tested without a display.
      *
      * @param activeGrouping the active grouping mode, not {@code null}
-     * @return the column to hide, or {@link Optional#empty()} when no column is redundant
+     * @return the columns to hide, never {@code null}; empty when no column is redundant
      */
-    static Optional<IssueColumn> hiddenColumnFor(IssueGrouping activeGrouping)
+    static Set<IssueColumn> hiddenColumnFor(IssueGrouping activeGrouping)
     {
         return switch (activeGrouping)
         {
-            case BY_RULE -> Optional.of(IssueColumn.RULE);
-            case BY_SEVERITY -> Optional.of(IssueColumn.SEVERITY);
-            case BY_FILE -> Optional.empty();
+            case BY_RULE -> EnumSet.of(IssueColumn.RULE);
+            case BY_SEVERITY -> EnumSet.of(IssueColumn.SEVERITY, IssueColumn.RULE);
+            case BY_FILE -> EnumSet.noneOf(IssueColumn.class);
         };
     }
 
     /**
-     * Hides whichever column {@link #hiddenColumnFor} reports for the current {@link #grouping}, and
-     * restores the other one. Hiding zeroes the column's width and disables resizing rather than disposing
-     * the column, so the tree's column indices stay stable and {@link #createColumns()} only ever runs
-     * once.
+     * Hides whichever columns {@link #hiddenColumnFor} reports for the current {@link #grouping}, and
+     * restores the rest. Hiding zeroes a column's width and disables resizing rather than disposing the
+     * column, so the tree's column indices stay stable and {@link #createColumns()} only ever runs once.
      */
     private void applyColumnVisibility()
     {
-        IssueColumn columnToHide = hiddenColumnFor(grouping).orElse(null);
-        setColumnHidden(severityColumn, SEVERITY_COLUMN_WIDTH, columnToHide == IssueColumn.SEVERITY);
-        setColumnHidden(ruleColumn, RULE_COLUMN_WIDTH, columnToHide == IssueColumn.RULE);
+        Set<IssueColumn> columnsToHide = hiddenColumnFor(grouping);
+        setColumnHidden(severityColumn, SEVERITY_COLUMN_WIDTH, columnsToHide.contains(IssueColumn.SEVERITY));
+        setColumnHidden(ruleColumn, RULE_COLUMN_WIDTH, columnsToHide.contains(IssueColumn.RULE));
     }
 
     private static void setColumnHidden(TreeColumn column, int visibleWidth, boolean hidden)
@@ -412,6 +419,10 @@ public class SonarIssuesView extends ViewPart
     {
         addColumn(Messages.IssuesView_Column_Location, LOCATION_COLUMN_WIDTH, element ->
         {
+            if (element instanceof IssueSuperGroup superGroup)
+            {
+                return superGroup.label() + " (" + superGroup.totalEntries() + ')'; //$NON-NLS-1$
+            }
             if (element instanceof IssueGroup group)
             {
                 return group.label() + " (" + group.entries().size() + ')'; //$NON-NLS-1$

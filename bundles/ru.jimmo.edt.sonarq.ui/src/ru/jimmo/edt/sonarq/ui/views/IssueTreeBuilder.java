@@ -25,26 +25,34 @@ public final class IssueTreeBuilder
     }
 
     /**
-     * Builds sorted issue groups.
+     * Builds the sorted issue tree nodes for the requested grouping.
+     *
+     * <p>The element type of the returned list depends on {@code grouping}: {@link IssueGrouping#BY_FILE}
+     * and {@link IssueGrouping#BY_RULE} produce a flat list of {@link IssueGroup} (two-level tree), while
+     * {@link IssueGrouping#BY_SEVERITY} produces a list of {@link IssueSuperGroup} (three-level tree:
+     * severity, then rule, then issue). Callers treat the result opaquely (see
+     * {@link IssueTreeContentProvider}).
      *
      * @param issues the issues, not {@code null}
      * @param projectKey the SonarQube project key, not {@code null}
      * @param pathPrefix the repository path prefix, may be {@code null}
      * @param grouping the grouping mode, not {@code null}
-     * @return the groups, never {@code null}
+     * @return the top-level tree nodes, never {@code null}
      */
-    public static List<IssueGroup> build(List<SonarIssue> issues, String projectKey, String pathPrefix,
+    public static List<Object> build(List<SonarIssue> issues, String projectKey, String pathPrefix,
         IssueGrouping grouping)
     {
-        Map<String, List<IssueEntry>> mapped = grouping == IssueGrouping.BY_SEVERITY
-            ? new TreeMap<>(Comparator.comparingInt(IssueTreeBuilder::severityRank))
-            : new TreeMap<>();
+        if (grouping == IssueGrouping.BY_SEVERITY)
+        {
+            return buildBySeverity(issues, projectKey, pathPrefix);
+        }
+        Map<String, List<IssueEntry>> mapped = new TreeMap<>();
         List<IssueEntry> unmapped = new ArrayList<>();
         for (IssueEntry entry : toEntries(issues, projectKey, pathPrefix))
         {
             addToGroup(entry, grouping, mapped, unmapped);
         }
-        List<IssueGroup> result = new ArrayList<>();
+        List<Object> result = new ArrayList<>();
         for (Map.Entry<String, List<IssueEntry>> group : mapped.entrySet())
         {
             result.add(new IssueGroup(group.getKey(), sorted(group.getValue())));
@@ -52,6 +60,42 @@ public final class IssueTreeBuilder
         if (!unmapped.isEmpty())
         {
             result.add(new IssueGroup(Messages.IssuesView_UnmappedGroup, sorted(unmapped)));
+        }
+        return result;
+    }
+
+    /**
+     * Builds the three-level by-severity tree: one {@link IssueSuperGroup} per severity, ordered by
+     * severity rank (BLOCKER first, INFO last; see {@link #severityRank}), each nesting one
+     * {@link IssueGroup} per rule key (ordered alphabetically) whose entries are {@link #sorted(List)}.
+     *
+     * @param issues the issues, not {@code null}
+     * @param projectKey the SonarQube project key, not {@code null}
+     * @param pathPrefix the repository path prefix, may be {@code null}
+     * @return the severity super-groups, never {@code null}
+     */
+    private static List<Object> buildBySeverity(List<SonarIssue> issues, String projectKey, String pathPrefix)
+    {
+        Map<String, List<IssueEntry>> bySeverity =
+            new TreeMap<>(Comparator.comparingInt(IssueTreeBuilder::severityRank));
+        for (IssueEntry entry : toEntries(issues, projectKey, pathPrefix))
+        {
+            bySeverity.computeIfAbsent(entry.issue().severity().name(), key -> new ArrayList<>()).add(entry);
+        }
+        List<Object> result = new ArrayList<>();
+        for (Map.Entry<String, List<IssueEntry>> severityGroup : bySeverity.entrySet())
+        {
+            Map<String, List<IssueEntry>> byRule = new TreeMap<>();
+            for (IssueEntry entry : severityGroup.getValue())
+            {
+                byRule.computeIfAbsent(entry.issue().ruleKey(), key -> new ArrayList<>()).add(entry);
+            }
+            List<IssueGroup> ruleGroups = new ArrayList<>();
+            for (Map.Entry<String, List<IssueEntry>> ruleGroup : byRule.entrySet())
+            {
+                ruleGroups.add(new IssueGroup(ruleGroup.getKey(), sorted(ruleGroup.getValue())));
+            }
+            result.add(new IssueSuperGroup(severityGroup.getKey(), ruleGroups));
         }
         return result;
     }

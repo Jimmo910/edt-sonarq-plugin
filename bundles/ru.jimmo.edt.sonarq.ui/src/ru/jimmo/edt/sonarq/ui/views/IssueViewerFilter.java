@@ -10,8 +10,9 @@ import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.jface.viewers.ViewerFilter;
 
 /**
- * A {@link ViewerFilter} that hides {@link IssueEntry} leaves rejected by an {@link IssueFilterState}, and
- * hides {@link IssueGroup} nodes whose every entry is rejected.
+ * A {@link ViewerFilter} that hides {@link IssueEntry} leaves rejected by an {@link IssueFilterState}, hides
+ * {@link IssueGroup} nodes whose every entry is rejected, and hides {@link IssueSuperGroup} nodes whose every
+ * sub-group entry is rejected.
  */
 public class IssueViewerFilter extends ViewerFilter
 {
@@ -37,6 +38,12 @@ public class IssueViewerFilter extends ViewerFilter
         if (element instanceof IssueGroup group)
         {
             return group.entries().stream().anyMatch(entry -> state.matches(entry.issue()));
+        }
+        if (element instanceof IssueSuperGroup superGroup)
+        {
+            return superGroup.groups().stream()
+                .flatMap(group -> group.entries().stream())
+                .anyMatch(entry -> state.matches(entry.issue()));
         }
         return true;
     }

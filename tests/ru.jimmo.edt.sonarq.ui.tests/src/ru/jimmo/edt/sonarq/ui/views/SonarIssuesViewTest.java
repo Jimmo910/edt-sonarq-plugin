@@ -9,7 +9,7 @@ package ru.jimmo.edt.sonarq.ui.views;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
-import java.util.Optional;
+import java.util.EnumSet;
 
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
@@ -76,18 +76,19 @@ public class SonarIssuesViewTest
     @Test
     public void hiddenColumnForGroupByRuleIsTheRuleColumn()
     {
-        assertEquals(Optional.of(SonarIssuesView.IssueColumn.RULE),
+        assertEquals(EnumSet.of(SonarIssuesView.IssueColumn.RULE),
             SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_RULE));
     }
 
     /**
-     * Regression test for issue #3: grouping by Severity repeats the same severity on every row of the
-     * Severity column, so that column should auto-hide while grouped by Severity.
+     * Issue #4: grouping by Severity now nests rule groups under each severity, so both the Severity column
+     * (repeated by the super-group) and the Rule column (repeated by the rule sub-group) are redundant and
+     * should auto-hide while grouped by Severity.
      */
     @Test
-    public void hiddenColumnForGroupBySeverityIsTheSeverityColumn()
+    public void hiddenColumnForGroupBySeverityIsSeverityAndRuleColumns()
     {
-        assertEquals(Optional.of(SonarIssuesView.IssueColumn.SEVERITY),
+        assertEquals(EnumSet.of(SonarIssuesView.IssueColumn.SEVERITY, SonarIssuesView.IssueColumn.RULE),
             SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_SEVERITY));
     }
 
@@ -98,6 +99,7 @@ public class SonarIssuesViewTest
     @Test
     public void hiddenColumnForGroupByFileIsEmpty()
     {
-        assertEquals(Optional.empty(), SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_FILE));
+        assertEquals(EnumSet.noneOf(SonarIssuesView.IssueColumn.class),
+            SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_FILE));
     }
 }
