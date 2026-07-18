@@ -58,8 +58,8 @@ public class BslChecksPreferencePageTest
         Set<String> bundledKeys =
             categories.all().stream().map(CategoryEntry::key).collect(Collectors.toSet());
         List<DiagnosticsCatalog.Entry> fetched = List.of(
-            new DiagnosticsCatalog.Entry("UnusedLocalVariable", "Unused local variable (fetched name)"),
-            new DiagnosticsCatalog.Entry("TotallyNewDiagnosticXYZ", "Totally New Diagnostic"));
+            new DiagnosticsCatalog.Entry("UnusedLocalVariable", "Unused local variable (fetched name)", ""),
+            new DiagnosticsCatalog.Entry("TotallyNewDiagnosticXYZ", "Totally New Diagnostic", ""));
 
         List<BslChecksPreferencePage.DiagKey> merged =
             BslChecksPreferencePage.mergeDisplayedKeys(categories, fetched);

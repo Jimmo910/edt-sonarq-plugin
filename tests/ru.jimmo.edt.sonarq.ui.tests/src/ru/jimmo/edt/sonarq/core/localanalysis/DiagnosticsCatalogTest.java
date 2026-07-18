@@ -45,7 +45,7 @@ public class DiagnosticsCatalogTest
     {
         Map<String, SonarRule> rules = new LinkedHashMap<>();
         rules.put("Typo", new SonarRule("Typo", "Typo rule", ""));
-        rules.put("MethodSize", new SonarRule("MethodSize", "Method size", ""));
+        rules.put("MethodSize", new SonarRule("MethodSize", "Method size", "<p>Methods should be short.</p>"));
         SarifReport report = new SarifReport(List.of(), rules);
 
         List<DiagnosticsCatalog.Entry> entries = DiagnosticsCatalog.fromReport(report);
@@ -53,8 +53,10 @@ public class DiagnosticsCatalogTest
         assertEquals(2, entries.size());
         assertEquals("MethodSize", entries.get(0).key());
         assertEquals("Method size", entries.get(0).name());
+        assertEquals("Methods should be short.", entries.get(0).description());
         assertEquals("Typo", entries.get(1).key());
         assertEquals("Typo rule", entries.get(1).name());
+        assertEquals("", entries.get(1).description());
     }
 
     @Test
@@ -71,13 +73,28 @@ public class DiagnosticsCatalogTest
         tempDir = Files.createTempDirectory("diagnostics-catalog-test");
         Path file = tempDir.resolve(DiagnosticsCatalog.CATALOG_FILE_NAME);
         List<DiagnosticsCatalog.Entry> original = List.of(
-            new DiagnosticsCatalog.Entry("MethodSize", "Method size"),
-            new DiagnosticsCatalog.Entry("Typo", "Typo rule"));
+            new DiagnosticsCatalog.Entry("MethodSize", "Method size", "Methods should be short."),
+            new DiagnosticsCatalog.Entry("Typo", "Typo rule", ""));
 
         DiagnosticsCatalog.save(file, original);
         List<DiagnosticsCatalog.Entry> loaded = DiagnosticsCatalog.load(file);
 
         assertEquals(original, loaded);
+    }
+
+    @Test
+    public void loadOfOldFormatFileWithoutDescriptionMemberYieldsEmptyDescription() throws IOException
+    {
+        tempDir = Files.createTempDirectory("diagnostics-catalog-test");
+        Path file = tempDir.resolve(DiagnosticsCatalog.CATALOG_FILE_NAME);
+        Files.writeString(file, "[{\"key\":\"MethodSize\",\"name\":\"Method size\"}]", StandardCharsets.UTF_8);
+
+        List<DiagnosticsCatalog.Entry> loaded = DiagnosticsCatalog.load(file);
+
+        assertEquals(1, loaded.size());
+        assertEquals("MethodSize", loaded.get(0).key());
+        assertEquals("Method size", loaded.get(0).name());
+        assertEquals("", loaded.get(0).description());
     }
 
     @Test

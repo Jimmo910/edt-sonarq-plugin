@@ -12,6 +12,9 @@ import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
@@ -589,6 +592,49 @@ public class SarifParserTest
         // wrapped in a single paragraph.
         assertEquals("<p><b>bold</b> description</p>", //$NON-NLS-1$
             report.rules().get("MdOnly").htmlDescription()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void metadataTableAndCommentsAreStrippedFromRuleHtmlDescription()
+    {
+        String rawMarkdown = "# Название (EventHandlerInvalidSignature)\n" //$NON-NLS-1$
+            + "\n" //$NON-NLS-1$
+            + "| Тип | Поддерживаются<br>языки | Важность | Теги |\n" //$NON-NLS-1$
+            + "|:---:|:---:|:---:|:---:|\n" //$NON-NLS-1$
+            + "| `Ошибка` | `BSL`<br>`OS` | `Важный` | `suspicious`<br>`standard` |\n" //$NON-NLS-1$
+            + "\n" //$NON-NLS-1$
+            + "<!-- Блоки выше заполняются автоматически, не трогать -->\n" //$NON-NLS-1$
+            + "## Описание диагностики\n" //$NON-NLS-1$
+            + "<!-- заполняется вручную -->\n" //$NON-NLS-1$
+            + "\n" //$NON-NLS-1$
+            + "Реальный текст описания."; //$NON-NLS-1$
+
+        JsonObject fullDescription = new JsonObject();
+        fullDescription.addProperty("text", rawMarkdown); //$NON-NLS-1$
+        JsonObject rule = new JsonObject();
+        rule.addProperty("id", "EventHandlerInvalidSignature"); //$NON-NLS-1$ //$NON-NLS-2$
+        rule.add("fullDescription", fullDescription); //$NON-NLS-1$
+        JsonArray rules = new JsonArray();
+        rules.add(rule);
+        JsonObject driver = new JsonObject();
+        driver.add("rules", rules); //$NON-NLS-1$
+        JsonObject tool = new JsonObject();
+        tool.add("driver", driver); //$NON-NLS-1$
+        JsonObject run = new JsonObject();
+        run.add("tool", tool); //$NON-NLS-1$
+        JsonArray runs = new JsonArray();
+        runs.add(run);
+        JsonObject root = new JsonObject();
+        root.add("runs", runs); //$NON-NLS-1$
+
+        SarifReport report = SarifParser.parse(root.toString(), PROJECT_KEY);
+        String html = report.rules().get("EventHandlerInvalidSignature").htmlDescription(); //$NON-NLS-1$
+
+        assertFalse(html.contains("<!--")); //$NON-NLS-1$
+        assertFalse(html.contains("Блоки выше")); //$NON-NLS-1$
+        assertFalse(html.contains("Важность")); //$NON-NLS-1$
+        assertFalse(html.contains("&lt;br&gt;")); //$NON-NLS-1$
+        assertTrue(html.contains("Реальный текст описания.")); //$NON-NLS-1$
     }
 
     @Test

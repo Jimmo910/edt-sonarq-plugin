@@ -21,10 +21,11 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
+import ru.jimmo.edt.sonarq.ui.views.RuleHtml;
 
 /**
  * Catalog of BSL diagnostics discovered from a local analysis run, persisted as JSON so a settings UI can
- * list every known diagnostic key/name without re-running an analysis.
+ * list every known diagnostic key/name/description without re-running an analysis.
  */
 public final class DiagnosticsCatalog
 {
@@ -34,6 +35,8 @@ public final class DiagnosticsCatalog
     private static final String KEY_MEMBER = "key"; //$NON-NLS-1$
 
     private static final String NAME_MEMBER = "name"; //$NON-NLS-1$
+
+    private static final String DESCRIPTION_MEMBER = "description"; //$NON-NLS-1$
 
     private static final String EMPTY = ""; //$NON-NLS-1$
 
@@ -46,8 +49,10 @@ public final class DiagnosticsCatalog
      *
      * @param key the diagnostic (rule) key, not {@code null}
      * @param name the human-readable diagnostic name, not {@code null}
+     * @param description the plain-text rule description, not {@code null}; empty when unknown (e.g. a
+     *     catalog written by an older plugin version, before descriptions were persisted)
      */
-    public record Entry(String key, String name)
+    public record Entry(String key, String name, String description)
     {
     }
 
@@ -62,14 +67,16 @@ public final class DiagnosticsCatalog
         List<Entry> entries = new ArrayList<>();
         for (Map.Entry<String, SonarRule> rule : report.rules().entrySet())
         {
-            entries.add(new Entry(rule.getKey(), rule.getValue().name()));
+            String description = RuleHtml.toPlainText(rule.getValue().htmlDescription());
+            entries.add(new Entry(rule.getKey(), rule.getValue().name(), description));
         }
         entries.sort(Comparator.comparing(Entry::key));
         return entries;
     }
 
     /**
-     * Writes the catalog entries as a JSON array ({@code [{"key":..,"name":..},...]}) to the given file.
+     * Writes the catalog entries as a JSON array ({@code [{"key":..,"name":..,"description":..},...]}) to
+     * the given file.
      *
      * @param file the file to write, not {@code null}
      * @param entries the entries to persist, not {@code null}
@@ -83,6 +90,7 @@ public final class DiagnosticsCatalog
             JsonObject object = new JsonObject();
             object.addProperty(KEY_MEMBER, entry.key());
             object.addProperty(NAME_MEMBER, entry.name());
+            object.addProperty(DESCRIPTION_MEMBER, entry.description());
             array.add(object);
         }
         Files.writeString(file, array.toString(), StandardCharsets.UTF_8);
@@ -93,7 +101,8 @@ public final class DiagnosticsCatalog
      *
      * <p>Never throws: a missing file, or a file that does not hold a valid JSON array of entries, yields
      * an empty list, so a corrupted or absent catalog never blocks a caller (e.g. a settings page) from
-     * opening.
+     * opening. A catalog written before descriptions were persisted has no {@code description} member;
+     * such entries load with an empty description, no migration needed.
      *
      * @param file the file to read, not {@code null}
      * @return the loaded entries, never {@code null}; empty when the file is absent or unreadable
@@ -108,7 +117,8 @@ public final class DiagnosticsCatalog
             for (JsonElement element : array)
             {
                 JsonObject object = element.getAsJsonObject();
-                entries.add(new Entry(asString(object, KEY_MEMBER), asString(object, NAME_MEMBER)));
+                entries.add(new Entry(asString(object, KEY_MEMBER), asString(object, NAME_MEMBER),
+                    asString(object, DESCRIPTION_MEMBER)));
             }
             return entries;
         }
