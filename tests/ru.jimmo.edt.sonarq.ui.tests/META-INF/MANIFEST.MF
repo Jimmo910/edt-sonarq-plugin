@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: SonarQ in EDT UI Tests
 Bundle-SymbolicName: ru.jimmo.edt.sonarq.ui.tests
-Bundle-Version: 0.5.0.qualifier
+Bundle-Version: 0.5.1.qualifier
 Bundle-Vendor: Jimmo910
 Fragment-Host: ru.jimmo.edt.sonarq.ui
 Bundle-RequiredExecutionEnvironment: JavaSE-17

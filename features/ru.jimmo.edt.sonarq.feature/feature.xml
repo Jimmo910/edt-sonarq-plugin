@@ -3,7 +3,7 @@
 <feature
       id="ru.jimmo.edt.sonarq.feature"
       label="%featureName"
-      version="0.5.0.qualifier"
+      version="0.5.1.qualifier"
       provider-name="%providerName">
 
    <description>
@@ -18,7 +18,7 @@
          id="ru.jimmo.edt.sonarq.ui"
          download-size="0"
          install-size="0"
-         version="0.5.0.qualifier"
+         version="0.5.1.qualifier"
          unpack="false"/>
 
 </feature>
