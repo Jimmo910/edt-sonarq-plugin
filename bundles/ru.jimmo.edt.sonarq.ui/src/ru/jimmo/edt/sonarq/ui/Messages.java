@@ -76,6 +76,7 @@ public final class Messages extends NLS
     public static String IssuesView_Status_Running;
     public static String IssuesView_Status_Truncated;
     public static String IssuesView_Status_UnmappedCount;
+    public static String IssuesView_SuppressAction;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
     public static String LocalProgress_Analyzing;
@@ -144,6 +145,7 @@ public final class Messages extends NLS
     public static String RuleJob_Name;
     public static String RulePanel_LoadFailed;
     public static String RulePanel_Loading;
+    public static String Suppress_ResolutionLabel;
 
     static
     {

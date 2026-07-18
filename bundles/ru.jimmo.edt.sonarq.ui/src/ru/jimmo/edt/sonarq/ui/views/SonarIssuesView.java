@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
+import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.resources.WorkspaceJob;
@@ -29,10 +30,13 @@ import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IMenuCreator;
+import org.eclipse.jface.action.IMenuManager;
 import org.eclipse.jface.action.IToolBarManager;
+import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.resource.ImageDescriptor;
+import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
@@ -81,6 +85,7 @@ import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
+import ru.jimmo.edt.sonarq.ui.suppress.SuppressionApplier;
 import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
 import ru.jimmo.edt.sonarq.ui.sync.RefreshInputsFactory;
 
@@ -192,6 +197,8 @@ public class SonarIssuesView extends ViewPart
                 viewer.setExpandedState(group, !viewer.getExpandedState(group));
             }
         });
+
+        hookContextMenu();
 
         createStatusRow(root);
 
@@ -515,6 +522,79 @@ public class SonarIssuesView extends ViewPart
             return;
         }
         viewer.setInput(IssueTreeBuilder.build(snapshot.issues(), boundProjectKey, boundPathPrefix, grouping));
+    }
+
+    /**
+     * Installs a context menu on the issue tree offering "Suppress issue" for a suppressible selection.
+     */
+    private void hookContextMenu()
+    {
+        MenuManager menuManager = new MenuManager();
+        menuManager.setRemoveAllWhenShown(true);
+        menuManager.addMenuListener(this::fillContextMenu);
+        viewer.getTree().setMenu(menuManager.createContextMenu(viewer.getTree()));
+    }
+
+    /**
+     * Adds the suppress action to the context menu when the selected entry can be quick-suppressed.
+     *
+     * @param manager the context menu manager, not {@code null}
+     */
+    private void fillContextMenu(IMenuManager manager)
+    {
+        IssueEntry entry = suppressibleSelection();
+        if (entry != null)
+        {
+            manager.add(new Action(Messages.IssuesView_SuppressAction)
+            {
+                @Override
+                public void run()
+                {
+                    suppressIssue(entry);
+                }
+            });
+        }
+    }
+
+    /**
+     * Returns the selected issue entry when it can be quick-suppressed - it maps to a file and has a rule key
+     * and a positive line - or {@code null} otherwise.
+     *
+     * @return the suppressible entry, or {@code null}
+     */
+    private IssueEntry suppressibleSelection()
+    {
+        Object element = ((IStructuredSelection)viewer.getSelection()).getFirstElement();
+        if (selectedProject != null && element instanceof IssueEntry entry && entry.relativePath() != null
+            && entry.issue().line() > 0 && !entry.issue().ruleKey().isEmpty())
+        {
+            return entry;
+        }
+        return null;
+    }
+
+    /**
+     * Inserts BSL Language Server suppression comments around the issue's line and refreshes, so the
+     * false-positive stops being reported.
+     *
+     * @param entry the issue entry to suppress, not {@code null}
+     */
+    private void suppressIssue(IssueEntry entry)
+    {
+        IFile file = selectedProject.getFile(entry.relativePath());
+        if (!file.exists())
+        {
+            return;
+        }
+        try
+        {
+            SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage());
+            refreshIssues();
+        }
+        catch (CoreException | BadLocationException e)
+        {
+            SonarqPlugin.getInstance().getLog().error(e.getMessage(), e);
+        }
     }
 
     private void refreshIssues()
