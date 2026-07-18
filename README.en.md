@@ -179,21 +179,36 @@ overwriting an already-analyzed branch).
 Which diagnostics local analysis reports is configured on a separate page: **Preferences** →
 **SonarQube** → **BSL Checks** (the `BslChecksPreferencePage` class).
 
-- A checkbox table lists every known BSL Language Server diagnostic (**Key** and **Name**
-  columns); a checked row is enabled, an unchecked one is disabled. Every diagnostic is enabled
-  by default.
+- Diagnostics are shown as a tree grouped by category (**Key** and **Name** columns): **EDT
+  validator duplicates** — diagnostics that overlap a built-in EDT check (a row's tooltip names
+  the duplicated EDT check id); **Needs tuning for this project** — metric/threshold diagnostics
+  (complexity, sizes, magic numbers and the like); **Not a good fit for EDT** — opinionated or
+  EDT-conflicting diagnostics; **Other** — everything else. Each category has its own group
+  checkbox (toggles every diagnostic in that category at once, and shows a tri-state when the
+  category is a mix of enabled and disabled) and its own **"Disabled N of M"** count. A checked
+  diagnostic is enabled, an unchecked one is disabled. Every diagnostic is enabled by default.
+- The **Apply Recommended Profile** button disables the recommended set in one click — EDT
+  validator duplicates + needs-tuning + not-a-good-fit diagnostics (the **Other** category is
+  left untouched). This is opt-in: nothing changes until the button is pressed, so the default
+  stays every diagnostic enabled, exactly as before.
+- The category mapping is a first cut bundled with the plugin, not an authoritative
+  classification; the community is welcome to refine it via a Pull Request (see [issue
+  #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
 - The filter field searches by key or name; **Enable All** / **Disable All** flip every
-  diagnostic regardless of the current filter. The **"Disabled N of M"** label below the table
-  tracks how many are currently disabled.
-- The catalog of known diagnostics is filled in automatically after every successful local
-  analysis, or on demand with the **Fetch Checks List** button, which analyzes an empty
-  temporary folder to obtain the full list without a single real issue. If the BSL Language
-  Server has not been downloaded yet, the first use of either the button or a local analysis
-  downloads it — about 170 MB, and requires internet access.
-- The selection made on this page is applied through a generated BSL Language Server
-  configuration file, passed to the analysis via the `--configuration` flag. If the project
-  already has its own `.bsl-language-server.json` (at the project root or under `src/`), that
-  file always takes priority: analysis uses it instead of the generated one, and the page's
+  diagnostic regardless of the current filter or category. The **"Disabled N of M"** label below
+  the tree tracks the total number currently disabled.
+- The full catalog of 186 known diagnostics ships with the plugin, so the tree is grouped and
+  populated from the start, even before a local analysis or a checks-list fetch has ever run.
+  This bundled catalog is merged with (not replaced by) a cache that is filled in automatically
+  after every successful local analysis, or on demand with the **Fetch Checks List** button,
+  which analyzes an empty temporary folder to obtain the full list without a single real issue.
+  If the BSL Language Server has not been downloaded yet, the first use of either the button or
+  a local analysis downloads it — about 170 MB, and requires internet access.
+- The selection made on this page — whether checked by hand or by **Apply Recommended
+  Profile** — is applied and stored the same way as before: through a generated BSL Language
+  Server configuration file, passed to the analysis via the `--configuration` flag. If the
+  project already has its own `.bsl-language-server.json` (at the project root or under `src/`),
+  that file always takes priority: analysis uses it instead of the generated one, and the page's
   selection is ignored for that project.
 
 ### Analysis scope

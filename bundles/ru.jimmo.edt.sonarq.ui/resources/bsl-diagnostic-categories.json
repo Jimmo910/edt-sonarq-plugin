@@ -1,0 +1,983 @@
+{
+ "version": "1.0.4-bsl-ls",
+ "diagnostics": [
+  {
+   "key": "BeginTransactionBeforeTryCatch",
+   "name": "Violating transaction rules for the 'BeginTransaction' method",
+   "category": "edt-duplicate",
+   "edtCheck": "begin-transaction"
+  },
+  {
+   "key": "CanonicalSpellingKeywords",
+   "name": "Canonical keyword writing",
+   "category": "edt-duplicate",
+   "edtCheck": "bsl-canonical-pragma"
+  },
+  {
+   "key": "CommandModuleExportMethods",
+   "name": "Export methods in command and general command modules",
+   "category": "edt-duplicate",
+   "edtCheck": "export-method-in-command-form-module"
+  },
+  {
+   "key": "CommitTransactionOutsideTryCatch",
+   "name": "Violating transaction rules for the 'CommitTransaction' method",
+   "category": "edt-duplicate",
+   "edtCheck": "commit-transaction"
+  },
+  {
+   "key": "CommonModuleInvalidType",
+   "name": "Common module invalid type",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-type"
+  },
+  {
+   "key": "CommonModuleMissingAPI",
+   "name": "Common module should have a programming interface",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-missing-api"
+  },
+  {
+   "key": "CommonModuleNameCached",
+   "name": "Missed postfix \"Cached\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-cached"
+  },
+  {
+   "key": "CommonModuleNameClient",
+   "name": "Missed postfix \"Client\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-client"
+  },
+  {
+   "key": "CommonModuleNameClientServer",
+   "name": "Missed postfix \"ClientServer\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-client-server"
+  },
+  {
+   "key": "CommonModuleNameFullAccess",
+   "name": "Missed postfix \"FullAccess\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-full-access"
+  },
+  {
+   "key": "CommonModuleNameGlobal",
+   "name": "Missed postfix \"Global\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-global"
+  },
+  {
+   "key": "CommonModuleNameGlobalClient",
+   "name": "Global module with postfix \"Client\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-global-client"
+  },
+  {
+   "key": "CommonModuleNameServerCall",
+   "name": "Missed postfix \"ServerCall\"",
+   "category": "edt-duplicate",
+   "edtCheck": "common-module-name-server-call"
+  },
+  {
+   "key": "ConsecutiveEmptyLines",
+   "name": "Consecutive empty lines",
+   "category": "edt-duplicate",
+   "edtCheck": "consecutive-empty-lines-check"
+  },
+  {
+   "key": "CreateQueryInCycle",
+   "name": "Execution query on cycle",
+   "category": "edt-duplicate",
+   "edtCheck": "query-in-loop-check"
+  },
+  {
+   "key": "DataExchangeLoading",
+   "name": "There is no check for the attribute DataExchange.Load in the object's event handler",
+   "category": "edt-duplicate",
+   "edtCheck": "data-exchange-load"
+  },
+  {
+   "key": "DeprecatedCurrentDate",
+   "name": "Using of the deprecated method \"CurrentDate\"",
+   "category": "edt-duplicate",
+   "edtCheck": "use-non-recommended-methods-check"
+  },
+  {
+   "key": "DeprecatedMessage",
+   "name": "Restriction on the use of deprecated \"Message\" method",
+   "category": "edt-duplicate",
+   "edtCheck": "use-non-recommended-methods-check"
+  },
+  {
+   "key": "DeprecatedMethodCall",
+   "name": "Deprecated methods should not be used",
+   "category": "edt-duplicate",
+   "edtCheck": "use-non-recommended-methods-check"
+  },
+  {
+   "key": "EmptyRegion",
+   "name": "The region should not be empty",
+   "category": "edt-duplicate",
+   "edtCheck": "region-empty-check"
+  },
+  {
+   "key": "EventHandlerOutsideEventRegion",
+   "name": "Event handler outside standard region",
+   "category": "edt-duplicate",
+   "edtCheck": "module-structure-event-regions-check"
+  },
+  {
+   "key": "ExportVariables",
+   "name": "Ban export global module variables",
+   "category": "edt-duplicate",
+   "edtCheck": "export-variable-in-object-module"
+  },
+  {
+   "key": "IncorrectUseLikeInQuery",
+   "name": "Incorrect use of 'LIKE'",
+   "category": "edt-duplicate",
+   "edtCheck": "ql-like-expression-with-field"
+  },
+  {
+   "key": "IsInRoleMethod",
+   "name": "IsInRole global method call",
+   "category": "edt-duplicate",
+   "edtCheck": "is-in-role-check"
+  },
+  {
+   "key": "JoinWithSubQuery",
+   "name": "Join with sub queries",
+   "category": "edt-duplicate",
+   "edtCheck": "ql-join-to-sub-query"
+  },
+  {
+   "key": "MetadataObjectNameLength",
+   "name": "Metadata object names must not exceed the allowed length",
+   "category": "edt-duplicate",
+   "edtCheck": "md-object-name-length-check"
+  },
+  {
+   "key": "MissingCommonModuleMethod",
+   "name": "Referencing a missing common module method",
+   "category": "edt-duplicate",
+   "edtCheck": "module-undefined-method-check"
+  },
+  {
+   "key": "MissingParameterDescription",
+   "name": "Method parameters description are missing",
+   "category": "edt-duplicate",
+   "edtCheck": "doc-comment-parameter-section"
+  },
+  {
+   "key": "MissingReturnedValueDescription",
+   "name": "Function returned values description is missing",
+   "category": "edt-duplicate",
+   "edtCheck": "doc-comment-procedure-return-section"
+  },
+  {
+   "key": "MissingTemporaryFileDeletion",
+   "name": "Missing temporary file deletion after using",
+   "category": "edt-duplicate",
+   "edtCheck": "missing-temporary-file-deletion-check"
+  },
+  {
+   "key": "NumberOfParams",
+   "name": "Number of parameters in method",
+   "category": "edt-duplicate",
+   "edtCheck": "method-too-many-params-check"
+  },
+  {
+   "key": "NumberOfValuesInStructureConstructor",
+   "name": "Limit on the number of property values passed to the structure constructor",
+   "category": "edt-duplicate",
+   "edtCheck": "structure-ctor-too-many-keys-check"
+  },
+  {
+   "key": "OrderOfParams",
+   "name": "Order of Parameters in method",
+   "category": "edt-duplicate",
+   "edtCheck": "method-optional-parameter-before-required-check"
+  },
+  {
+   "key": "PublicMethodsDescription",
+   "name": "All public methods must have a description",
+   "category": "edt-duplicate",
+   "edtCheck": "export-procedure-missing-comment"
+  },
+  {
+   "key": "RedundantAccessToObject",
+   "name": "Redundant access to an object",
+   "category": "edt-duplicate",
+   "edtCheck": "self-reference-check/common-module-named-self-reference"
+  },
+  {
+   "key": "SelfAssign",
+   "name": "Variable is assigned to itself",
+   "category": "edt-duplicate",
+   "edtCheck": "self-assign-check"
+  },
+  {
+   "key": "StyleElementConstructors",
+   "name": "Style element constructor",
+   "category": "edt-duplicate",
+   "edtCheck": "new-color-check/new-font-check"
+  },
+  {
+   "key": "UnknownMember",
+   "name": "Reference to an unknown method or property",
+   "category": "edt-duplicate",
+   "edtCheck": "module-undefined-method-check/module-undefined-variable-check"
+  },
+  {
+   "key": "UnusedLocalMethod",
+   "name": "Unused local method",
+   "category": "edt-duplicate",
+   "edtCheck": "module-unused-method-check"
+  },
+  {
+   "key": "UnusedLocalVariable",
+   "name": "Unused local variable",
+   "category": "edt-duplicate",
+   "edtCheck": "module-unused-local-variable-check"
+  },
+  {
+   "key": "UsingCancelParameter",
+   "name": "Using parameter \"Cancel\"",
+   "category": "edt-duplicate",
+   "edtCheck": "event-handler-boolean-param"
+  },
+  {
+   "key": "UsingGoto",
+   "name": "\"goto\" statement should not be used",
+   "category": "edt-duplicate",
+   "edtCheck": "use-goto-operator-check"
+  },
+  {
+   "key": "UsingLikeInQuery",
+   "name": "Using 'LIKE' in query",
+   "category": "edt-duplicate",
+   "edtCheck": "ql-like-expression-with-field"
+  },
+  {
+   "key": "UsingModalWindows",
+   "name": "Using modal windows",
+   "category": "edt-duplicate",
+   "edtCheck": "use-non-recommended-methods-check"
+  },
+  {
+   "key": "UsingSynchronousCalls",
+   "name": "Using synchronous calls",
+   "category": "edt-duplicate",
+   "edtCheck": "use-non-recommended-methods-check"
+  },
+  {
+   "key": "UsingThisForm",
+   "name": "Using deprecated property \"ThisForm\"",
+   "category": "edt-duplicate",
+   "edtCheck": "form-self-reference-outdated"
+  },
+  {
+   "key": "VirtualTableCallWithoutParameters",
+   "name": "Virtual table call without parameters",
+   "category": "edt-duplicate",
+   "edtCheck": "ql-virtual-table-filters"
+  },
+  {
+   "key": "WrongUseOfRollbackTransactionMethod",
+   "name": "Not recommended using of RollbackTransaction method",
+   "category": "edt-duplicate",
+   "edtCheck": "rollback-transaction-check"
+  },
+  {
+   "key": "AllFunctionPathMustHaveReturn",
+   "name": "All execution paths of a function must have a Return statement",
+   "category": "general"
+  },
+  {
+   "key": "AssignAliasFieldsInQuery",
+   "name": "Assigning aliases to selected fields in a query",
+   "category": "general"
+  },
+  {
+   "key": "AssignToReadOnlyProperty",
+   "name": "Assignment to a read-only property",
+   "category": "general"
+  },
+  {
+   "key": "BadExceptionCategory",
+   "name": "Bad exception category",
+   "category": "general"
+  },
+  {
+   "key": "CachedPublic",
+   "name": "Cached public methods",
+   "category": "general"
+  },
+  {
+   "key": "CodeAfterAsyncCall",
+   "name": "Lines of code after the asynchronous method call",
+   "category": "general"
+  },
+  {
+   "key": "CodeBlockBeforeSub",
+   "name": "Method definitions must be placed before the module body operators",
+   "category": "general"
+  },
+  {
+   "key": "CodeOutOfRegion",
+   "name": "Code out of region",
+   "category": "general"
+  },
+  {
+   "key": "CommentedCode",
+   "name": "Commented out code",
+   "category": "general"
+  },
+  {
+   "key": "CommonModuleAssign",
+   "name": "CommonModuleAssign",
+   "category": "general"
+  },
+  {
+   "key": "CommonModuleVariables",
+   "name": "Variables declaration in common module",
+   "category": "general"
+  },
+  {
+   "key": "CompareWithBoolean",
+   "name": "Comparison with a boolean constant",
+   "category": "general"
+  },
+  {
+   "key": "CompilationDirectiveLost",
+   "name": "Methods compilation directive",
+   "category": "general"
+  },
+  {
+   "key": "CompilationDirectiveNeedLess",
+   "name": "Needless compilation directive",
+   "category": "general"
+  },
+  {
+   "key": "CrazyMultilineString",
+   "name": "Crazy multiline literals",
+   "category": "general"
+  },
+  {
+   "key": "DeletingCollectionItem",
+   "name": "Deleting an item when iterating through collection using the operator \"For each ... In ... Do\"",
+   "category": "general"
+  },
+  {
+   "key": "DenyIncompleteValues",
+   "name": "Deny incomplete values for dimensions",
+   "category": "general"
+  },
+  {
+   "key": "DeprecatedAttributes8312",
+   "name": "Deprecated 8.3.12 platform features",
+   "category": "general"
+  },
+  {
+   "key": "DeprecatedFind",
+   "name": "Using of the deprecated method \"Find\"",
+   "category": "general"
+  },
+  {
+   "key": "DeprecatedTypeManagedForm",
+   "name": "Deprecated ManagedForm type",
+   "category": "general"
+  },
+  {
+   "key": "DisableSafeMode",
+   "name": "Disable safe mode",
+   "category": "general"
+  },
+  {
+   "key": "DoubleNegatives",
+   "name": "Double negatives",
+   "category": "general"
+  },
+  {
+   "key": "DuplicatedInsertionIntoCollection",
+   "name": "Duplicate adding or pasting a value to a collection",
+   "category": "general"
+  },
+  {
+   "key": "EmptyCodeBlock",
+   "name": "Empty code block",
+   "category": "general"
+  },
+  {
+   "key": "EmptyStatement",
+   "name": "Empty statement",
+   "category": "general"
+  },
+  {
+   "key": "EventHandlerInvalidSignature",
+   "name": "Event handler signature mismatch",
+   "category": "general"
+  },
+  {
+   "key": "ExcessiveAutoTestCheck",
+   "name": "Excessive AutoTest Check",
+   "category": "general"
+  },
+  {
+   "key": "ExecuteExternalCode",
+   "name": "Executing of external code on the server",
+   "category": "general"
+  },
+  {
+   "key": "ExecuteExternalCodeInCommonModule",
+   "name": "Executing of external code in a common module on the server",
+   "category": "general"
+  },
+  {
+   "key": "ExternalAppStarting",
+   "name": "External applications starting",
+   "category": "general"
+  },
+  {
+   "key": "FieldsFromJoinsWithoutIsNull",
+   "name": "No NULL checks for fields from joined tables",
+   "category": "general"
+  },
+  {
+   "key": "FileSystemAccess",
+   "name": "File system access",
+   "category": "general"
+  },
+  {
+   "key": "ForbiddenMetadataName",
+   "name": "Metadata object has a forbidden name",
+   "category": "general"
+  },
+  {
+   "key": "FormDataToValue",
+   "name": "FormDataToValue method call",
+   "category": "general"
+  },
+  {
+   "key": "FullOuterJoinQuery",
+   "name": "Using of \"FULL OUTER JOIN\" in queries",
+   "category": "general"
+  },
+  {
+   "key": "FunctionOutParameter",
+   "name": "Out function parameter",
+   "category": "general"
+  },
+  {
+   "key": "FunctionReturnsSamePrimitive",
+   "name": "The function always returns the same primitive value",
+   "category": "general"
+  },
+  {
+   "key": "FunctionShouldHaveReturn",
+   "name": "The function should have return",
+   "category": "general"
+  },
+  {
+   "key": "GetFormMethod",
+   "name": "GetForm method call",
+   "category": "general"
+  },
+  {
+   "key": "GlobalContextMethodCollision8312",
+   "name": "Global context method names collision",
+   "category": "general"
+  },
+  {
+   "key": "IdenticalExpressions",
+   "name": "There are identical sub-expressions to the left and to the right of the \"foo\" operator",
+   "category": "general"
+  },
+  {
+   "key": "IfElseDuplicatedCodeBlock",
+   "name": "Duplicated code blocks in If...Then...ElseIf... statements",
+   "category": "general"
+  },
+  {
+   "key": "IfElseDuplicatedCondition",
+   "name": "Duplicated conditions in If...Then...ElseIf... statements",
+   "category": "general"
+  },
+  {
+   "key": "IfElseIfEndsWithElse",
+   "name": "Else...The...ElseIf... statement should end with Else branch",
+   "category": "general"
+  },
+  {
+   "key": "IncorrectUseOfStrTemplate",
+   "name": "Incorrect use of \"StrTemplate\"",
+   "category": "general"
+  },
+  {
+   "key": "InternetAccess",
+   "name": "Referring to Internet resources",
+   "category": "general"
+  },
+  {
+   "key": "InvalidCharacterInFile",
+   "name": "Invalid character",
+   "category": "general"
+  },
+  {
+   "key": "JoinWithVirtualTable",
+   "name": "Join with virtual table",
+   "category": "general"
+  },
+  {
+   "key": "LatinAndCyrillicSymbolInWord",
+   "name": "Mixing Latin and Cyrillic characters in one identifier",
+   "category": "general"
+  },
+  {
+   "key": "LogicalOrInJoinQuerySection",
+   "name": "Logical 'OR' in 'JOIN' query section",
+   "category": "general"
+  },
+  {
+   "key": "LogicalOrInTheWhereSectionOfQuery",
+   "name": "Using a logical \"OR\" in the \"WHERE\" section of a query",
+   "category": "general"
+  },
+  {
+   "key": "MissedRequiredParameter",
+   "name": "Missed a required method parameter",
+   "category": "general"
+  },
+  {
+   "key": "MissingCodeTryCatchEx",
+   "name": "Missing code in Raise block in \"Try ... Raise ... EndTry\"",
+   "category": "general"
+  },
+  {
+   "key": "MissingEventSubscriptionHandler",
+   "name": "Event subscription handler missing",
+   "category": "general"
+  },
+  {
+   "key": "MissingTempStorageDeletion",
+   "name": "Missing temporary storage data deletion after using",
+   "category": "general"
+  },
+  {
+   "key": "MissingVariablesDescription",
+   "name": "All variables declarations must have a description",
+   "category": "general"
+  },
+  {
+   "key": "MultilineStringInQuery",
+   "name": "Multi-line literal in query",
+   "category": "general"
+  },
+  {
+   "key": "MultilingualStringHasAllDeclaredLanguages",
+   "name": "There is a localized text for all languages declared in the configuration",
+   "category": "general"
+  },
+  {
+   "key": "MultilingualStringUsingWithTemplate",
+   "name": "Partially localized text is used in the StrTemplate function",
+   "category": "general"
+  },
+  {
+   "key": "NestedConstructorsInStructureDeclaration",
+   "name": "Nested constructors with parameters in structure declaration",
+   "category": "general"
+  },
+  {
+   "key": "NestedFunctionInParameters",
+   "name": "Initialization of method and constructor parameters by calling nested methods",
+   "category": "general"
+  },
+  {
+   "key": "NestedTernaryOperator",
+   "name": "Nested ternary operator",
+   "category": "general"
+  },
+  {
+   "key": "NonExportMethodsInApiRegion",
+   "name": "Non export methods in API regions",
+   "category": "general"
+  },
+  {
+   "key": "NonStandardRegion",
+   "name": "Non-standard region of module",
+   "category": "general"
+  },
+  {
+   "key": "OSUsersMethod",
+   "name": "Using method OSUsers",
+   "category": "general"
+  },
+  {
+   "key": "OneStatementPerLine",
+   "name": "One statement per line",
+   "category": "general"
+  },
+  {
+   "key": "OrdinaryAppSupport",
+   "name": "Ordinary application support",
+   "category": "general"
+  },
+  {
+   "key": "PairingBrokenTransaction",
+   "name": "Violation of pairing using methods \"BeginTransaction()\" & \"CommitTransaction()\" / \"RollbackTransaction()\"",
+   "category": "general"
+  },
+  {
+   "key": "ParseError",
+   "name": "Source code parse error",
+   "category": "general"
+  },
+  {
+   "key": "PrivilegedModuleMethodCall",
+   "name": "Accessing privileged module methods",
+   "category": "general"
+  },
+  {
+   "key": "ProcedureReturnsValue",
+   "name": "Procedure should not return Value",
+   "category": "general"
+  },
+  {
+   "key": "ProtectedModule",
+   "name": "Protected modules",
+   "category": "general"
+  },
+  {
+   "key": "QueryNestedFieldsByDot",
+   "name": "Getting objects nested fields data by dot in database query text",
+   "category": "general"
+  },
+  {
+   "key": "QueryParseError",
+   "name": "Query text parsing error",
+   "category": "general"
+  },
+  {
+   "key": "QueryToMissingMetadata",
+   "name": "Using non-existent metadata in the query",
+   "category": "general"
+  },
+  {
+   "key": "RefOveruse",
+   "name": "Overuse \"Reference\" in a query",
+   "category": "general"
+  },
+  {
+   "key": "ReservedParameterNames",
+   "name": "Reserved parameter names",
+   "category": "general"
+  },
+  {
+   "key": "RewriteMethodParameter",
+   "name": "Rewrite method parameter",
+   "category": "general"
+  },
+  {
+   "key": "SameMetadataObjectAndChildNames",
+   "name": "Same metadata object and child name",
+   "category": "general"
+  },
+  {
+   "key": "ScheduledJobHandler",
+   "name": "Scheduled job handler",
+   "category": "general"
+  },
+  {
+   "key": "SelectTopWithoutOrderBy",
+   "name": "Using 'SELECT TOP' without 'ORDER BY'",
+   "category": "general"
+  },
+  {
+   "key": "SelfInsertion",
+   "name": "Insert a collection into itself",
+   "category": "general"
+  },
+  {
+   "key": "SemicolonPresence",
+   "name": "Statement should end with semicolon symbol \";\"",
+   "category": "general"
+  },
+  {
+   "key": "ServerCallsInFormEvents",
+   "name": "Server calls in form events",
+   "category": "general"
+  },
+  {
+   "key": "ServerSideExportFormMethod",
+   "name": "Server-side export form method",
+   "category": "general"
+  },
+  {
+   "key": "SetPermissionsForNewObjects",
+   "name": "The check box «Set permissions for new objects» should only be selected for the FullAccess role",
+   "category": "general"
+  },
+  {
+   "key": "SetPrivilegedMode",
+   "name": "Using privileged mode",
+   "category": "general"
+  },
+  {
+   "key": "SeveralCompilerDirectives",
+   "name": "Erroneous indication of several compilation directives",
+   "category": "general"
+  },
+  {
+   "key": "TempFilesDir",
+   "name": "TempFilesDir() method call",
+   "category": "general"
+  },
+  {
+   "key": "ThisObjectAssign",
+   "name": "ThisObject assign",
+   "category": "general"
+  },
+  {
+   "key": "TimeoutsInExternalResources",
+   "name": "Timeouts working with external resources",
+   "category": "general"
+  },
+  {
+   "key": "TransferringParametersBetweenClientAndServer",
+   "name": "Transferring parameters between the client and the server",
+   "category": "general"
+  },
+  {
+   "key": "TryNumber",
+   "name": "Cast to number of try catch block",
+   "category": "general"
+  },
+  {
+   "key": "Typo",
+   "name": "Typo",
+   "category": "general"
+  },
+  {
+   "key": "UnaryPlusInConcatenation",
+   "name": "Unary Plus sign in string concatenation",
+   "category": "general"
+  },
+  {
+   "key": "UnavailableMemberCall",
+   "name": "Use of a method/property unavailable in the target platform version",
+   "category": "general"
+  },
+  {
+   "key": "UnionAll",
+   "name": "Using keyword \"UNION\" in queries",
+   "category": "general"
+  },
+  {
+   "key": "UnknownPreprocessorSymbol",
+   "name": "Unknown preprocessor symbol",
+   "category": "general"
+  },
+  {
+   "key": "UnreachableCode",
+   "name": "Unreachable Code",
+   "category": "general"
+  },
+  {
+   "key": "UnsafeFindByCode",
+   "name": "Unsafe FindByCode() method usage",
+   "category": "general"
+  },
+  {
+   "key": "UnsafeSafeModeMethodCall",
+   "name": "Unsafe SafeMode method call",
+   "category": "general"
+  },
+  {
+   "key": "UnusedParameters",
+   "name": "Unused parameter",
+   "category": "general"
+  },
+  {
+   "key": "UsageWriteLogEvent",
+   "name": "Incorrect use of the method \"WriteLogEvent\"",
+   "category": "general"
+  },
+  {
+   "key": "UseLessForEach",
+   "name": "Useless collection iteration",
+   "category": "general"
+  },
+  {
+   "key": "UseSystemInformation",
+   "name": "Use of system information",
+   "category": "general"
+  },
+  {
+   "key": "UselessTernaryOperator",
+   "name": "Useless ternary operator",
+   "category": "general"
+  },
+  {
+   "key": "UsingExternalCodeTools",
+   "name": "Using external code tools",
+   "category": "general"
+  },
+  {
+   "key": "UsingFindElementByString",
+   "name": "Using FindByName, FindByCode and FindByNumber",
+   "category": "general"
+  },
+  {
+   "key": "UsingHardcodeNetworkAddress",
+   "name": "Using hardcode ip addresses in code",
+   "category": "general"
+  },
+  {
+   "key": "UsingHardcodePath",
+   "name": "Using hardcode file paths in code",
+   "category": "general"
+  },
+  {
+   "key": "UsingHardcodeSecretInformation",
+   "name": "Storing confidential information in code",
+   "category": "general"
+  },
+  {
+   "key": "UsingObjectNotAvailableUnix",
+   "name": "Using unavailable in Unix objects",
+   "category": "general"
+  },
+  {
+   "key": "UsingServiceTag",
+   "name": "Using service tags",
+   "category": "general"
+  },
+  {
+   "key": "WrongDataPathForFormElements",
+   "name": "Form fields do not have a data path",
+   "category": "general"
+  },
+  {
+   "key": "WrongHttpServiceHandler",
+   "name": "Missing handler for http service",
+   "category": "general"
+  },
+  {
+   "key": "WrongUseFunctionProceedWithCall",
+   "name": "Wrong use of ProceedWithCall function",
+   "category": "general"
+  },
+  {
+   "key": "WrongWebServiceHandler",
+   "name": "Wrong handler for web service",
+   "category": "general"
+  },
+  {
+   "key": "YoLetterUsage",
+   "name": "Using Russian character \"yo\" (\"ё\") in code",
+   "category": "general"
+  },
+  {
+   "key": "DuplicateRegion",
+   "name": "Duplicate regions",
+   "category": "inappropriate"
+  },
+  {
+   "key": "ExtraCommas",
+   "name": "Commas without a parameter at the end of a method call",
+   "category": "inappropriate"
+  },
+  {
+   "key": "FunctionNameStartsWithGet",
+   "name": "Function name shouldn't start with \"Получить\"",
+   "category": "inappropriate"
+  },
+  {
+   "key": "IncorrectLineBreak",
+   "name": "Incorrect expression line break",
+   "category": "inappropriate"
+  },
+  {
+   "key": "MissingSpace",
+   "name": "Missing spaces to the left or right of operators + - \\* / = % < > <> <= >=",
+   "category": "inappropriate"
+  },
+  {
+   "key": "SpaceAtStartComment",
+   "name": "Space at the beginning of the comment",
+   "category": "inappropriate"
+  },
+  {
+   "key": "TernaryOperatorUsage",
+   "name": "Ternary operator usage",
+   "category": "inappropriate"
+  },
+  {
+   "key": "BadWords",
+   "name": "Prohibited words",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "CognitiveComplexity",
+   "name": "Cognitive complexity",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "CommonModuleNameWords",
+   "name": "Unrecommended common module name",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "CyclomaticComplexity",
+   "name": "Cyclomatic complexity",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "DuplicateStringLiteral",
+   "name": "Duplicate string literal",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "IfConditionComplexity",
+   "name": "Usage of complex expressions in the \"If\" condition",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "LineLength",
+   "name": "Line Length limit",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "MagicDate",
+   "name": "Magic dates",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "MagicNumber",
+   "name": "Magic numbers",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "MethodSize",
+   "name": "Method size",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "NestedStatements",
+   "name": "Control flow statements should not be nested too deep",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "NumberOfOptionalParams",
+   "name": "Limit number of optional parameters in method",
+   "category": "needs-tuning"
+  },
+  {
+   "key": "TooManyReturns",
+   "name": "Methods should not have too many return statements",
+   "category": "needs-tuning"
+  }
+ ]
+}
