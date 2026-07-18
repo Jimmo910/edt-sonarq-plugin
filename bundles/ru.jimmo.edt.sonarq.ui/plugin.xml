@@ -41,4 +41,9 @@
       <attribute name="sonarSeverity"/>
       <attribute name="issueKey"/>
    </extension>
+   <extension point="org.eclipse.ui.ide.markerResolution">
+      <markerResolutionGenerator markerType="ru.jimmo.edt.sonarq.ui.issue"
+            class="ru.jimmo.edt.sonarq.ui.suppress.SuppressMarkerResolutionGenerator">
+      </markerResolutionGenerator>
+   </extension>
 </plugin>

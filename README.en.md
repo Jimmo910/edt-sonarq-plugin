@@ -34,6 +34,8 @@ against the project's sources, with no server involved.
   Language Server's own taxonomy) with an "Apply Recommended Profile" button.
 - **Local analysis scope** — per project: a base branch (show issues only on lines changed
   relative to it) and a subsystem filter.
+- **Quick-suppressing false positives** — a right-click in the Issues view, or a Problems-view
+  Quick Fix, inserts the BSL Language Server suppression comments around the line for you.
 
 ## Requirements
 
@@ -88,8 +90,9 @@ text labels — the name and purpose of each button is shown in its hover toolti
 Also in the view:
 
 - The **status line** at the bottom shows the issue count, the branch and the last-refresh
-  time, plus how many of the loaded issues are **not shown in the Problems view** (issues whose
-  file doesn't map to any workspace file) — part of the Issues view's unique value over the
+  time, plus how many of the loaded issues are **not shown in the Problems view**: either the
+  issue's path doesn't map to any project file, or it maps to one that still isn't on disk even
+  after refreshing the project's resources — part of the Issues view's unique value over the
   standard Problems view, which never shows those at all.
 - On failure the status line shows a short error headline (for example an authentication or
   network error); the full error text is shown in the line's hover tooltip, and a **Details**
@@ -264,15 +267,37 @@ configuration, though, and still applies even then.
 
 The **Editor markers** group on the preference page:
 
-- **Show issues in editor** (on by default) — issues go into the standard Problems view and
-  show up as underlines in the editor. Severity mapping: BLOCKER/CRITICAL → errors, MAJOR →
-  warnings, everything else → info.
+- **Show issues in the standard Problems view** (on by default) — issues go into the standard
+  **Eclipse Problems** view and show up as underlines in the editor. Severity mapping:
+  BLOCKER/CRITICAL → errors, MAJOR → warnings, everything else → info. Turn the checkbox off to
+  see issues only in the plugin's own view.
 - **Refresh automatically in background** + **Interval (minutes)** — periodic background
   refresh of issues and markers even while the view is closed (server mode only).
+
+> **Important.** These markers do **not** show up in EDT's own **Configuration Problems**
+> view — that view only shows EDT's own metadata-model validator findings, and third-party
+> plugins cannot feed issues into it. SonarQube issues appear in the standard **Problems** view
+> and as editor underlines, as described above.
 
 Markers are **transient**: they are rebuilt on every refresh, and after an EDT restart the
 Problems view is empty until the first refresh.
 
+## Quick-suppressing false positives
+
+If a specific issue is a false positive, you can suppress it right from EDT, with no manual code
+editing:
+
+- **right-click** the issue in the **SonarQube Issues** view → **Suppress issue**;
+- or use the **Quick Fix** on that issue's marker in the Problems view.
+
+The action wraps the flagged line with a pair of BSL Language Server suppression comments:
+`// BSLLS:<RuleKey>-off` on the line above, and `// BSLLS:<RuleKey>-on` on the line below. Both
+the BSL Language Server itself (local mode) and the server-side `sonar-bsl-plugin-community`
+(the same diagnostics engine) honor this pair, and stop reporting that rule on the flagged
+line — no need to copy the comments by hand.
+
+When the file is already open in an editor, the edit lands directly in the open document and can
+be undone; otherwise it is written straight to disk.
 
 ## How it works
 

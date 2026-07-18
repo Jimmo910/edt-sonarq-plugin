@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
+import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.resources.WorkspaceJob;
@@ -29,10 +30,13 @@ import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.ActionContributionItem;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IMenuCreator;
+import org.eclipse.jface.action.IMenuManager;
 import org.eclipse.jface.action.IToolBarManager;
+import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.resource.ImageDescriptor;
+import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
@@ -66,20 +70,24 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
+import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
 import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
+import ru.jimmo.edt.sonarq.ui.suppress.SuppressionApplier;
 import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
 import ru.jimmo.edt.sonarq.ui.sync.RefreshInputsFactory;
 
@@ -115,6 +123,7 @@ public class SonarIssuesView extends ViewPart
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
     private long refreshGeneration;
+    private int missingFileMarkerCount;
     private Job inFlightJob;
     private RuleDescriptionPanel rulePanel;
     private IIssueProvider currentProvider;
@@ -190,6 +199,8 @@ public class SonarIssuesView extends ViewPart
                 viewer.setExpandedState(group, !viewer.getExpandedState(group));
             }
         });
+
+        hookContextMenu();
 
         createStatusRow(root);
 
@@ -515,6 +526,105 @@ public class SonarIssuesView extends ViewPart
         viewer.setInput(IssueTreeBuilder.build(snapshot.issues(), boundProjectKey, boundPathPrefix, grouping));
     }
 
+    /**
+     * Installs a context menu on the issue tree offering "Suppress issue" for a suppressible selection.
+     */
+    private void hookContextMenu()
+    {
+        MenuManager menuManager = new MenuManager();
+        menuManager.setRemoveAllWhenShown(true);
+        menuManager.addMenuListener(this::fillContextMenu);
+        viewer.getTree().setMenu(menuManager.createContextMenu(viewer.getTree()));
+    }
+
+    /**
+     * Adds the suppress action to the context menu when the selected entry can be quick-suppressed.
+     *
+     * @param manager the context menu manager, not {@code null}
+     */
+    private void fillContextMenu(IMenuManager manager)
+    {
+        IssueEntry entry = suppressibleSelection();
+        if (entry != null)
+        {
+            manager.add(new Action(Messages.IssuesView_SuppressAction)
+            {
+                @Override
+                public void run()
+                {
+                    suppressIssue(entry);
+                }
+            });
+        }
+    }
+
+    /**
+     * Returns the selected issue entry when it can be quick-suppressed - it maps to a file and has a rule key
+     * and a positive line - or {@code null} otherwise.
+     *
+     * @return the suppressible entry, or {@code null}
+     */
+    private IssueEntry suppressibleSelection()
+    {
+        Object element = ((IStructuredSelection)viewer.getSelection()).getFirstElement();
+        if (selectedProject != null && element instanceof IssueEntry entry && entry.relativePath() != null
+            && entry.issue().line() > 0 && !entry.issue().ruleKey().isEmpty())
+        {
+            return entry;
+        }
+        return null;
+    }
+
+    /**
+     * Inserts BSL Language Server suppression comments around the issue's line, so the false-positive stops
+     * being reported, then updates the tree and markers in place.
+     *
+     * @param entry the issue entry to suppress, not {@code null}
+     */
+    private void suppressIssue(IssueEntry entry)
+    {
+        IFile file = selectedProject.getFile(entry.relativePath());
+        if (!file.exists())
+        {
+            return;
+        }
+        try
+        {
+            SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage());
+            applySuppressionLineShift(entry);
+        }
+        catch (CoreException | BadLocationException e)
+        {
+            SonarqPlugin.getInstance().getLog().error(e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Updates the current {@link #snapshot} in place right after a successful quick-suppress, instead of
+     * relying on the next asynchronous {@link #refreshIssues()} (which can take seconds, or a full
+     * re-analysis in local analysis mode) to catch up.
+     *
+     * <p>Without this, suppressing a second issue in the same file before that refresh completes would read
+     * a stale line number for it - {@link SuppressionLineShift#applyAfterSuppress} is what keeps every other
+     * issue in the file numbered correctly for the comment pair {@link SuppressionApplier#apply} just wrote,
+     * so this method never needs a fresh server or local-analysis round-trip to stay correct (issue #7
+     * follow-up).
+     *
+     * @param entry the issue entry that was just suppressed, not {@code null}
+     */
+    private void applySuppressionLineShift(IssueEntry entry)
+    {
+        if (snapshot == null)
+        {
+            return;
+        }
+        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), entry.issue().key(),
+            entry.issue().componentKey(), entry.issue().line());
+        snapshot = new IssueSnapshot(snapshot.query(), adjusted, adjusted.size(), snapshot.loadedAt());
+        rebuildTree();
+        scheduleMarkerSync();
+    }
+
     private void refreshIssues()
     {
         refreshGeneration++;
@@ -814,6 +924,9 @@ public class SonarIssuesView extends ViewPart
                 return;
             }
             setInput(result.snapshot(), result.branchState());
+            // A previous sync's missing-file count no longer applies to this fresh snapshot; scheduleMarkerSync
+            // reports the up-to-date count asynchronously once its background job completes.
+            missingFileMarkerCount = 0;
             updateStatusAndBanner();
             scheduleMarkerSync();
         });
@@ -902,7 +1015,11 @@ public class SonarIssuesView extends ViewPart
      * markers derived from the current {@link #snapshot}, unless the user disabled editor markers.
      *
      * <p>Must run on the UI thread: it reads the view's fields once, into locals, before scheduling the
-     * job so the job body never reads mutable view state from a background thread.
+     * job so the job body never reads mutable view state from a background thread. Once the job completes,
+     * its {@link MarkerSyncResult#missingFile()} count is posted back to {@link #missingFileMarkerCount} on
+     * the UI thread and folded into the status line (see {@link #buildStatusText}), guarded by the same
+     * {@link #refreshGeneration} check as {@link #onRefreshFinished} so a slow sync from a superseded
+     * refresh cannot overwrite a newer one's status (issue #6).
      */
     private void scheduleMarkerSync()
     {
@@ -915,6 +1032,7 @@ public class SonarIssuesView extends ViewPart
         IssueSnapshot markerSnapshot = snapshot;
         String projectKey = boundProjectKey;
         String pathPrefix = boundPathPrefix;
+        long generation = refreshGeneration;
         WorkspaceJob job = new WorkspaceJob(Messages.MarkerSyncJob_Name)
         {
             @Override
@@ -924,7 +1042,14 @@ public class SonarIssuesView extends ViewPart
                 {
                     List<IssueEntry> entries =
                         IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix);
-                    new IssueMarkerSynchronizer().sync(project, entries);
+                    MarkerSyncResult result = new IssueMarkerSynchronizer().sync(project, entries);
+                    if (result.missingFile() > 0)
+                    {
+                        Platform.getLog(SonarIssuesView.class).warn(result.missingFile()
+                            + " issue(s) resolved to a project file that does not exist even after a " //$NON-NLS-1$
+                            + "workspace refresh; they are not shown as Problems-view markers"); //$NON-NLS-1$
+                    }
+                    Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result));
                 }
                 catch (CoreException e)
                 {
@@ -936,6 +1061,23 @@ public class SonarIssuesView extends ViewPart
         job.setRule(project);
         job.setSystem(true);
         job.schedule();
+    }
+
+    /**
+     * Applies a completed marker sync's missing-file count to the status line, unless a newer refresh has
+     * since started or the view has since been disposed.
+     *
+     * @param generation the {@link #refreshGeneration} the sync was started for
+     * @param result the completed sync's outcome, not {@code null}
+     */
+    private void applyMarkerSyncResult(long generation, MarkerSyncResult result)
+    {
+        if (viewer.getControl().isDisposed() || generation != refreshGeneration)
+        {
+            return;
+        }
+        missingFileMarkerCount = result.missingFile();
+        updateStatusAndBanner();
     }
 
     private void updateStatusAndBanner()
@@ -970,9 +1112,13 @@ public class SonarIssuesView extends ViewPart
         }
         long unmapped = IssueTreeBuilder.countUnmapped(
             IssueTreeBuilder.toEntries(snapshot.issues(), boundProjectKey, boundPathPrefix));
-        if (unmapped > 0)
+        // Both counts describe issues shown in this tree that have no Problems-view marker: unmapped never
+        // resolved to a project path at all, missingFileMarkerCount resolved to one that still doesn't exist
+        // as a file (see #scheduleMarkerSync / MarkerSyncResult#missingFile, issue #6).
+        long notShownInProblems = unmapped + missingFileMarkerCount;
+        if (notShownInProblems > 0)
         {
-            text += NLS.bind(Messages.IssuesView_Status_UnmappedCount, Long.valueOf(unmapped));
+            text += NLS.bind(Messages.IssuesView_Status_UnmappedCount, Long.valueOf(notShownInProblems));
         }
         return text;
     }

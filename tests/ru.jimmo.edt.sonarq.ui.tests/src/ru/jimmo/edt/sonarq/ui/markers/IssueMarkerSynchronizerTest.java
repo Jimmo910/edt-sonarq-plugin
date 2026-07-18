@@ -7,9 +7,12 @@
 package ru.jimmo.edt.sonarq.ui.markers;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
 
 import org.eclipse.core.resources.IFile;
@@ -132,6 +135,36 @@ public class IssueMarkerSynchronizerTest
 
         assertEquals(0, file.findMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_ZERO).length);
         assertEquals(0, project.findMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_INFINITE).length);
+    }
+
+    @Test
+    public void syncCountsCreatedAndMissingFileSeparatelyFromUnmappedEntries() throws CoreException
+    {
+        IssueEntry existing = new IssueEntry(issue("k12", "bsl:Rule12", SonarSeverity.MAJOR, 1), RELATIVE_PATH);
+        IssueEntry missingFile = new IssueEntry(issue("k13", "bsl:Rule13", SonarSeverity.MAJOR, 1), "src/Missing.bsl");
+        IssueEntry unmapped = new IssueEntry(issue("k14", "bsl:Rule14", SonarSeverity.MAJOR, 1), null);
+
+        MarkerSyncResult result = synchronizer.sync(project, List.of(existing, missingFile, unmapped));
+
+        assertEquals(1, result.created());
+        assertEquals(1, result.missingFile());
+    }
+
+    @Test
+    public void syncRefreshesResourceTreeSoFileWrittenDirectlyToDiskIsFound() throws CoreException, IOException
+    {
+        String newRelativePath = "src/WrittenDirectlyToDisk.bsl";
+        IFile newFile = project.getFile(newRelativePath);
+        Files.write(newFile.getLocation().toFile().toPath(), "test".getBytes(StandardCharsets.UTF_8));
+        // Sanity check: the workspace resource tree does not know about the file yet, because it was
+        // written straight to disk instead of through the IFile API.
+        assertFalse(newFile.exists());
+
+        MarkerSyncResult result = synchronizer.sync(project,
+            List.of(new IssueEntry(issue("k15", "bsl:Rule15", SonarSeverity.MAJOR, 1), newRelativePath)));
+
+        assertEquals(1, result.created());
+        assertEquals(0, result.missingFile());
     }
 
     @Test

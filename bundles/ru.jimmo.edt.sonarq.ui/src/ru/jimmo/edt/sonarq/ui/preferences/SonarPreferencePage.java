@@ -498,6 +498,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         showMarkersButton.setText(Messages.PreferencePage_ShowMarkers);
         showMarkersButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
 
+        Label showMarkersHint = new Label(group, SWT.WRAP);
+        showMarkersHint.setText(Messages.PreferencePage_ShowMarkersHint);
+        showMarkersHint.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
         autoSyncButton = new Button(group, SWT.CHECK);
         autoSyncButton.setText(Messages.PreferencePage_AutoSync);
         autoSyncButton.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
