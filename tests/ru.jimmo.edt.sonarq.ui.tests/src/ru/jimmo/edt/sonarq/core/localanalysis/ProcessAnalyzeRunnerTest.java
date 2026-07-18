@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -112,6 +113,30 @@ public class ProcessAnalyzeRunnerTest
         }
         Path script = dir.resolve("sonarq-print-cwd.sh");
         Files.writeString(script, "#!/bin/sh\npwd\n");
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    /**
+     * Writes a throwaway "server executable" that prints a known line to stdout and exits with a
+     * non-zero code, ignoring any arguments, so the failure-message wiring in {@link ProcessAnalyzeRunner}
+     * can be exercised without spawning the real native launcher.
+     *
+     * @param dir the directory to write the script into, not {@code null}
+     * @param knownLine the line the script prints before exiting, not {@code null}
+     * @return the script path, never {@code null}
+     * @throws IOException if the script cannot be written
+     */
+    private static Path writeFailingScript(Path dir, String knownLine) throws IOException
+    {
+        if (isWindows())
+        {
+            Path script = dir.resolve("sonarq-failer.bat");
+            Files.writeString(script, "@echo off\r\necho " + knownLine + "\r\nexit /b 1\r\n");
+            return script;
+        }
+        Path script = dir.resolve("sonarq-failer.sh");
+        Files.writeString(script, "#!/bin/sh\necho " + knownLine + "\nexit 1\n");
         script.toFile().setExecutable(true);
         return script;
     }
@@ -222,6 +247,39 @@ public class ProcessAnalyzeRunnerTest
         Path logFile = outputDir.resolve("analyze.log");
         String logged = Files.readString(logFile).trim();
         assertEquals(srcDir.toRealPath(), Path.of(logged).toRealPath());
+    }
+
+    /**
+     * Regression test for issue #5: when the BSL Language Server exits with a non-zero code, the
+     * {@link IOException} it raises must point the user at the absolute path of the full log file (in
+     * addition to the existing log tail), since BSL LS itself never names the module that failed to parse.
+     */
+    @Test
+    public void analyzeThrowsIOExceptionPointingToFullLogFileOnNonZeroExit() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-exit-test");
+        String knownLine = "sonarq-test-known-failure-line";
+        Path script = writeFailingScript(scratchDir, knownLine);
+        Path srcDir = scratchDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Path outputDir = scratchDir.resolve("out");
+        Files.createDirectories(outputDir);
+
+        ProcessAnalyzeRunner runner = new ProcessAnalyzeRunner();
+        try
+        {
+            runner.analyze(script, srcDir, outputDir, null, new NullProgressMonitor());
+            fail("expected an IOException for a non-zero exit code");
+        }
+        catch (IOException e)
+        {
+            Path logFile = outputDir.resolve("analyze.log");
+            String message = e.getMessage();
+            assertTrue("expected message to contain the absolute log path, got: " + message,
+                message.contains(logFile.toAbsolutePath().toString()));
+            assertTrue("expected message to contain the known tail line, got: " + message,
+                message.contains(knownLine));
+        }
     }
 
     /**
