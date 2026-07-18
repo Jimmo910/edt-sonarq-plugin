@@ -8,6 +8,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -195,8 +196,13 @@ public final class LocalIssueProvider implements IIssueProvider
             }
             return new IssueSnapshot(query, issues, issues.size(), Instant.now());
         }
-        catch (IOException e)
+        catch (IOException | UncheckedIOException e)
         {
+            // recreateOutputDir and, transitively, BslServerInstaller#ensureServer walk a directory tree
+            // with Files.walk; a delete racing an install can make that throw the unchecked
+            // UncheckedIOException instead of IOException. Catching it alongside IOException here reports
+            // the race as a normal SonarServerException instead of letting it escape as an unhandled
+            // RuntimeException (review minor, issue #4/#5).
             throw new SonarServerException(e.getMessage(), e);
         }
         catch (InterruptedException e)

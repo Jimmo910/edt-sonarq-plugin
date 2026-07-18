@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.ui.preferences;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -261,9 +262,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     }
 
     /**
-     * Enables the BSL source widgets: the combo and the max-heap spinner follow the page mode, the path row
-     * (text, browse and verify buttons) is active only when the user chose a local executable over the
-     * automatic download.
+     * Enables the BSL source widgets: the combo follows the page mode, the path row (text, browse and
+     * verify buttons) is active only when the user chose a local executable over the automatic download,
+     * and the max-heap spinner only while local mode is selected AND the managed download is in effect
+     * (see {@link #heapSpinnerEnabled}) - {@link BslServerInstaller#configureHeap} rewrites only that
+     * downloaded engine's own launcher configuration file, so the spinner has no effect at all on a
+     * user-supplied executable and must not invite the user to believe otherwise.
      */
     private void updateBslSourceEnablement()
     {
@@ -274,10 +278,27 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslBrowseButton.setEnabled(local && ownExecutable);
         bslVerifyButton.setEnabled(local && ownExecutable);
         bslVerifyResultLabel.setEnabled(local && ownExecutable);
-        bslMaxHeapSpinner.setEnabled(local);
+        bslMaxHeapSpinner.setEnabled(heapSpinnerEnabled(local, ownExecutable));
         engineStatusLabel.setEnabled(local);
         deleteEngineButton.setEnabled(local);
         validateBslPath();
+    }
+
+    /**
+     * Decides whether the max-heap spinner should be enabled: only in local mode, and only while the BSL
+     * source is the managed automatic download rather than a user-supplied executable. {@link
+     * BslServerInstaller#configureHeap} rewrites the pinned heap limit of the downloaded engine's own
+     * launcher configuration file under the plugin state directory; it never touches a user-supplied
+     * executable, so the spinner is meaningless (and must stay disabled) whenever one is selected (review
+     * minor, issue #4/#5).
+     *
+     * @param localMode {@code true} when the page mode combo selects local analysis
+     * @param ownExecutable {@code true} when the BSL source combo selects a user-supplied executable
+     * @return {@code true} when the max-heap spinner should be enabled
+     */
+    static boolean heapSpinnerEnabled(boolean localMode, boolean ownExecutable)
+    {
+        return localMode && !ownExecutable;
     }
 
     /**
@@ -401,6 +422,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
      * to delete is reported in an error dialog rather than propagated, since this runs directly from a button
      * click on the UI thread and must never crash the preferences page. Either way, {@link #engineStatusLabel}
      * is refreshed afterwards so the page always reflects the actual on-disk state.
+     *
+     * <p>{@link BslServerInstaller#deleteServer} walks the distribution tree with {@link
+     * java.nio.file.Files#walk}, which throws the unchecked {@link UncheckedIOException} instead of
+     * {@link IOException} when the tree mutates mid-walk (for example a delete racing an install); that is
+     * caught alongside {@link IOException} so such a race is still reported in the same error dialog rather
+     * than escaping and crashing the page (review minor, issue #4/#5).
      */
     private void deleteEngine()
     {
@@ -413,7 +440,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
             {
                 BslServerInstaller.deleteServer(stateDir);
             }
-            catch (IOException e)
+            catch (IOException | UncheckedIOException e)
             {
                 MessageDialog.openError(getShell(), Messages.PreferencePage_DeleteEngineTitle, e.getMessage());
             }

@@ -434,14 +434,14 @@ public class SonarIssuesView extends ViewPart
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null)
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         selectedProject = project;
         Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
         if (inputs.isEmpty())
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         ProjectRefreshInputs refreshInputs = inputs.get();
@@ -463,6 +463,22 @@ public class SonarIssuesView extends ViewPart
     {
         lastErrorMessage = null;
         statusLabel.setText(Messages.IssuesView_Status_Running);
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
+        statusLabel.getParent().layout();
+    }
+
+    /**
+     * Shows the "not configured" status, clearing any error tooltip and "Details" link a previous failed
+     * refresh or analysis attempt may have left visible (review minor, issue #4/#5): every caller of this
+     * method is a guard clause that skips scheduling a refresh or analysis job, so without this the stale
+     * error state from an earlier attempt would otherwise linger on screen next to the unrelated
+     * not-configured message.
+     */
+    private void applyNotConfiguredStatus()
+    {
+        lastErrorMessage = null;
+        statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
         statusLabel.setToolTipText(null);
         setErrorDetailsVisible(false);
         statusLabel.getParent().layout();
@@ -529,7 +545,7 @@ public class SonarIssuesView extends ViewPart
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null || project.getLocation() == null)
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         selectedProject = project;
@@ -537,7 +553,7 @@ public class SonarIssuesView extends ViewPart
         Optional<SonarConnection> connection = new SonarConnectionFactory().create();
         if (!binding.isConfigured() || connection.isEmpty())
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         String requested = resolveRequestedBranch(project, binding);

@@ -114,7 +114,6 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     private static final String EMPTY_TEXT = ""; //$NON-NLS-1$
     private static final String LIST_SEPARATOR = ","; //$NON-NLS-1$
     private static final String TAG_SEPARATOR = ", "; //$NON-NLS-1$
-    private static final String NO_TAGS_DISPLAY = "-"; //$NON-NLS-1$
     private static final String TEMP_SRC_PREFIX = "sonarq-bsl-checks-src"; //$NON-NLS-1$
     private static final String TEMP_REPORT_PREFIX = "sonarq-bsl-checks-report"; //$NON-NLS-1$
     private static final String CATALOG_PROJECT_KEY = "bsl-checks-catalog"; //$NON-NLS-1$
@@ -518,15 +517,17 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     }
 
     /**
-     * Renders a diagnostic's tags for display.
+     * Renders a diagnostic's tags for display, reusing the same localized {@link
+     * Messages#BslChecksPage_NoTags} label the tag-grouping "no tags" bucket parent uses (review minor,
+     * issue #4/#5): the tooltip previously showed a hardcoded, non-localized {@code "-"} for this case.
      *
      * @param tags the diagnostic's tags, not {@code null}
-     * @return {@link #NO_TAGS_DISPLAY} when {@code tags} is empty, otherwise its elements joined with
-     *     {@link #TAG_SEPARATOR}
+     * @return {@link Messages#BslChecksPage_NoTags} when {@code tags} is empty, otherwise its elements
+     *     joined with {@link #TAG_SEPARATOR}
      */
     private static String tagsDisplay(List<String> tags)
     {
-        return tags.isEmpty() ? NO_TAGS_DISPLAY : String.join(TAG_SEPARATOR, tags);
+        return tags.isEmpty() ? Messages.BslChecksPage_NoTags : String.join(TAG_SEPARATOR, tags);
     }
 
     /**
