@@ -83,7 +83,7 @@ text labels — the name and purpose of each button is shown in its hover toolti
 | **Severity** | Multi-select of severities: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. |
 | **Type** | Filter by type: BUG, VULNERABILITY, CODE_SMELL. |
 | **Filter by rule or message** field | Free-text filter over the rule key and the message text. |
-| **Group by File** / **Group by Rule** | Toggle the tree structure. |
+| **Group by File** / **by Rule** / **by Severity** | Toggle the tree structure. The column used for grouping is auto-hidden (it would just repeat the group headers). |
 
 Also in the view:
 

@@ -19,7 +19,8 @@ import ru.jimmo.edt.sonarq.core.model.SonarRule;
 /**
  * Shows a SonarQube rule's description, preferring an embedded {@link Browser} for HTML rendering
  * and falling back to a read-only {@link StyledText} when no browser implementation is available
- * on the platform.
+ * on the platform, or when the platform is GTK (Linux), where a {@link Browser} commonly renders
+ * blank instead of failing outright (see {@link #preferBrowser(String)}).
  */
 public class RuleDescriptionPanel extends Composite
 {
@@ -31,12 +32,16 @@ public class RuleDescriptionPanel extends Composite
         "(?is)\\son\\w+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"; //$NON-NLS-1$
     private static final String EMPTY = ""; //$NON-NLS-1$
 
+    private static final String PLATFORM_GTK = "gtk"; //$NON-NLS-1$
+
     private Browser browser;
     private StyledText styledText;
 
     /**
-     * Creates the panel and tries to embed a {@link Browser}, falling back to a plain
-     * {@link StyledText} if the platform has no browser implementation.
+     * Creates the panel and, on a platform where a {@link Browser} is preferred (see
+     * {@link #preferBrowser(String)}), tries to embed one, falling back to a plain {@link StyledText} when
+     * the platform has no browser implementation at all. On GTK the {@link Browser} is never even
+     * attempted and {@link StyledText} is used directly.
      *
      * @param parent the parent composite, not {@code null}
      */
@@ -44,27 +49,59 @@ public class RuleDescriptionPanel extends Composite
     {
         super(parent, SWT.NONE);
         setLayout(new FillLayout());
-        try
+        if (preferBrowser(SWT.getPlatform()))
         {
-            browser = new Browser(this, SWT.NONE);
-            // Rule descriptions are HTML from the server (or the local analyzer); never let them run
-            // scripts in the embedded browser - the pane only ever renders static documentation.
-            browser.setJavascriptEnabled(false);
-            // Also veto navigation, so a meta refresh, a link or a form in the rule HTML cannot make the
-            // pane load or post to a remote location. The static content shown via setText loads as
-            // about:blank, which stays allowed.
-            browser.addLocationListener(LocationListener.changingAdapter(event ->
+            try
             {
-                if (!event.location.startsWith("about:")) //$NON-NLS-1$
+                browser = new Browser(this, SWT.NONE);
+                // Rule descriptions are HTML from the server (or the local analyzer); never let them run
+                // scripts in the embedded browser - the pane only ever renders static documentation.
+                browser.setJavascriptEnabled(false);
+                // Also veto navigation, so a meta refresh, a link or a form in the rule HTML cannot make the
+                // pane load or post to a remote location. The static content shown via setText loads as
+                // about:blank, which stays allowed.
+                browser.addLocationListener(LocationListener.changingAdapter(event ->
                 {
-                    event.doit = false;
-                }
-            }));
+                    if (!event.location.startsWith("about:")) //$NON-NLS-1$
+                    {
+                        event.doit = false;
+                    }
+                }));
+            }
+            catch (SWTError e)
+            {
+                styledText = new StyledText(this, SWT.READ_ONLY | SWT.WRAP | SWT.V_SCROLL);
+            }
         }
-        catch (SWTError e)
+        else
         {
             styledText = new StyledText(this, SWT.READ_ONLY | SWT.WRAP | SWT.V_SCROLL);
         }
+    }
+
+    /**
+     * Tells whether an SWT {@link Browser} should even be attempted on the given platform, rather than
+     * going straight to the {@link StyledText} plain-text fallback.
+     *
+     * <p>On GTK (Linux), a {@link Browser} very often constructs successfully - no {@link SWTError} is
+     * thrown, so the existing catch below never triggers - but then renders a completely blank pane,
+     * because the underlying WebKit2GTK library is missing or broken. This is a frequent state on
+     * EDT-on-Linux installations and was reported against v0.5.0 (AndreiRch, issue #4): the rule
+     * description pane showed nothing, with no error anywhere. A blank pane that looks like a hang or a
+     * missing feature is strictly worse than a readable plain-text rendering of the same content, so on
+     * GTK the {@link Browser} is never attempted at all and {@link StyledText} (backed by
+     * {@link RuleHtml#toPlainText(String)}) is used unconditionally. On win32 and Cocoa the {@link Browser}
+     * renders correctly, so it stays the preferred widget there, with the existing {@link SWTError} catch
+     * kept as a defense for the rare case it is unavailable.
+     *
+     * @param platform the SWT platform identifier, as returned by {@link SWT#getPlatform()}, not
+     *     {@code null}
+     * @return {@code true} when a {@link Browser} should be attempted, {@code false} to go straight to the
+     *     {@link StyledText} fallback
+     */
+    static boolean preferBrowser(String platform)
+    {
+        return !PLATFORM_GTK.equals(platform);
     }
 
     /**

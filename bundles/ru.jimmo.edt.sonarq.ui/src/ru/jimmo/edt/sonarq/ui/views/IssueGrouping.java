@@ -13,5 +13,11 @@ public enum IssueGrouping
     BY_FILE,
 
     /** Group issues by their rule key. */
-    BY_RULE
+    BY_RULE,
+
+    /**
+     * Group issues by severity, ordered by severity rank (BLOCKER first, INFO last; see
+     * {@link ru.jimmo.edt.sonarq.core.model.SonarSeverity}), not alphabetically.
+     */
+    BY_SEVERITY
 }

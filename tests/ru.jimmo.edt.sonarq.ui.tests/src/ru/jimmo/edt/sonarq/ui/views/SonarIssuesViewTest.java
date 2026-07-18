@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.NullProgressMonitor;
@@ -171,6 +172,38 @@ public class SonarIssuesViewTest
             ImageDescriptor descriptor = AbstractUIPlugin.imageDescriptorFromPlugin(SonarqPlugin.PLUGIN_ID, iconPath);
             assertNotNull("expected " + iconPath + " to resolve to a bundle resource", descriptor);
         }
+    }
+
+    /**
+     * Regression test for issue #3: grouping by Rule repeats the same rule key on every row of the Rule
+     * column, so that column should auto-hide while grouped by Rule.
+     */
+    @Test
+    public void hiddenColumnForGroupByRuleIsTheRuleColumn()
+    {
+        assertEquals(Optional.of(SonarIssuesView.IssueColumn.RULE),
+            SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_RULE));
+    }
+
+    /**
+     * Regression test for issue #3: grouping by Severity repeats the same severity on every row of the
+     * Severity column, so that column should auto-hide while grouped by Severity.
+     */
+    @Test
+    public void hiddenColumnForGroupBySeverityIsTheSeverityColumn()
+    {
+        assertEquals(Optional.of(SonarIssuesView.IssueColumn.SEVERITY),
+            SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_SEVERITY));
+    }
+
+    /**
+     * Regression test for issue #3: grouping by File shows the line number per row in the Location column,
+     * which is useful information, so no column should auto-hide while grouped by File.
+     */
+    @Test
+    public void hiddenColumnForGroupByFileIsEmpty()
+    {
+        assertEquals(Optional.empty(), SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_FILE));
     }
 
     private static String sarifWithFullDescription()

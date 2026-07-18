@@ -61,6 +61,7 @@ public final class Messages extends NLS
     public static String IssuesView_FilterText_Hint;
     public static String IssuesView_GroupByFile;
     public static String IssuesView_GroupByRule;
+    public static String IssuesView_GroupBySeverity;
     public static String IssuesView_ProjectMenu;
     public static String IssuesView_RefreshAction;
     public static String IssuesView_RunAnalysisAction;
@@ -77,6 +78,9 @@ public final class Messages extends NLS
     public static String IssuesView_Status_UnmappedCount;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
+    public static String LocalProgress_Analyzing;
+    public static String LocalProgress_PrepareEngine;
+    public static String LocalProgress_Task;
     public static String MarkerSyncJob_Name;
     public static String PreferencePage_AutoSync;
     public static String PreferencePage_AutoSyncMinutes;

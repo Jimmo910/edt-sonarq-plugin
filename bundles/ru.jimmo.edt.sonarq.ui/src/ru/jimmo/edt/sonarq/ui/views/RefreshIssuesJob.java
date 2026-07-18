@@ -60,7 +60,8 @@ public class RefreshIssuesJob extends Job
         this.sessionBranch = sessionBranch;
         this.callback = callback;
         // Local analysis is a heavyweight, user-triggered run (BSL Language Server install/analysis), so
-        // showing it as a foreground job surfaces the coarse progress LocalIssueProvider#fetchIssues reports.
+        // showing it as a foreground job surfaces the indeterminate progress LocalIssueProvider#fetchIssues
+        // reports.
         // The much faster server-mode refresh - which AutoSyncScheduler also runs unattended in the
         // background - must never pop up a progress dialog, so this stays scoped to the local branch only
         // (see the CLAUDE.md unattended-safety rule).

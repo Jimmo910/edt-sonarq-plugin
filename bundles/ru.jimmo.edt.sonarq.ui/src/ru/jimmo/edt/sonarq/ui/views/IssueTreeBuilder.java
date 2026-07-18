@@ -14,9 +14,10 @@ import java.util.TreeMap;
 
 import ru.jimmo.edt.sonarq.core.mapping.ComponentPathMapper;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
+import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.ui.Messages;
 
-/** Builds the issue tree grouped by file or by rule. */
+/** Builds the issue tree grouped by file, by rule, or by severity. */
 public final class IssueTreeBuilder
 {
     private IssueTreeBuilder()
@@ -35,23 +36,13 @@ public final class IssueTreeBuilder
     public static List<IssueGroup> build(List<SonarIssue> issues, String projectKey, String pathPrefix,
         IssueGrouping grouping)
     {
-        Map<String, List<IssueEntry>> mapped = new TreeMap<>();
+        Map<String, List<IssueEntry>> mapped = grouping == IssueGrouping.BY_SEVERITY
+            ? new TreeMap<>(Comparator.comparingInt(IssueTreeBuilder::severityRank))
+            : new TreeMap<>();
         List<IssueEntry> unmapped = new ArrayList<>();
         for (IssueEntry entry : toEntries(issues, projectKey, pathPrefix))
         {
-            String path = entry.relativePath();
-            if (grouping == IssueGrouping.BY_RULE)
-            {
-                mapped.computeIfAbsent(entry.issue().ruleKey(), key -> new ArrayList<>()).add(entry);
-            }
-            else if (path != null)
-            {
-                mapped.computeIfAbsent(path, key -> new ArrayList<>()).add(entry);
-            }
-            else
-            {
-                unmapped.add(entry);
-            }
+            addToGroup(entry, grouping, mapped, unmapped);
         }
         List<IssueGroup> result = new ArrayList<>();
         for (Map.Entry<String, List<IssueEntry>> group : mapped.entrySet())
@@ -63,6 +54,49 @@ public final class IssueTreeBuilder
             result.add(new IssueGroup(Messages.IssuesView_UnmappedGroup, sorted(unmapped)));
         }
         return result;
+    }
+
+    /**
+     * Files a single entry into its group under the requested {@code grouping}, or into {@code unmapped}
+     * when grouping by file and the entry has no resolved path (see {@link IssueEntry#relativePath()}).
+     *
+     * @param entry the entry to file, not {@code null}
+     * @param grouping the grouping mode, not {@code null}
+     * @param mapped the groups keyed by label, not {@code null}, mutated in place
+     * @param unmapped the trailing "not found in project" bucket, not {@code null}, mutated in place
+     */
+    private static void addToGroup(IssueEntry entry, IssueGrouping grouping, Map<String, List<IssueEntry>> mapped,
+        List<IssueEntry> unmapped)
+    {
+        switch (grouping)
+        {
+            case BY_RULE -> mapped.computeIfAbsent(entry.issue().ruleKey(), key -> new ArrayList<>()).add(entry);
+            case BY_SEVERITY ->
+                mapped.computeIfAbsent(entry.issue().severity().name(), key -> new ArrayList<>()).add(entry);
+            case BY_FILE ->
+            {
+                String path = entry.relativePath();
+                if (path != null)
+                {
+                    mapped.computeIfAbsent(path, key -> new ArrayList<>()).add(entry);
+                }
+                else
+                {
+                    unmapped.add(entry);
+                }
+            }
+        }
+    }
+
+    /**
+     * Ranks a severity name for {@link IssueGrouping#BY_SEVERITY} group ordering.
+     *
+     * @param severityName a {@link SonarSeverity} name, not {@code null}
+     * @return the severity's declaration-order rank (BLOCKER lowest, INFO highest)
+     */
+    private static int severityRank(String severityName)
+    {
+        return SonarSeverity.valueOf(severityName).ordinal();
     }
 
     /**

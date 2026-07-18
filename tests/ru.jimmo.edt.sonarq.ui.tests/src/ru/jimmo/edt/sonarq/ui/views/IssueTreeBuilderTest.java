@@ -23,7 +23,12 @@ public class IssueTreeBuilderTest
 {
     private static SonarIssue issue(String component, String rule, int line)
     {
-        return new SonarIssue("k" + component + line, rule, SonarSeverity.MAJOR,
+        return issue(component, rule, line, SonarSeverity.MAJOR);
+    }
+
+    private static SonarIssue issue(String component, String rule, int line, SonarSeverity severity)
+    {
+        return new SonarIssue("k" + component + line, rule, severity,
             SonarIssueType.CODE_SMELL, component, "msg", line);
     }
 
@@ -62,6 +67,46 @@ public class IssueTreeBuilderTest
             "p", null, IssueGrouping.BY_RULE);
         assertEquals("bsl:R1", groups.get(0).label());
         assertEquals("bsl:R2", groups.get(1).label());
+    }
+
+    /**
+     * Regression test for issue #5: grouping by severity must order groups by severity rank (BLOCKER
+     * first, INFO last, per {@link SonarSeverity}'s declaration order), not alphabetically - alphabetical
+     * order would put BLOCKER, CRITICAL, INFO, MAJOR, MINOR, burying the most severe issues under INFO.
+     */
+    @Test
+    public void groupsBySeverityOrderedByRankNotAlphabetically()
+    {
+        List<IssueGroup> groups = IssueTreeBuilder.build(List.of(
+            issue("p:src/A.bsl", "bsl:R1", 1, SonarSeverity.INFO),
+            issue("p:src/B.bsl", "bsl:R1", 2, SonarSeverity.BLOCKER),
+            issue("p:src/C.bsl", "bsl:R1", 3, SonarSeverity.MINOR),
+            issue("p:src/D.bsl", "bsl:R1", 4, SonarSeverity.CRITICAL),
+            issue("p:src/E.bsl", "bsl:R1", 5, SonarSeverity.MAJOR)),
+            "p", null, IssueGrouping.BY_SEVERITY);
+
+        assertEquals(5, groups.size());
+        assertEquals("BLOCKER", groups.get(0).label());
+        assertEquals("CRITICAL", groups.get(1).label());
+        assertEquals("MAJOR", groups.get(2).label());
+        assertEquals("MINOR", groups.get(3).label());
+        assertEquals("INFO", groups.get(4).label());
+    }
+
+    @Test
+    public void groupsBySeverityCountsEntriesPerGroup()
+    {
+        List<IssueGroup> groups = IssueTreeBuilder.build(List.of(
+            issue("p:src/A.bsl", "bsl:R1", 1, SonarSeverity.MAJOR),
+            issue("p:src/B.bsl", "bsl:R1", 2, SonarSeverity.MAJOR),
+            issue("p:src/C.bsl", "bsl:R1", 3, SonarSeverity.BLOCKER)),
+            "p", null, IssueGrouping.BY_SEVERITY);
+
+        assertEquals(2, groups.size());
+        assertEquals("BLOCKER", groups.get(0).label());
+        assertEquals(1, groups.get(0).entries().size());
+        assertEquals("MAJOR", groups.get(1).label());
+        assertEquals(2, groups.get(1).entries().size());
     }
 
     @Test
