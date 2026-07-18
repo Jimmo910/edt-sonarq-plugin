@@ -32,6 +32,7 @@ import org.eclipse.jface.action.IMenuCreator;
 import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
@@ -53,6 +54,7 @@ import org.eclipse.swt.widgets.Link;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.eclipse.ui.part.ViewPart;
 
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchConfig;
@@ -242,7 +244,7 @@ public class SonarIssuesView extends ViewPart
 
     private Action createRefreshAction()
     {
-        return new Action(Messages.IssuesView_RefreshAction, IAction.AS_PUSH_BUTTON)
+        Action action = new Action(Messages.IssuesView_RefreshAction, IAction.AS_PUSH_BUTTON)
         {
             @Override
             public void run()
@@ -250,11 +252,13 @@ public class SonarIssuesView extends ViewPart
                 refreshIssues();
             }
         };
+        applyToolbarIcon(action, "icons/refresh.png", Messages.IssuesView_RefreshAction); //$NON-NLS-1$
+        return action;
     }
 
     private Action createRunAnalysisAction()
     {
-        return new Action(Messages.IssuesView_RunAnalysisAction, IAction.AS_PUSH_BUTTON)
+        Action action = new Action(Messages.IssuesView_RunAnalysisAction, IAction.AS_PUSH_BUTTON)
         {
             @Override
             public void run()
@@ -262,6 +266,8 @@ public class SonarIssuesView extends ViewPart
                 launchAnalysis();
             }
         };
+        applyToolbarIcon(action, "icons/run.png", Messages.IssuesView_RunAnalysisAction); //$NON-NLS-1$
+        return action;
     }
 
     private Action createProjectAction()
@@ -270,6 +276,7 @@ public class SonarIssuesView extends ViewPart
         {
         };
         projects.setMenuCreator(new ProjectMenuCreator());
+        applyToolbarIcon(projects, "icons/project.png", Messages.IssuesView_ProjectMenu); //$NON-NLS-1$
         return projects;
     }
 
@@ -279,6 +286,7 @@ public class SonarIssuesView extends ViewPart
         {
         };
         severity.setMenuCreator(new SeverityMenuCreator());
+        applyToolbarIcon(severity, "icons/severity.png", Messages.IssuesView_SeverityMenu); //$NON-NLS-1$
         return severity;
     }
 
@@ -288,6 +296,7 @@ public class SonarIssuesView extends ViewPart
         {
         };
         type.setMenuCreator(new TypeMenuCreator());
+        applyToolbarIcon(type, "icons/type.png", Messages.IssuesView_TypeMenu); //$NON-NLS-1$
         return type;
     }
 
@@ -303,12 +312,13 @@ public class SonarIssuesView extends ViewPart
             }
         };
         action.setChecked(true);
+        applyToolbarIcon(action, "icons/groupfile.png", Messages.IssuesView_GroupByFile); //$NON-NLS-1$
         return action;
     }
 
     private Action createGroupByRuleAction()
     {
-        return new Action(Messages.IssuesView_GroupByRule, IAction.AS_RADIO_BUTTON)
+        Action action = new Action(Messages.IssuesView_GroupByRule, IAction.AS_RADIO_BUTTON)
         {
             @Override
             public void run()
@@ -317,6 +327,27 @@ public class SonarIssuesView extends ViewPart
                 rebuildTree();
             }
         };
+        applyToolbarIcon(action, "icons/grouprule.png", Messages.IssuesView_GroupByRule); //$NON-NLS-1$
+        return action;
+    }
+
+    /**
+     * Switches a toolbar action from a text label to an icon, moving its label to the hover tooltip
+     * (issue #4 point 7): JFace renders a toolbar {@link Action} icon-only once an image descriptor is set,
+     * while the action text set at construction time remains its accessible name and drop-down/menu label.
+     * The descriptor is resolved the same way the view's own extension-point icon is (bundle-relative path
+     * under {@code icons/}, resolved through {@link AbstractUIPlugin#imageDescriptorFromPlugin}), and the
+     * matching {@code @2x} file next to it is picked up automatically on HiDPI displays.
+     *
+     * @param action the action to update, not {@code null}
+     * @param iconPath the bundle-relative icon path, e.g. {@code "icons/refresh.png"}, not {@code null}
+     * @param tooltip the action's current label, reused as the tooltip text, not {@code null}
+     */
+    private static void applyToolbarIcon(Action action, String iconPath, String tooltip)
+    {
+        ImageDescriptor descriptor = AbstractUIPlugin.imageDescriptorFromPlugin(SonarqPlugin.PLUGIN_ID, iconPath);
+        action.setImageDescriptor(descriptor);
+        action.setToolTipText(tooltip);
     }
 
     private void createColumns()

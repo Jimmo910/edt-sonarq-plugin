@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.ui.views;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -18,6 +19,8 @@ import java.util.Comparator;
 import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.jface.resource.ImageDescriptor;
+import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -26,6 +29,7 @@ import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
+import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 
 /**
  * Tests for {@link SonarIssuesView#providerAfterRefresh}, the pure (SWT-free) decision behind which
@@ -148,6 +152,25 @@ public class SonarIssuesViewTest
     public void headlineOfReturnsEmptyStringForAnEmptyMessage()
     {
         assertEquals("", SonarIssuesView.headlineOf(""));
+    }
+
+    /**
+     * Regression test for issue #4 point 7: the toolbar actions now show an icon instead of text, resolved
+     * through {@link AbstractUIPlugin#imageDescriptorFromPlugin} from a bundle-relative {@code icons/*.png}
+     * path (see {@code SonarIssuesView#applyToolbarIcon}). A typo in one of those path strings would only
+     * surface at runtime as a blank toolbar button, so this checks every path resolves to an actual bundle
+     * resource rather than {@code null}.
+     */
+    @Test
+    public void toolbarIconPathsResolveToBundleResources()
+    {
+        String[] iconPaths = { "icons/refresh.png", "icons/run.png", "icons/project.png", "icons/severity.png",
+            "icons/type.png", "icons/groupfile.png", "icons/grouprule.png" };
+        for (String iconPath : iconPaths)
+        {
+            ImageDescriptor descriptor = AbstractUIPlugin.imageDescriptorFromPlugin(SonarqPlugin.PLUGIN_ID, iconPath);
+            assertNotNull("expected " + iconPath + " to resolve to a bundle resource", descriptor);
+        }
     }
 
     private static String sarifWithFullDescription()
