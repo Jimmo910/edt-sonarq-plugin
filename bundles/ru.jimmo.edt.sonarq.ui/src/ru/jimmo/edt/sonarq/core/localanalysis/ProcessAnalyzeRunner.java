@@ -28,8 +28,10 @@ import ru.jimmo.edt.sonarq.core.analysis.Processes;
  * ({@link ProcessBuilder#redirectErrorStream(boolean)}) and pumped to {@code <outputDir>/analyze.log} on
  * a daemon thread, while the calling thread polls {@code process.waitFor} with a short timeout so it can
  * check the monitor for cancellation in between. A cancelled monitor destroys the process and raises
- * {@link OperationCanceledException}; a non-zero exit raises an {@link IOException} carrying the tail of
- * the log. The wait is also wrapped so that an {@link InterruptedException} on the calling thread (e.g.
+ * {@link OperationCanceledException}; a non-zero exit raises an {@link IOException} carrying the absolute
+ * path to the full log file and the tail of the log (BSL LS itself does not name the offending module, so
+ * pointing at the full log is the best we can do). The wait is also wrapped so that an
+ * {@link InterruptedException} on the calling thread (e.g.
  * an {@code Eclipse Job} being cancelled from outside the monitor) destroys the process the same way
  * before the exception is rethrown — the process must never be left running just because the thread
  * that was waiting on it gave up.
@@ -102,8 +104,10 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         int exit = process.exitValue();
         if (exit != 0)
         {
-            throw new IOException("BSL Language Server analysis exited with code " //$NON-NLS-1$
-                + exit + ":" + System.lineSeparator() + tailLog(logFile)); //$NON-NLS-1$
+            throw new IOException("The BSL Language Server exited with code " + exit //$NON-NLS-1$
+                + " while analyzing the sources (this usually means it failed to parse a module)." //$NON-NLS-1$
+                + System.lineSeparator() + "Full log: " + logFile.toAbsolutePath() //$NON-NLS-1$
+                + System.lineSeparator() + tailLog(logFile));
         }
         return outputDir.resolve(SARIF_FILE_NAME);
     }
