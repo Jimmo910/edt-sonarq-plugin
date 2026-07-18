@@ -49,6 +49,28 @@ public class DiagnosticCategoriesTest
     }
 
     @Test
+    public void typeOfKnownKeyIsNonEmpty()
+    {
+        DiagnosticCategories c = DiagnosticCategories.load();
+        assertFalse(c.typeOf("UnusedLocalVariable").isEmpty());
+    }
+
+    @Test
+    public void tagsOfKnownKeyContainsExpectedTag()
+    {
+        DiagnosticCategories c = DiagnosticCategories.load();
+        assertTrue(c.tagsOf("CyclomaticComplexity").contains("brainoverload"));
+    }
+
+    @Test
+    public void typeAndTagsOfUnknownKeyAreEmpty()
+    {
+        DiagnosticCategories c = DiagnosticCategories.load();
+        assertEquals("", c.typeOf("NoSuchDiagnosticXYZ"));
+        assertTrue(c.tagsOf("NoSuchDiagnosticXYZ").isEmpty());
+    }
+
+    @Test
     public void recommendedDisabledFiltersKnown()
     {
         DiagnosticCategories c = DiagnosticCategories.load();
@@ -75,6 +97,7 @@ public class DiagnosticCategoriesTest
         assertEquals(all.size(), all.stream().map(CategoryEntry::key).distinct().count());
         assertTrue(all.stream()
             .allMatch(e -> (e.category() == DiagnosticCategory.EDT_DUPLICATE) == (e.edtCheck() != null)));
+        assertTrue(all.stream().allMatch(e -> !e.type().isEmpty()));
     }
 
     @Test
@@ -92,6 +115,9 @@ public class DiagnosticCategoriesTest
         assertEquals(2, all.size());
         assertEquals(DiagnosticCategory.GENERAL, c.categoryOf("GoodOne"));
         assertEquals(DiagnosticCategory.NEEDS_TUNING, c.categoryOf("GoodTwo"));
+        // A missing "type"/"tags" in an otherwise valid entry must default rather than drop the entry.
+        assertEquals("", c.typeOf("GoodOne"));
+        assertTrue(c.tagsOf("GoodOne").isEmpty());
     }
 
     @Test
@@ -106,6 +132,19 @@ public class DiagnosticCategoriesTest
         DiagnosticCategories c = DiagnosticCategories.parse(toStream(json));
 
         assertEquals(2, c.all().size());
+    }
+
+    @Test
+    public void parseDefaultsTagsWhenNotAnArray()
+    {
+        String json = "{\"diagnostics\":["
+            + "{\"key\":\"GoodOne\",\"name\":\"Good One\",\"category\":\"general\",\"tags\":\"not-an-array\"}"
+            + "]}";
+
+        DiagnosticCategories c = DiagnosticCategories.parse(toStream(json));
+
+        assertEquals(1, c.all().size());
+        assertTrue(c.tagsOf("GoodOne").isEmpty());
     }
 
     @Test

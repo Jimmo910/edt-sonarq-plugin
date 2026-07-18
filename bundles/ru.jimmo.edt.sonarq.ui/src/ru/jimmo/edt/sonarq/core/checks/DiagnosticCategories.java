@@ -44,6 +44,10 @@ public final class DiagnosticCategories
 
     private static final String CATEGORY_MEMBER = "category"; //$NON-NLS-1$
 
+    private static final String TYPE_MEMBER = "type"; //$NON-NLS-1$
+
+    private static final String TAGS_MEMBER = "tags"; //$NON-NLS-1$
+
     private static final String EDT_CHECK_MEMBER = "edtCheck"; //$NON-NLS-1$
 
     private final List<CategoryEntry> entries;
@@ -137,10 +141,33 @@ public final class DiagnosticCategories
         String name = object.get(NAME_MEMBER).getAsString();
         DiagnosticCategory category =
             DiagnosticCategory.fromResourceId(object.get(CATEGORY_MEMBER).getAsString());
+        String type = readType(object);
+        List<String> tags = readTags(object);
         JsonElement edtCheckElement = object.get(EDT_CHECK_MEMBER);
         String edtCheck =
             edtCheckElement != null && !edtCheckElement.isJsonNull() ? edtCheckElement.getAsString() : null;
-        return new CategoryEntry(key, name, category, edtCheck);
+        return new CategoryEntry(key, name, category, type, tags, edtCheck);
+    }
+
+    private static String readType(JsonObject object)
+    {
+        JsonElement typeElement = object.get(TYPE_MEMBER);
+        return typeElement != null && !typeElement.isJsonNull() ? typeElement.getAsString() : ""; //$NON-NLS-1$
+    }
+
+    private static List<String> readTags(JsonObject object)
+    {
+        JsonElement tagsElement = object.get(TAGS_MEMBER);
+        if (tagsElement == null || !tagsElement.isJsonArray())
+        {
+            return List.of();
+        }
+        List<String> tags = new ArrayList<>();
+        for (JsonElement tagElement : tagsElement.getAsJsonArray())
+        {
+            tags.add(tagElement.getAsString());
+        }
+        return tags;
     }
 
     /**
@@ -165,6 +192,31 @@ public final class DiagnosticCategories
     {
         CategoryEntry entry = byKey.get(key);
         return entry != null ? entry.name() : null;
+    }
+
+    /**
+     * The BSL Language Server's own diagnostic type of a diagnostic key, e.g. {@code Code smell}.
+     *
+     * @param key the diagnostic key, may be {@code null}
+     * @return the bundled type, or {@code ""} when {@code key} is unknown or the bundled entry has none
+     */
+    public String typeOf(String key)
+    {
+        CategoryEntry entry = byKey.get(key);
+        return entry != null ? entry.type() : ""; //$NON-NLS-1$
+    }
+
+    /**
+     * The BSL Language Server's own diagnostic tags of a diagnostic key, e.g. {@code brainoverload}.
+     *
+     * @param key the diagnostic key, may be {@code null}
+     * @return the bundled tags, never {@code null}; empty when {@code key} is unknown or the bundled entry
+     *     has none
+     */
+    public List<String> tagsOf(String key)
+    {
+        CategoryEntry entry = byKey.get(key);
+        return entry != null ? entry.tags() : List.of();
     }
 
     /**
