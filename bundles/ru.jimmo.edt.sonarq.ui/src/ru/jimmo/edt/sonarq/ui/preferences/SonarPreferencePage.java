@@ -20,6 +20,7 @@ import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.IPreferencesService;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.equinox.security.storage.StorageException;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.preference.PreferencePage;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
@@ -46,6 +47,7 @@ import ru.jimmo.edt.sonarq.core.analysis.Processes;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
@@ -90,6 +92,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     private Label bslVerifyResultLabel;
 
     private Spinner bslMaxHeapSpinner;
+
+    private Label engineStatusLabel;
+
+    private Button deleteEngineButton;
 
     private Text scannerPathText;
 
@@ -244,6 +250,14 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         Label maxHeapHint = new Label(group, SWT.WRAP);
         maxHeapHint.setText(Messages.PreferencePage_BslLsMaxHeapHint);
         maxHeapHint.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        engineStatusLabel = new Label(group, SWT.NONE);
+        engineStatusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        deleteEngineButton = new Button(group, SWT.PUSH);
+        deleteEngineButton.setText(Messages.PreferencePage_DeleteEngine);
+        deleteEngineButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false, 2, 1));
+        deleteEngineButton.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> deleteEngine()));
     }
 
     /**
@@ -261,6 +275,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslVerifyButton.setEnabled(local && ownExecutable);
         bslVerifyResultLabel.setEnabled(local && ownExecutable);
         bslMaxHeapSpinner.setEnabled(local);
+        engineStatusLabel.setEnabled(local);
+        deleteEngineButton.setEnabled(local);
         validateBslPath();
     }
 
@@ -367,6 +383,45 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     }
 
     /**
+     * Refreshes {@link #engineStatusLabel} to reflect whether the managed BSL Language Server distribution
+     * is currently installed under the plugin state directory (issue #4 point 1). Cheap: only stats a file
+     * and reads a marker (see {@link BslServerInstaller#isInstalled}), never touches the network.
+     */
+    private void refreshEngineStatus()
+    {
+        Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+        boolean installed = BslServerInstaller.isInstalled(stateDir);
+        engineStatusLabel.setText(
+            installed ? Messages.PreferencePage_EngineInstalled : Messages.PreferencePage_EngineNotInstalled);
+    }
+
+    /**
+     * Deletes the downloaded BSL Language Server distribution after an explicit user confirmation, so a user
+     * who no longer needs local analysis can reclaim the ~170 MB it occupies (issue #4 point 1). A failure
+     * to delete is reported in an error dialog rather than propagated, since this runs directly from a button
+     * click on the UI thread and must never crash the preferences page. Either way, {@link #engineStatusLabel}
+     * is refreshed afterwards so the page always reflects the actual on-disk state.
+     */
+    private void deleteEngine()
+    {
+        boolean confirmed = MessageDialog.openConfirm(getShell(), Messages.PreferencePage_DeleteEngineTitle,
+            Messages.PreferencePage_DeleteEngineConfirm);
+        if (confirmed)
+        {
+            Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+            try
+            {
+                BslServerInstaller.deleteServer(stateDir);
+            }
+            catch (IOException e)
+            {
+                MessageDialog.openError(getShell(), Messages.PreferencePage_DeleteEngineTitle, e.getMessage());
+            }
+        }
+        refreshEngineStatus();
+    }
+
+    /**
      * Enables the widgets that belong to the selected {@link PreferenceConstants#PREF_MODE}: the connection
      * fields and the analysis-launch group in server mode, the BSL Language Server path in local mode. The
      * <em>Show issues in editor</em> checkbox stays enabled in either mode, but background auto-sync (its
@@ -449,6 +504,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslSourceCombo.select(bslPath.isBlank() ? BSL_SOURCE_INDEX_DOWNLOAD : BSL_SOURCE_INDEX_LOCAL);
         bslMaxHeapSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, PreferenceConstants.DEFAULT_BSL_LS_MAX_HEAP_GB, null));
+        refreshEngineStatus();
         String serverUrl =
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null); //$NON-NLS-1$
         urlText.setText(serverUrl);

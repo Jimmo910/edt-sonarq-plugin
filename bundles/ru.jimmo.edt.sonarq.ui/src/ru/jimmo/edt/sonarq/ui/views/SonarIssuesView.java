@@ -60,6 +60,7 @@ import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
@@ -417,6 +418,7 @@ public class SonarIssuesView extends ViewPart
         boundPathPrefix = refreshInputs.mappingPathPrefix();
         IIssueProvider refreshedProvider = refreshInputs.provider();
         applyRunningStatus();
+        showEngineDownloadHintIfNeeded();
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
             result -> onRefreshFinished(generation, refreshedProvider, result)));
     }
@@ -433,6 +435,29 @@ public class SonarIssuesView extends ViewPart
         statusLabel.setToolTipText(null);
         setErrorDetailsVisible(false);
         statusLabel.getParent().layout();
+    }
+
+    /**
+     * Replaces the generic "Refreshing..." status with an explicit BSL Language Server download notice
+     * before a local-analysis refresh job is scheduled, whenever the engine is not installed yet under the
+     * plugin state directory - so the ~170 MB first-run download is visible immediately instead of silently
+     * happening behind an unrelated-looking status line (issue #4 point 1). The check itself is cheap: it
+     * only stats a file and reads a marker (see {@link BslServerInstaller#isInstalled}), never touches the
+     * network. Whichever way the scheduled job ends, {@link #onRefreshFinished} overwrites this text once it
+     * completes.
+     */
+    private void showEngineDownloadHintIfNeeded()
+    {
+        if (!isLocalMode())
+        {
+            return;
+        }
+        Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+        if (!BslServerInstaller.isInstalled(stateDir))
+        {
+            statusLabel.setText(Messages.IssuesView_Status_InstallingEngine);
+            statusLabel.getParent().layout();
+        }
     }
 
     /**

@@ -48,6 +48,8 @@ public final class Messages extends NLS
     public static String BslChecksPage_ProfileHint;
     public static String BslChecksPage_RowTooltip_Tags;
     public static String BslChecksPage_RowTooltip_Type;
+    public static String BslInstaller_Downloading;
+    public static String BslInstaller_Unpacking;
     public static String IssuesView_BranchMissing;
     public static String IssuesView_Column_Location;
     public static String IssuesView_Column_Message;
@@ -66,6 +68,7 @@ public final class Messages extends NLS
     public static String IssuesView_SeverityMenu;
     public static String IssuesView_Status_AuthError;
     public static String IssuesView_Status_Error;
+    public static String IssuesView_Status_InstallingEngine;
     public static String IssuesView_Status_Loaded;
     public static String IssuesView_Status_LoadedNoBranch;
     public static String IssuesView_Status_NotConfigured;
@@ -92,7 +95,12 @@ public final class Messages extends NLS
     public static String PreferencePage_BslVerifyOk;
     public static String PreferencePage_CiSecret;
     public static String PreferencePage_CiUrl;
+    public static String PreferencePage_DeleteEngine;
+    public static String PreferencePage_DeleteEngineConfirm;
+    public static String PreferencePage_DeleteEngineTitle;
     public static String PreferencePage_Description;
+    public static String PreferencePage_EngineInstalled;
+    public static String PreferencePage_EngineNotInstalled;
     public static String PreferencePage_ExtraArgs;
     public static String PreferencePage_LaunchGroup;
     public static String PreferencePage_LaunchMode;

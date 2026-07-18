@@ -360,6 +360,71 @@ public class BslServerInstallerTest
     }
 
     @Test
+    public void isInstalledTrueAfterFakeInstallLayout() throws IOException
+    {
+        Path serverRoot = stateDir.resolve("bsl-ls");
+        Path executable = serverRoot.resolve(launcherEntry());
+        Files.createDirectories(executable.getParent());
+        Files.writeString(executable, LAUNCHER_BODY, StandardCharsets.UTF_8);
+        Files.writeString(serverRoot.resolve(".complete"), BslServerInstaller.VERSION, StandardCharsets.UTF_8);
+
+        assertTrue(BslServerInstaller.isInstalled(stateDir));
+    }
+
+    @Test
+    public void isInstalledFalseWhenMarkerMissing() throws IOException
+    {
+        Path serverRoot = stateDir.resolve("bsl-ls");
+        Path executable = serverRoot.resolve(launcherEntry());
+        Files.createDirectories(executable.getParent());
+        Files.writeString(executable, LAUNCHER_BODY, StandardCharsets.UTF_8);
+        // No completion marker written: an executable alone must not count as installed.
+
+        assertFalse(BslServerInstaller.isInstalled(stateDir));
+    }
+
+    @Test
+    public void isInstalledFalseWhenMarkerHoldsWrongVersion() throws IOException
+    {
+        Path serverRoot = stateDir.resolve("bsl-ls");
+        Path executable = serverRoot.resolve(launcherEntry());
+        Files.createDirectories(executable.getParent());
+        Files.writeString(executable, LAUNCHER_BODY, StandardCharsets.UTF_8);
+        Files.writeString(serverRoot.resolve(".complete"), "0.0.1", StandardCharsets.UTF_8);
+
+        assertFalse(BslServerInstaller.isInstalled(stateDir));
+    }
+
+    @Test
+    public void isInstalledFalseWhenNothingInstalled()
+    {
+        assertFalse(BslServerInstaller.isInstalled(stateDir));
+    }
+
+    @Test
+    public void deleteServerRemovesInstalledDirectory() throws IOException
+    {
+        Path serverRoot = stateDir.resolve("bsl-ls");
+        Path executable = serverRoot.resolve(launcherEntry());
+        Files.createDirectories(executable.getParent());
+        Files.writeString(executable, LAUNCHER_BODY, StandardCharsets.UTF_8);
+        Files.writeString(serverRoot.resolve(".complete"), BslServerInstaller.VERSION, StandardCharsets.UTF_8);
+
+        BslServerInstaller.deleteServer(stateDir);
+
+        assertFalse(Files.exists(serverRoot));
+        assertFalse(BslServerInstaller.isInstalled(stateDir));
+    }
+
+    @Test
+    public void deleteServerIsNoOpWhenNothingInstalled() throws IOException
+    {
+        // stateDir exists but has no "bsl-ls" subdirectory at all (server never installed).
+        BslServerInstaller.deleteServer(stateDir);
+        // No exception means success; nothing else to assert.
+    }
+
+    @Test
     public void cancelledMonitorWhileLockHeldAbortsWithoutDownloading() throws InterruptedException
     {
         DownloadFunction download = url ->
