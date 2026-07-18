@@ -11,7 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -64,6 +66,10 @@ public final class BslServerInstaller
     private static final String EXE_WINDOWS = "bsl-language-server.exe"; //$NON-NLS-1$
     private static final String EXE_OTHER = "bsl-language-server"; //$NON-NLS-1$
     private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
+    private static final String CFG_FILE_NAME = "bsl-language-server.cfg"; //$NON-NLS-1$
+    private static final String XMX_OPTION_PREFIX = "java-options=-Xmx"; //$NON-NLS-1$
+    private static final String HEAP_UNIT_SUFFIX = "g"; //$NON-NLS-1$
+    private static final int MIN_HEAP_GB = 1;
 
     private static final long LOCK_POLL_MILLIS = 200L;
 
@@ -131,6 +137,78 @@ public final class BslServerInstaller
         finally
         {
             INSTALL_LOCK.unlock();
+        }
+    }
+
+    /**
+     * Rewrites the bundled BSL Language Server launcher configuration file so its pinned JVM heap limit
+     * matches {@code maxHeapGb}, instead of the {@code -Xmx4g} baked into the jpackage app-image by the
+     * upstream project at build time.
+     *
+     * <p>The app-image's {@code java-options=-Xmx4g} line caps analysis at 4 GB of heap; large 1C
+     * configurations exhaust that limit inside {@code ServerContext.populateContext} and the language
+     * server dies with an {@link OutOfMemoryError}, a non-zero exit code and no SARIF written - confirmed
+     * live 2026-07-18, both by reproducing the failure at 4 GB and by clearing it after raising the limit.
+     * The jpackage launcher only reads its heap flag from this file - there is no command-line override -
+     * so making the limit configurable means rewriting the file before every analysis run.
+     *
+     * <p>The file's location differs per operating system and jpackage layout ({@code app/...} on
+     * Windows, {@code lib/app/...} on Linux, {@code Contents/app/...} on macOS), so rather than hardcoding
+     * a relative path this walks the whole {@code stateDir/bsl-ls} tree looking for a file named
+     * {@code bsl-language-server.cfg}. Every existing {@code java-options=-Xmx...} line is removed and
+     * exactly one fresh line is appended, so repeated calls converge on the same content (idempotent)
+     * regardless of how many stale lines a previous run left behind.
+     *
+     * <p>Never throws for a missing distribution: when the server has not been installed yet (or the
+     * {@code bsl-ls} directory itself does not exist), this is a silent no-op, because a failure here must
+     * never fail the analysis that is about to run {@link #ensureServer}.
+     *
+     * @param stateDir the plugin state directory the BSL Language Server was (or will be) unpacked under,
+     *     not {@code null}
+     * @param maxHeapGb the desired maximum heap, in gigabytes; clamped up to a minimum of 1 if lower
+     * @throws IOException if the configuration file is found but cannot be read or written
+     */
+    public static void configureHeap(Path stateDir, int maxHeapGb) throws IOException
+    {
+        int clamped = Math.max(MIN_HEAP_GB, maxHeapGb);
+        Path cfg = findCfgFile(stateDir.resolve(SERVER_DIR));
+        if (cfg == null)
+        {
+            return;
+        }
+        List<String> updated = new ArrayList<>();
+        for (String line : Files.readAllLines(cfg, StandardCharsets.UTF_8))
+        {
+            if (!line.strip().startsWith(XMX_OPTION_PREFIX))
+            {
+                updated.add(line);
+            }
+        }
+        updated.add(XMX_OPTION_PREFIX + clamped + HEAP_UNIT_SUFFIX);
+        Files.write(cfg, updated, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Looks for a file named {@code bsl-language-server.cfg} anywhere under {@code serverRoot}, at
+     * whatever depth the current jpackage layout nests it at (see {@link #configureHeap}).
+     *
+     * @param serverRoot the {@code bsl-ls} directory holding the unpacked distribution, not {@code null}
+     * @return the found configuration file, or {@code null} if {@code serverRoot} does not exist or holds
+     *     no such file
+     * @throws IOException if the distribution tree cannot be walked
+     */
+    private static Path findCfgFile(Path serverRoot) throws IOException
+    {
+        if (!Files.isDirectory(serverRoot))
+        {
+            return null;
+        }
+        try (Stream<Path> walk = Files.walk(serverRoot))
+        {
+            return walk.filter(Files::isRegularFile)
+                .filter(path -> CFG_FILE_NAME.equals(String.valueOf(path.getFileName())))
+                .findFirst()
+                .orElse(null);
         }
     }
 

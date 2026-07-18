@@ -61,6 +61,18 @@ public final class PreferenceConstants
      */
     public static final String PREF_DISABLED_BSL_DIAGNOSTICS = "disabledBslDiagnostics"; //$NON-NLS-1$
 
+    /**
+     * The BSL Language Server maximum JVM heap, in gigabytes, preference key, used only in
+     * {@link #MODE_LOCAL}. The bundled jpackage app-image pins {@code -Xmx4g} in its own launcher
+     * configuration file, which is too little for large 1C configurations and fails analysis with an
+     * {@link OutOfMemoryError}; this preference is rewritten into that file before every local analysis
+     * run (see {@code BslServerInstaller#configureHeap}).
+     */
+    public static final String PREF_BSL_LS_MAX_HEAP_GB = "bslLsMaxHeapGb"; //$NON-NLS-1$
+
+    /** The default BSL Language Server maximum JVM heap, in gigabytes. */
+    public static final int DEFAULT_BSL_LS_MAX_HEAP_GB = 4;
+
     private PreferenceConstants()
     {
     }

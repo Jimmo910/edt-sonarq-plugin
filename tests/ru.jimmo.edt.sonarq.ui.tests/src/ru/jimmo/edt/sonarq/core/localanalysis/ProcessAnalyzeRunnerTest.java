@@ -283,6 +283,65 @@ public class ProcessAnalyzeRunnerTest
     }
 
     /**
+     * Writes a throwaway "server executable" that prints a line containing {@code OutOfMemoryError} to
+     * stdout and exits with a non-zero code, so the OOM-aware hint wiring in {@link ProcessAnalyzeRunner}
+     * can be exercised without spawning the real native launcher.
+     *
+     * @param dir the directory to write the script into, not {@code null}
+     * @return the script path, never {@code null}
+     * @throws IOException if the script cannot be written
+     */
+    private static Path writeOutOfMemoryFailingScript(Path dir) throws IOException
+    {
+        String line = "java.lang.OutOfMemoryError: Java heap space";
+        if (isWindows())
+        {
+            Path script = dir.resolve("sonarq-oom-failer.bat");
+            Files.writeString(script, "@echo off\r\necho " + line + "\r\nexit /b 1\r\n");
+            return script;
+        }
+        Path script = dir.resolve("sonarq-oom-failer.sh");
+        Files.writeString(script, "#!/bin/sh\necho " + line + "\nexit 1\n");
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    /**
+     * Regression test for issue #5: a non-zero exit whose log mentions {@code OutOfMemoryError} must raise
+     * an {@link IOException} with an actionable hint prepended, pointing the user at the configurable
+     * heap setting - while still carrying the existing exit-code message and the absolute log path.
+     */
+    @Test
+    public void analyzeThrowsActionableHintWhenLogMentionsOutOfMemoryError() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-oom-test");
+        Path script = writeOutOfMemoryFailingScript(scratchDir);
+        Path srcDir = scratchDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Path outputDir = scratchDir.resolve("out");
+        Files.createDirectories(outputDir);
+
+        ProcessAnalyzeRunner runner = new ProcessAnalyzeRunner();
+        try
+        {
+            runner.analyze(script, srcDir, outputDir, null, new NullProgressMonitor());
+            fail("expected an IOException for a non-zero exit code");
+        }
+        catch (IOException e)
+        {
+            Path logFile = outputDir.resolve("analyze.log");
+            String message = e.getMessage();
+            assertTrue("expected message to mention running out of memory, got: " + message,
+                message.contains("ran out of memory"));
+            assertTrue("expected message to point at Settings, got: " + message, message.contains("Settings"));
+            assertTrue("expected message to still contain the absolute log path, got: " + message,
+                message.contains(logFile.toAbsolutePath().toString()));
+            assertTrue("expected message to still contain the exit code sentence, got: " + message,
+                message.contains("exited with code"));
+        }
+    }
+
+    /**
      * Polls a condition until it holds or a timeout elapses, failing the test if it never does.
      *
      * @param condition the condition to poll, not {@code null}

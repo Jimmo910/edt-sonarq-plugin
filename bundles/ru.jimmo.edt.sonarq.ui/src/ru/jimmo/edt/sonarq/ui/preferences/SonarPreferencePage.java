@@ -89,6 +89,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     private Label bslVerifyResultLabel;
 
+    private Spinner bslMaxHeapSpinner;
+
     private Text scannerPathText;
 
     private Text ciUrlText;
@@ -233,11 +235,21 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
         bslVerifyResultLabel = new Label(group, SWT.WRAP);
         bslVerifyResultLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 4, 1));
+
+        new Label(group, SWT.NONE).setText(Messages.PreferencePage_BslLsMaxHeap);
+        bslMaxHeapSpinner = new Spinner(group, SWT.BORDER);
+        bslMaxHeapSpinner.setValues(PreferenceConstants.DEFAULT_BSL_LS_MAX_HEAP_GB, 1, 64, 0, 1, 4);
+        bslMaxHeapSpinner.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false));
+
+        Label maxHeapHint = new Label(group, SWT.WRAP);
+        maxHeapHint.setText(Messages.PreferencePage_BslLsMaxHeapHint);
+        maxHeapHint.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
     }
 
     /**
-     * Enables the BSL source widgets: the combo follows the page mode, the path row (text, browse and
-     * verify buttons) is active only when the user chose a local executable over the automatic download.
+     * Enables the BSL source widgets: the combo and the max-heap spinner follow the page mode, the path row
+     * (text, browse and verify buttons) is active only when the user chose a local executable over the
+     * automatic download.
      */
     private void updateBslSourceEnablement()
     {
@@ -248,6 +260,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslBrowseButton.setEnabled(local && ownExecutable);
         bslVerifyButton.setEnabled(local && ownExecutable);
         bslVerifyResultLabel.setEnabled(local && ownExecutable);
+        bslMaxHeapSpinner.setEnabled(local);
         validateBslPath();
     }
 
@@ -434,6 +447,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslLsPathText.setText(bslPath);
         // Blank stored path means automatic download (see BSL_SOURCE_INDEX_DOWNLOAD).
         bslSourceCombo.select(bslPath.isBlank() ? BSL_SOURCE_INDEX_DOWNLOAD : BSL_SOURCE_INDEX_LOCAL);
+        bslMaxHeapSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
+            PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, PreferenceConstants.DEFAULT_BSL_LS_MAX_HEAP_GB, null));
         String serverUrl =
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null); //$NON-NLS-1$
         urlText.setText(serverUrl);
@@ -506,6 +521,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         boolean ownExecutable = bslSourceCombo.getSelectionIndex() == BSL_SOURCE_INDEX_LOCAL;
         node.put(PreferenceConstants.PREF_BSL_LS_PATH,
             ownExecutable ? bslLsPathText.getText().trim() : ""); //$NON-NLS-1$
+        node.putInt(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, bslMaxHeapSpinner.getSelection());
         String serverUrl = urlText.getText().trim();
         String ciUrl = ciUrlText.getText().trim();
         node.put(PreferenceConstants.PREF_SERVER_URL, serverUrl);
