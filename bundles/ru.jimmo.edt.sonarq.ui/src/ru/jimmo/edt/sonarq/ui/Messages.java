@@ -29,6 +29,8 @@ public final class Messages extends NLS
     public static String BslChecksPage_Column_Name;
     public static String BslChecksPage_Counter;
     public static String BslChecksPage_Description;
+    public static String BslChecksPage_DescriptionTitle;
+    public static String BslChecksPage_Description_Empty;
     public static String BslChecksPage_DisableAll;
     public static String BslChecksPage_DocsLink;
     public static String BslChecksPage_Empty;
@@ -48,6 +50,7 @@ public final class Messages extends NLS
     public static String BslChecksPage_ProfileHint;
     public static String BslChecksPage_RowTooltip_Tags;
     public static String BslChecksPage_RowTooltip_Type;
+    public static String BslChecksPage_RuleDocsLink;
     public static String BslInstaller_Downloading;
     public static String BslInstaller_Unpacking;
     public static String IssuesView_BranchMissing;

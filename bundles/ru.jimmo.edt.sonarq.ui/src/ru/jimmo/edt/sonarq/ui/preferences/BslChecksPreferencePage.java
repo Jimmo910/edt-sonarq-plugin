@@ -38,6 +38,7 @@ import org.eclipse.jface.viewers.CheckboxTreeViewer;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.ICheckStateProvider;
+import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.viewers.ITreeContentProvider;
 import org.eclipse.jface.viewers.TreeViewerColumn;
 import org.eclipse.jface.viewers.Viewer;
@@ -122,8 +123,11 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
 
     private static final int KEY_COLUMN_WIDTH = 200;
     private static final int NAME_COLUMN_WIDTH = 320;
+    private static final int DESCRIPTION_HEIGHT_HINT = 130;
 
     private final Set<String> disabledKeys = new HashSet<>();
+
+    private final Map<String, String> descriptionByKey = new HashMap<>();
 
     private final DiagnosticCategories categories = DiagnosticCategories.load();
 
@@ -134,6 +138,8 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     private List<Object> rootNodes = List.of();
 
     private GroupBy groupBy = GroupBy.TYPE;
+
+    private String currentRuleKey;
 
     private Text filterText;
 
@@ -146,6 +152,10 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     private Label hintLabel;
 
     private Label counterLabel;
+
+    private Text descriptionText;
+
+    private Link ruleDocsLink;
 
     private Label statusLabel;
 
@@ -251,6 +261,8 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
 
         counterLabel = new Label(composite, SWT.NONE);
         counterLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        createDescriptionArea(composite);
 
         createButtonBar(composite);
 
@@ -457,8 +469,86 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             updateCounter();
         });
 
+        treeViewer.addSelectionChangedListener(event ->
+        {
+            Object element = ((IStructuredSelection)event.getSelection()).getFirstElement();
+            if (element == null || element instanceof GroupNode)
+            {
+                clearRuleDescription();
+            }
+            else
+            {
+                showRuleDescription(diagKeyOf(element));
+            }
+        });
+
         hintLabel = new Label(treeArea, SWT.WRAP);
         hintLabel.setText(Messages.BslChecksPage_Empty);
+    }
+
+    /**
+     * Builds the rule-description area shown below the tree: a title label, a read-only multi-line
+     * description text, and a link to the diagnostic's online documentation, hidden until a leaf is
+     * selected in {@link #treeViewer}.
+     *
+     * @param parent the page composite, not {@code null}
+     */
+    private void createDescriptionArea(Composite parent)
+    {
+        Label descriptionTitleLabel = new Label(parent, SWT.NONE);
+        descriptionTitleLabel.setText(Messages.BslChecksPage_DescriptionTitle);
+        descriptionTitleLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        descriptionText = new Text(parent, SWT.MULTI | SWT.READ_ONLY | SWT.WRAP | SWT.BORDER | SWT.V_SCROLL);
+        GridData descriptionTextData = new GridData(SWT.FILL, SWT.FILL, true, false, 2, 1);
+        descriptionTextData.heightHint = DESCRIPTION_HEIGHT_HINT;
+        descriptionText.setLayoutData(descriptionTextData);
+
+        ruleDocsLink = new Link(parent, SWT.NONE);
+        ruleDocsLink.setText(LINK_OPEN + Messages.BslChecksPage_RuleDocsLink + LINK_CLOSE);
+        GridData ruleDocsLinkData = new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1);
+        ruleDocsLinkData.exclude = true;
+        ruleDocsLink.setLayoutData(ruleDocsLinkData);
+        ruleDocsLink.setVisible(false);
+        ruleDocsLink.addSelectionListener(SelectionListener.widgetSelectedAdapter(
+            event -> Program.launch(DIAGNOSTICS_DOCS_URL + currentRuleKey + "/"))); //$NON-NLS-1$
+    }
+
+    /**
+     * Shows the given diagnostic's description in {@link #descriptionText} and reveals
+     * {@link #ruleDocsLink} targeting it.
+     *
+     * @param diagKey the selected diagnostic leaf, not {@code null}
+     */
+    private void showRuleDescription(DiagKey diagKey)
+    {
+        currentRuleKey = diagKey.key();
+        descriptionText.setText(descriptionBody(diagKey, descriptionByKey.get(diagKey.key())));
+        setRuleDocsLinkVisible(true);
+    }
+
+    /**
+     * Clears {@link #descriptionText} and hides {@link #ruleDocsLink}, used when the tree selection is
+     * empty or a {@link GroupNode}.
+     */
+    private void clearRuleDescription()
+    {
+        currentRuleKey = null;
+        descriptionText.setText(EMPTY_TEXT);
+        setRuleDocsLinkVisible(false);
+    }
+
+    /**
+     * Shows or hides {@link #ruleDocsLink}, excluding it from the layout when hidden so it does not leave a
+     * blank gap below the description text.
+     *
+     * @param visible {@code true} to show the link, {@code false} to hide it
+     */
+    private void setRuleDocsLinkVisible(boolean visible)
+    {
+        ((GridData)ruleDocsLink.getLayoutData()).exclude = !visible;
+        ruleDocsLink.setVisible(visible);
+        ruleDocsLink.getParent().layout();
     }
 
     /**
@@ -528,6 +618,33 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     private static String tagsDisplay(List<String> tags)
     {
         return tags.isEmpty() ? Messages.BslChecksPage_NoTags : String.join(TAG_SEPARATOR, tags);
+    }
+
+    /**
+     * Builds the multi-line text shown in the description area for a selected diagnostic leaf: its name,
+     * then its BSL Language Server type and tags, then its rule description (or a hint to fetch the checks
+     * list/run an analysis first, when the description is not yet known). Pure and SWT-free, so it is unit
+     * tested directly.
+     *
+     * @param diagKey the selected diagnostic, not {@code null}
+     * @param description the diagnostic's rule description from {@link #descriptionByKey}, or {@code null}
+     *     or blank when not yet known
+     * @return the description area text, never {@code null}
+     */
+    static String descriptionBody(DiagKey diagKey, String description)
+    {
+        StringBuilder body = new StringBuilder();
+        body.append(diagKey.name());
+        body.append('\n');
+        body.append('\n');
+        body.append(NLS.bind(Messages.BslChecksPage_RowTooltip_Type, diagKey.type()));
+        body.append("  "); //$NON-NLS-1$
+        body.append(NLS.bind(Messages.BslChecksPage_RowTooltip_Tags, tagsDisplay(diagKey.tags())));
+        body.append('\n');
+        body.append('\n');
+        boolean hasDescription = description != null && !description.isBlank();
+        body.append(hasDescription ? description : Messages.BslChecksPage_Description_Empty);
+        return body.toString();
     }
 
     /**
@@ -618,12 +735,18 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
 
     /**
      * Merges the bundled category catalog with {@link #fetchedCatalog} into {@link #allDiagKeys}, arranges
-     * the result into {@link #rootNodes} per the current {@link #groupBy} and reloads the tree.
+     * the result into {@link #rootNodes} per the current {@link #groupBy}, rebuilds
+     * {@link #descriptionByKey} from {@link #fetchedCatalog} and reloads the tree.
      */
     private void rebuildDisplayedKeys()
     {
         allDiagKeys = mergeDisplayedKeys(categories, fetchedCatalog);
         rootNodes = buildRootNodes(allDiagKeys, groupBy);
+        descriptionByKey.clear();
+        for (DiagnosticsCatalog.Entry entry : fetchedCatalog)
+        {
+            descriptionByKey.put(entry.key(), entry.description());
+        }
         reloadTree();
     }
 

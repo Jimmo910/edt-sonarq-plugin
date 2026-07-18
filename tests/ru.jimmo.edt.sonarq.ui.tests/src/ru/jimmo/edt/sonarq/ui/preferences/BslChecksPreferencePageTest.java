@@ -129,4 +129,43 @@ public class BslChecksPreferencePageTest
         assertTrue(byTag.get(Messages.BslChecksPage_NoTags).contains("B"));
         assertFalse(byTag.get("clumsy").contains("B"));
     }
+
+    @Test
+    public void descriptionBodyIncludesNameTypeTagsAndDescriptionWhenPresent()
+    {
+        BslChecksPreferencePage.DiagKey diagKey = new BslChecksPreferencePage.DiagKey("UnusedLocalVariable",
+            "Unused local variable", DiagnosticCategory.GENERAL, null, "Code smell", List.of("clumsy", "standard"));
+
+        String body = BslChecksPreferencePage.descriptionBody(diagKey, "This variable is never used.");
+
+        assertTrue(body.contains("Unused local variable"));
+        assertTrue(body.contains("Code smell"));
+        assertTrue(body.contains("clumsy, standard"));
+        assertTrue(body.contains("This variable is never used."));
+        assertFalse(body.contains(Messages.BslChecksPage_Description_Empty));
+    }
+
+    @Test
+    public void descriptionBodyFallsBackToEmptyHintWhenDescriptionIsBlankOrNull()
+    {
+        BslChecksPreferencePage.DiagKey diagKey = new BslChecksPreferencePage.DiagKey("MethodSize", "Method size",
+            DiagnosticCategory.GENERAL, null, "Code smell", List.of());
+
+        String blankBody = BslChecksPreferencePage.descriptionBody(diagKey, "   ");
+        String nullBody = BslChecksPreferencePage.descriptionBody(diagKey, null);
+
+        assertTrue(blankBody.contains(Messages.BslChecksPage_Description_Empty));
+        assertTrue(nullBody.contains(Messages.BslChecksPage_Description_Empty));
+    }
+
+    @Test
+    public void descriptionBodyUsesNoTagsLabelWhenDiagnosticHasNoTags()
+    {
+        BslChecksPreferencePage.DiagKey diagKey = new BslChecksPreferencePage.DiagKey("MethodSize", "Method size",
+            DiagnosticCategory.GENERAL, null, "Code smell", List.of());
+
+        String body = BslChecksPreferencePage.descriptionBody(diagKey, "Some description.");
+
+        assertTrue(body.contains(Messages.BslChecksPage_NoTags));
+    }
 }
