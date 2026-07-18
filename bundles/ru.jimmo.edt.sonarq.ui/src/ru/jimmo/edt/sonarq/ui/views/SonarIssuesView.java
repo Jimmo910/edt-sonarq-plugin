@@ -70,12 +70,14 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
+import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer;
@@ -574,8 +576,8 @@ public class SonarIssuesView extends ViewPart
     }
 
     /**
-     * Inserts BSL Language Server suppression comments around the issue's line and refreshes, so the
-     * false-positive stops being reported.
+     * Inserts BSL Language Server suppression comments around the issue's line, so the false-positive stops
+     * being reported, then updates the tree and markers in place.
      *
      * @param entry the issue entry to suppress, not {@code null}
      */
@@ -589,12 +591,38 @@ public class SonarIssuesView extends ViewPart
         try
         {
             SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage());
-            refreshIssues();
+            applySuppressionLineShift(entry);
         }
         catch (CoreException | BadLocationException e)
         {
             SonarqPlugin.getInstance().getLog().error(e.getMessage(), e);
         }
+    }
+
+    /**
+     * Updates the current {@link #snapshot} in place right after a successful quick-suppress, instead of
+     * relying on the next asynchronous {@link #refreshIssues()} (which can take seconds, or a full
+     * re-analysis in local analysis mode) to catch up.
+     *
+     * <p>Without this, suppressing a second issue in the same file before that refresh completes would read
+     * a stale line number for it - {@link SuppressionLineShift#applyAfterSuppress} is what keeps every other
+     * issue in the file numbered correctly for the comment pair {@link SuppressionApplier#apply} just wrote,
+     * so this method never needs a fresh server or local-analysis round-trip to stay correct (issue #7
+     * follow-up).
+     *
+     * @param entry the issue entry that was just suppressed, not {@code null}
+     */
+    private void applySuppressionLineShift(IssueEntry entry)
+    {
+        if (snapshot == null)
+        {
+            return;
+        }
+        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), entry.issue().key(),
+            entry.issue().componentKey(), entry.issue().line());
+        snapshot = new IssueSnapshot(snapshot.query(), adjusted, adjusted.size(), snapshot.loadedAt());
+        rebuildTree();
+        scheduleMarkerSync();
     }
 
     private void refreshIssues()

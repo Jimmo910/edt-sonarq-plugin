@@ -71,9 +71,15 @@ public final class BslSuppression
      * flagged line's own indentation, so the BSL Language Server (and SonarQube's community BSL plugin)
      * stops reporting {@code ruleKey} for that line.
      *
-     * <p>A no-op when the line immediately above {@code line1Based} is already the exact off-comment this
-     * call would insert: re-running the action on an already-suppressed line does not nest another wrapper
-     * around it.
+     * <p>A no-op in two cases, both guarding against corrupting the file with a nested or wrapped-comment
+     * suppression when a caller passes a line number that is stale (see {@link #isBslSuppressionComment}):
+     * <ul>
+     * <li>{@code line1Based} itself is already a BSL Language Server suppression comment - inserting would
+     * wrap the comment instead of code, producing an {@code off/off/on/.../on} mess.</li>
+     * <li>the line immediately above {@code line1Based} is already the exact off-comment this call would
+     * insert - re-running the action on an already-suppressed line does not nest another wrapper around
+     * it.</li>
+     * </ul>
      *
      * @param document the document to edit, not {@code null}
      * @param line1Based the 1-based line number of the flagged line
@@ -83,6 +89,10 @@ public final class BslSuppression
     public static void insert(IDocument document, int line1Based, String ruleKey) throws BadLocationException
     {
         int line0 = line1Based - 1;
+        if (isBslSuppressionComment(trimmedLineOf(document, line0)))
+        {
+            return;
+        }
         String off = offComment(ruleKey);
         if (isAlreadySuppressed(document, line0, off))
         {
@@ -100,15 +110,33 @@ public final class BslSuppression
         document.replace(insertOnAt, 0, delimiter + indentation + onComment(ruleKey));
     }
 
+    /**
+     * Tells whether a (trimmed) line of source text is a BSL Language Server suppression comment - either an
+     * {@code -off} or an {@code -on} marker, for any rule key.
+     *
+     * @param trimmedLine a line of source text with leading/trailing whitespace already stripped, not
+     *     {@code null}
+     * @return {@code true} when {@code trimmedLine} starts with the {@code // BSLLS:} prefix
+     */
+    static boolean isBslSuppressionComment(String trimmedLine)
+    {
+        return trimmedLine.startsWith(COMMENT_PREFIX);
+    }
+
     private static boolean isAlreadySuppressed(IDocument document, int line0, String off) throws BadLocationException
     {
         if (line0 <= 0)
         {
             return false;
         }
-        IRegion aboveRegion = document.getLineInformation(line0 - 1);
-        String aboveTrimmed = document.get(aboveRegion.getOffset(), aboveRegion.getLength()).trim();
-        return aboveTrimmed.equals(off);
+        String aboveTrimmed = trimmedLineOf(document, line0 - 1);
+        return isBslSuppressionComment(aboveTrimmed) && aboveTrimmed.equals(off);
+    }
+
+    private static String trimmedLineOf(IDocument document, int line0) throws BadLocationException
+    {
+        IRegion region = document.getLineInformation(line0);
+        return document.get(region.getOffset(), region.getLength()).trim();
     }
 
     private static String leadingWhitespaceOf(IDocument document, int line0) throws BadLocationException

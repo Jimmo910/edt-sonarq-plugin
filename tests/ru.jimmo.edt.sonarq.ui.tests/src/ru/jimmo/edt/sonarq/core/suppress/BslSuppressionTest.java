@@ -73,4 +73,31 @@ public class BslSuppressionTest
 
         assertEquals(already, document.get());
     }
+
+    @Test
+    public void insertIsANoOpWhenTheTargetLineIsASuppressionComment() throws Exception
+    {
+        String withComment = "Процедура П()\n    // BSLLS:OtherRule-off\n    А = 1;\nКонецПроцедуры\n";
+        IDocument document = new Document(withComment);
+
+        BslSuppression.insert(document, 2, "MagicNumber");
+
+        assertEquals(withComment, document.get());
+    }
+
+    @Test
+    public void secondInsertOnAStaleSameLineNumberDoesNotCorruptTheFile() throws Exception
+    {
+        // Reproduces issue #7's follow-up defect: two issues reported on the SAME line, suppressed one
+        // after another before the async refresh that would renumber the second one's stale line has run.
+        // The first call wraps line 2; the second call, still targeting line 2, would otherwise wrap the
+        // freshly inserted off-comment itself (an off/off/on/.../on mess) instead of being a no-op.
+        IDocument document = new Document("Процедура П()\n    А = 1;\nКонецПроцедуры\n");
+        BslSuppression.insert(document, 2, "MagicNumber");
+        String afterFirstInsert = document.get();
+
+        BslSuppression.insert(document, 2, "OtherRule");
+
+        assertEquals(afterFirstInsert, document.get());
+    }
 }
