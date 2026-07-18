@@ -21,6 +21,7 @@ import org.eclipse.core.runtime.preferences.IPreferencesService;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 import ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder;
@@ -186,7 +187,13 @@ public final class AutoSyncScheduler
         {
             List<IssueEntry> entries = IssueTreeBuilder.toEntries(result.snapshot().issues(),
                 inputs.mappingProjectKey(), inputs.mappingPathPrefix());
-            new IssueMarkerSynchronizer().sync(inputs.project(), entries);
+            MarkerSyncResult syncResult = new IssueMarkerSynchronizer().sync(inputs.project(), entries);
+            if (syncResult.missingFile() > 0)
+            {
+                Platform.getLog(AutoSyncScheduler.class).warn(syncResult.missingFile()
+                    + " issue(s) resolved to a project file that does not exist even after a workspace " //$NON-NLS-1$
+                    + "refresh; they are not shown as Problems-view markers"); //$NON-NLS-1$
+            }
         }
         catch (CoreException | RuntimeException e)
         {

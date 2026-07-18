@@ -119,6 +119,7 @@ public final class Messages extends NLS
     public static String PreferencePage_ScannerPath;
     public static String PreferencePage_ServerUrl;
     public static String PreferencePage_ShowMarkers;
+    public static String PreferencePage_ShowMarkersHint;
     public static String PreferencePage_TestConnection;
     public static String PreferencePage_TestFailure;
     public static String PreferencePage_TestSuccess;
