@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,6 +27,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
@@ -181,5 +183,56 @@ public class RefreshIssuesJobTest
         RefreshResult result = run(provider, new ProjectBinding("p", "", ""), null);
         assertTrue(result.isError());
         assertEquals(NLS.bind(Messages.IssuesView_Status_AuthError, "401"), result.errorMessage());
+    }
+
+    /**
+     * Regression test for issue #4 point 2: local analysis (a BSL Language Server run) was reported under
+     * the server-mode "Loading SonarQube issues" job title, which is wrong - local mode analyzes, it does
+     * not download anything from a server.
+     */
+    @Test
+    public void jobNameIsServerNameForNonLocalProvider()
+    {
+        assertEquals(Messages.RefreshJob_Name, RefreshIssuesJob.jobName(new FakeProvider()));
+    }
+
+    @Test
+    public void jobNameIsLocalNameForLocalIssueProvider()
+    {
+        assertEquals(Messages.RefreshJob_LocalName, RefreshIssuesJob.jobName(localProvider()));
+    }
+
+    @Test
+    public void isLocalProviderDistinguishesLocalFromServerProviders()
+    {
+        assertFalse(RefreshIssuesJob.isLocalProvider(new FakeProvider()));
+        assertTrue(RefreshIssuesJob.isLocalProvider(localProvider()));
+    }
+
+    /**
+     * The Progress view popup ({@code Job#setUser}) must stay scoped to local analysis: the fast
+     * server-mode refresh is also run unattended by {@code AutoSyncScheduler} and must never surface a
+     * foreground progress dialog (unattended-safety, see CLAUDE.md).
+     */
+    @Test
+    public void onlyLocalAnalysisJobIsMarkedUserForForegroundProgress() throws CoreException
+    {
+        RefreshIssuesJob serverJob =
+            new RefreshIssuesJob(new FakeProvider(), project, new ProjectBinding("p", "", ""), null, result ->
+            {
+            });
+        RefreshIssuesJob localJob =
+            new RefreshIssuesJob(localProvider(), project, new ProjectBinding("p", "", ""), null, result ->
+            {
+            });
+
+        assertFalse(serverJob.isUser());
+        assertTrue(localJob.isUser());
+    }
+
+    private static LocalIssueProvider localProvider()
+    {
+        return new LocalIssueProvider("k", Path.of("."), Path.of("."), null, null, "", 4,
+            (executable, srcDir, outputDir, configPath, monitor) -> outputDir);
     }
 }

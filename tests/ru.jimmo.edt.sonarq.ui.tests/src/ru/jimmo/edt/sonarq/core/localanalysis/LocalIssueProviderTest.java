@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
@@ -38,6 +39,64 @@ import ru.jimmo.edt.sonarq.core.scope.ChangedLines;
 public class LocalIssueProviderTest
 {
     private static final String PROJECT_KEY = "TestConfiguration";
+
+    /**
+     * Records the sequence of progress calls it receives, for asserting the coarse two-phase progress
+     * {@link LocalIssueProvider#fetchIssues} reports (issue #4 point 2). Every other {@link IProgressMonitor}
+     * method is a no-op; cancellation is never requested by these tests.
+     */
+    private static final class RecordingProgressMonitor implements IProgressMonitor
+    {
+        private final List<String> events = new ArrayList<>();
+
+        @Override
+        public void beginTask(String name, int totalWork)
+        {
+            events.add("beginTask(" + name + "," + totalWork + ")");
+        }
+
+        @Override
+        public void done()
+        {
+            events.add("done()");
+        }
+
+        @Override
+        public void internalWorked(double work)
+        {
+            // Not used by the coarse progress reporting under test.
+        }
+
+        @Override
+        public boolean isCanceled()
+        {
+            return false;
+        }
+
+        @Override
+        public void setCanceled(boolean value)
+        {
+            // Not used by the coarse progress reporting under test.
+        }
+
+        @Override
+        public void setTaskName(String name)
+        {
+            // Not used by the coarse progress reporting under test.
+        }
+
+        @Override
+        public void subTask(String name)
+        {
+            events.add("subTask(" + name + ")");
+        }
+
+        @Override
+        public void worked(int work)
+        {
+            events.add("worked(" + work + ")");
+        }
+    }
 
     /** Records the arguments it was called with and serves a pre-canned SARIF file or a failure. */
     private static final class FakeRunner implements AnalyzeRunner
@@ -504,6 +563,75 @@ public class LocalIssueProviderTest
 
         assertEquals(2, snapshot.issues().size());
         assertEquals(2, snapshot.serverTotal());
+    }
+
+    /**
+     * Regression test for issue #4 point 2: local analysis was reported with no progress feedback beyond a
+     * bare, indeterminate spinner. {@link LocalIssueProvider#fetchIssues} must now report a coarse,
+     * two-phase progress ("preparing the analysis engine", then "analyzing sources") so the Progress view
+     * shows what is happening, and always call {@code done()} even though no caller wraps the monitor in a
+     * {@code SubMonitor}.
+     */
+    @Test
+    public void fetchIssuesReportsCoarseTwoPhaseProgress() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixture();
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
+        RecordingProgressMonitor monitor = new RecordingProgressMonitor();
+
+        provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), monitor);
+
+        assertEquals(List.of(
+            "beginTask(Local BSL analysis,2)",
+            "subTask(Preparing analysis engine)",
+            "worked(1)",
+            "subTask(Analyzing sources)",
+            "worked(1)",
+            "done()"),
+            monitor.events);
+    }
+
+    /**
+     * The progress monitor must be null-safe: local mode can, in principle, be invoked without one, and a
+     * failure to report progress must never fail the analysis itself.
+     */
+    @Test
+    public void fetchIssuesToleratesANullMonitor() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixture();
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
+
+        IssueSnapshot snapshot = provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), null);
+
+        assertEquals(1, snapshot.issues().size());
+    }
+
+    /**
+     * {@code done()} must be called even when the analysis fails, so a caller that shows a progress dialog
+     * (see {@code RefreshIssuesJob#isLocalProvider}) never sees it stuck mid-way after an error.
+     */
+    @Test
+    public void fetchIssuesCallsDoneOnMonitorEvenWhenTheAnalysisFails() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.ioFailure = new IOException("boom");
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4, runner);
+        RecordingProgressMonitor monitor = new RecordingProgressMonitor();
+
+        try
+        {
+            provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), monitor);
+            fail("expected SonarServerException");
+        }
+        catch (SonarServerException e)
+        {
+            assertTrue(monitor.events.contains("done()"));
+        }
     }
 
     @Test

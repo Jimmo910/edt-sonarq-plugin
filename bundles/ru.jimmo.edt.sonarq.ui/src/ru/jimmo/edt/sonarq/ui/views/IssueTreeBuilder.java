@@ -89,6 +89,21 @@ public final class IssueTreeBuilder
         return entries;
     }
 
+    /**
+     * Counts entries whose component did not map to a file in the bound EDT project.
+     *
+     * <p>Used to surface, in the status line, how many issues are shown in the tree but not as Problems-view
+     * markers (see {@link ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer}, which only ever creates
+     * markers for mapped entries).
+     *
+     * @param entries the mapped entries (e.g. from {@link #toEntries}), not {@code null}
+     * @return the number of entries with a {@code null} {@link IssueEntry#relativePath()}
+     */
+    public static long countUnmapped(List<IssueEntry> entries)
+    {
+        return entries.stream().filter(entry -> entry.relativePath() == null).count();
+    }
+
     private static List<IssueEntry> sorted(List<IssueEntry> entries)
     {
         entries.sort(Comparator

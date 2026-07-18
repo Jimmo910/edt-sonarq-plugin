@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.ui.preferences;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -20,6 +21,7 @@ import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.IPreferencesService;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.equinox.security.storage.StorageException;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.preference.PreferencePage;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
@@ -46,6 +48,7 @@ import ru.jimmo.edt.sonarq.core.analysis.Processes;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
@@ -90,6 +93,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     private Label bslVerifyResultLabel;
 
     private Spinner bslMaxHeapSpinner;
+
+    private Label engineStatusLabel;
+
+    private Button deleteEngineButton;
 
     private Text scannerPathText;
 
@@ -244,12 +251,23 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         Label maxHeapHint = new Label(group, SWT.WRAP);
         maxHeapHint.setText(Messages.PreferencePage_BslLsMaxHeapHint);
         maxHeapHint.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        engineStatusLabel = new Label(group, SWT.NONE);
+        engineStatusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
+
+        deleteEngineButton = new Button(group, SWT.PUSH);
+        deleteEngineButton.setText(Messages.PreferencePage_DeleteEngine);
+        deleteEngineButton.setLayoutData(new GridData(SWT.LEFT, SWT.CENTER, false, false, 2, 1));
+        deleteEngineButton.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> deleteEngine()));
     }
 
     /**
-     * Enables the BSL source widgets: the combo and the max-heap spinner follow the page mode, the path row
-     * (text, browse and verify buttons) is active only when the user chose a local executable over the
-     * automatic download.
+     * Enables the BSL source widgets: the combo follows the page mode, the path row (text, browse and
+     * verify buttons) is active only when the user chose a local executable over the automatic download,
+     * and the max-heap spinner only while local mode is selected AND the managed download is in effect
+     * (see {@link #heapSpinnerEnabled}) - {@link BslServerInstaller#configureHeap} rewrites only that
+     * downloaded engine's own launcher configuration file, so the spinner has no effect at all on a
+     * user-supplied executable and must not invite the user to believe otherwise.
      */
     private void updateBslSourceEnablement()
     {
@@ -260,8 +278,27 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslBrowseButton.setEnabled(local && ownExecutable);
         bslVerifyButton.setEnabled(local && ownExecutable);
         bslVerifyResultLabel.setEnabled(local && ownExecutable);
-        bslMaxHeapSpinner.setEnabled(local);
+        bslMaxHeapSpinner.setEnabled(heapSpinnerEnabled(local, ownExecutable));
+        engineStatusLabel.setEnabled(local);
+        deleteEngineButton.setEnabled(local);
         validateBslPath();
+    }
+
+    /**
+     * Decides whether the max-heap spinner should be enabled: only in local mode, and only while the BSL
+     * source is the managed automatic download rather than a user-supplied executable. {@link
+     * BslServerInstaller#configureHeap} rewrites the pinned heap limit of the downloaded engine's own
+     * launcher configuration file under the plugin state directory; it never touches a user-supplied
+     * executable, so the spinner is meaningless (and must stay disabled) whenever one is selected (review
+     * minor, issue #4/#5).
+     *
+     * @param localMode {@code true} when the page mode combo selects local analysis
+     * @param ownExecutable {@code true} when the BSL source combo selects a user-supplied executable
+     * @return {@code true} when the max-heap spinner should be enabled
+     */
+    static boolean heapSpinnerEnabled(boolean localMode, boolean ownExecutable)
+    {
+        return localMode && !ownExecutable;
     }
 
     /**
@@ -367,6 +404,51 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     }
 
     /**
+     * Refreshes {@link #engineStatusLabel} to reflect whether the managed BSL Language Server distribution
+     * is currently installed under the plugin state directory (issue #4 point 1). Cheap: only stats a file
+     * and reads a marker (see {@link BslServerInstaller#isInstalled}), never touches the network.
+     */
+    private void refreshEngineStatus()
+    {
+        Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+        boolean installed = BslServerInstaller.isInstalled(stateDir);
+        engineStatusLabel.setText(
+            installed ? Messages.PreferencePage_EngineInstalled : Messages.PreferencePage_EngineNotInstalled);
+    }
+
+    /**
+     * Deletes the downloaded BSL Language Server distribution after an explicit user confirmation, so a user
+     * who no longer needs local analysis can reclaim the ~170 MB it occupies (issue #4 point 1). A failure
+     * to delete is reported in an error dialog rather than propagated, since this runs directly from a button
+     * click on the UI thread and must never crash the preferences page. Either way, {@link #engineStatusLabel}
+     * is refreshed afterwards so the page always reflects the actual on-disk state.
+     *
+     * <p>{@link BslServerInstaller#deleteServer} walks the distribution tree with {@link
+     * java.nio.file.Files#walk}, which throws the unchecked {@link UncheckedIOException} instead of
+     * {@link IOException} when the tree mutates mid-walk (for example a delete racing an install); that is
+     * caught alongside {@link IOException} so such a race is still reported in the same error dialog rather
+     * than escaping and crashing the page (review minor, issue #4/#5).
+     */
+    private void deleteEngine()
+    {
+        boolean confirmed = MessageDialog.openConfirm(getShell(), Messages.PreferencePage_DeleteEngineTitle,
+            Messages.PreferencePage_DeleteEngineConfirm);
+        if (confirmed)
+        {
+            Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+            try
+            {
+                BslServerInstaller.deleteServer(stateDir);
+            }
+            catch (IOException | UncheckedIOException e)
+            {
+                MessageDialog.openError(getShell(), Messages.PreferencePage_DeleteEngineTitle, e.getMessage());
+            }
+        }
+        refreshEngineStatus();
+    }
+
+    /**
      * Enables the widgets that belong to the selected {@link PreferenceConstants#PREF_MODE}: the connection
      * fields and the analysis-launch group in server mode, the BSL Language Server path in local mode. The
      * <em>Show issues in editor</em> checkbox stays enabled in either mode, but background auto-sync (its
@@ -449,6 +531,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslSourceCombo.select(bslPath.isBlank() ? BSL_SOURCE_INDEX_DOWNLOAD : BSL_SOURCE_INDEX_LOCAL);
         bslMaxHeapSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, PreferenceConstants.DEFAULT_BSL_LS_MAX_HEAP_GB, null));
+        refreshEngineStatus();
         String serverUrl =
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null); //$NON-NLS-1$
         urlText.setText(serverUrl);

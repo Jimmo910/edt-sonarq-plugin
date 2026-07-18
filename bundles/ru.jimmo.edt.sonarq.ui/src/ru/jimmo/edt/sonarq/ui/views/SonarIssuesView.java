@@ -32,6 +32,7 @@ import org.eclipse.jface.action.IMenuCreator;
 import org.eclipse.jface.action.IToolBarManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.dialogs.MessageDialog;
+import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
@@ -53,6 +54,7 @@ import org.eclipse.swt.widgets.Link;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.swt.widgets.MenuItem;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.eclipse.ui.part.ViewPart;
 
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchConfig;
@@ -60,6 +62,7 @@ import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
@@ -89,6 +92,8 @@ public class SonarIssuesView extends ViewPart
 
     private TreeViewer viewer;
     private Label statusLabel;
+    private Link errorDetailsLink;
+    private String lastErrorMessage;
     private Composite bannerComposite;
     private Label bannerLabel;
     private Link bannerLink;
@@ -172,11 +177,37 @@ public class SonarIssuesView extends ViewPart
             }
         });
 
-        statusLabel = new Label(root, SWT.NONE);
+        createStatusRow(root);
+
+        createToolBar();
+    }
+
+    /**
+     * Creates the status row: a status label that fills the available width, plus an initially hidden
+     * "Details" link shown only while an error status is displayed (see {@link #setErrorDetailsVisible}).
+     * The link only ever opens its dialog from its own {@link SelectionListener} - i.e. on an explicit user
+     * click - never automatically, so a background refresh (see {@link ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler})
+     * can never pop it up.
+     *
+     * @param root the parent composite, not {@code null}
+     */
+    private void createStatusRow(Composite root)
+    {
+        Composite statusRow = new Composite(root, SWT.NONE);
+        statusRow.setLayout(new GridLayout(2, false));
+        statusRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        statusLabel = new Label(statusRow, SWT.NONE);
         statusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
 
-        createToolBar();
+        errorDetailsLink = new Link(statusRow, SWT.NONE);
+        errorDetailsLink.setText("<a>" + Messages.IssuesView_Error_DetailsLink + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$
+        GridData linkData = new GridData(SWT.RIGHT, SWT.CENTER, false, false);
+        linkData.exclude = true;
+        errorDetailsLink.setLayoutData(linkData);
+        errorDetailsLink.setVisible(false);
+        errorDetailsLink.addSelectionListener(SelectionListener.widgetSelectedAdapter(event -> showErrorDetails()));
     }
 
     private void createBanner(Composite root)
@@ -213,7 +244,7 @@ public class SonarIssuesView extends ViewPart
 
     private Action createRefreshAction()
     {
-        return new Action(Messages.IssuesView_RefreshAction, IAction.AS_PUSH_BUTTON)
+        Action action = new Action(Messages.IssuesView_RefreshAction, IAction.AS_PUSH_BUTTON)
         {
             @Override
             public void run()
@@ -221,11 +252,13 @@ public class SonarIssuesView extends ViewPart
                 refreshIssues();
             }
         };
+        applyToolbarIcon(action, "icons/refresh.png", Messages.IssuesView_RefreshAction); //$NON-NLS-1$
+        return action;
     }
 
     private Action createRunAnalysisAction()
     {
-        return new Action(Messages.IssuesView_RunAnalysisAction, IAction.AS_PUSH_BUTTON)
+        Action action = new Action(Messages.IssuesView_RunAnalysisAction, IAction.AS_PUSH_BUTTON)
         {
             @Override
             public void run()
@@ -233,6 +266,8 @@ public class SonarIssuesView extends ViewPart
                 launchAnalysis();
             }
         };
+        applyToolbarIcon(action, "icons/run.png", Messages.IssuesView_RunAnalysisAction); //$NON-NLS-1$
+        return action;
     }
 
     private Action createProjectAction()
@@ -241,6 +276,7 @@ public class SonarIssuesView extends ViewPart
         {
         };
         projects.setMenuCreator(new ProjectMenuCreator());
+        applyToolbarIcon(projects, "icons/project.png", Messages.IssuesView_ProjectMenu); //$NON-NLS-1$
         return projects;
     }
 
@@ -250,6 +286,7 @@ public class SonarIssuesView extends ViewPart
         {
         };
         severity.setMenuCreator(new SeverityMenuCreator());
+        applyToolbarIcon(severity, "icons/severity.png", Messages.IssuesView_SeverityMenu); //$NON-NLS-1$
         return severity;
     }
 
@@ -259,6 +296,7 @@ public class SonarIssuesView extends ViewPart
         {
         };
         type.setMenuCreator(new TypeMenuCreator());
+        applyToolbarIcon(type, "icons/type.png", Messages.IssuesView_TypeMenu); //$NON-NLS-1$
         return type;
     }
 
@@ -274,12 +312,13 @@ public class SonarIssuesView extends ViewPart
             }
         };
         action.setChecked(true);
+        applyToolbarIcon(action, "icons/groupfile.png", Messages.IssuesView_GroupByFile); //$NON-NLS-1$
         return action;
     }
 
     private Action createGroupByRuleAction()
     {
-        return new Action(Messages.IssuesView_GroupByRule, IAction.AS_RADIO_BUTTON)
+        Action action = new Action(Messages.IssuesView_GroupByRule, IAction.AS_RADIO_BUTTON)
         {
             @Override
             public void run()
@@ -288,6 +327,27 @@ public class SonarIssuesView extends ViewPart
                 rebuildTree();
             }
         };
+        applyToolbarIcon(action, "icons/grouprule.png", Messages.IssuesView_GroupByRule); //$NON-NLS-1$
+        return action;
+    }
+
+    /**
+     * Switches a toolbar action from a text label to an icon, moving its label to the hover tooltip
+     * (issue #4 point 7): JFace renders a toolbar {@link Action} icon-only once an image descriptor is set,
+     * while the action text set at construction time remains its accessible name and drop-down/menu label.
+     * The descriptor is resolved the same way the view's own extension-point icon is (bundle-relative path
+     * under {@code icons/}, resolved through {@link AbstractUIPlugin#imageDescriptorFromPlugin}), and the
+     * matching {@code @2x} file next to it is picked up automatically on HiDPI displays.
+     *
+     * @param action the action to update, not {@code null}
+     * @param iconPath the bundle-relative icon path, e.g. {@code "icons/refresh.png"}, not {@code null}
+     * @param tooltip the action's current label, reused as the tooltip text, not {@code null}
+     */
+    private static void applyToolbarIcon(Action action, String iconPath, String tooltip)
+    {
+        ImageDescriptor descriptor = AbstractUIPlugin.imageDescriptorFromPlugin(SonarqPlugin.PLUGIN_ID, iconPath);
+        action.setImageDescriptor(descriptor);
+        action.setToolTipText(tooltip);
     }
 
     private void createColumns()
@@ -374,22 +434,77 @@ public class SonarIssuesView extends ViewPart
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null)
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         selectedProject = project;
         Optional<ProjectRefreshInputs> inputs = RefreshInputsFactory.create(project);
         if (inputs.isEmpty())
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         ProjectRefreshInputs refreshInputs = inputs.get();
         boundProjectKey = refreshInputs.mappingProjectKey();
         boundPathPrefix = refreshInputs.mappingPathPrefix();
-        currentProvider = refreshInputs.provider();
-        scheduleTracked(new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, result)));
+        IIssueProvider refreshedProvider = refreshInputs.provider();
+        applyRunningStatus();
+        showEngineDownloadHintIfNeeded();
+        scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
+            result -> onRefreshFinished(generation, refreshedProvider, result)));
+    }
+
+    /**
+     * Shows a neutral in-progress status the moment a refresh is actually scheduled, clearing any error (or
+     * stale success) text left over from a previous run so it does not linger on screen until this run
+     * completes (issue #4 point 4).
+     */
+    private void applyRunningStatus()
+    {
+        lastErrorMessage = null;
+        statusLabel.setText(Messages.IssuesView_Status_Running);
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
+        statusLabel.getParent().layout();
+    }
+
+    /**
+     * Shows the "not configured" status, clearing any error tooltip and "Details" link a previous failed
+     * refresh or analysis attempt may have left visible (review minor, issue #4/#5): every caller of this
+     * method is a guard clause that skips scheduling a refresh or analysis job, so without this the stale
+     * error state from an earlier attempt would otherwise linger on screen next to the unrelated
+     * not-configured message.
+     */
+    private void applyNotConfiguredStatus()
+    {
+        lastErrorMessage = null;
+        statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
+        statusLabel.getParent().layout();
+    }
+
+    /**
+     * Replaces the generic "Refreshing..." status with an explicit BSL Language Server download notice
+     * before a local-analysis refresh job is scheduled, whenever the engine is not installed yet under the
+     * plugin state directory - so the ~170 MB first-run download is visible immediately instead of silently
+     * happening behind an unrelated-looking status line (issue #4 point 1). The check itself is cheap: it
+     * only stats a file and reads a marker (see {@link BslServerInstaller#isInstalled}), never touches the
+     * network. Whichever way the scheduled job ends, {@link #onRefreshFinished} overwrites this text once it
+     * completes.
+     */
+    private void showEngineDownloadHintIfNeeded()
+    {
+        if (!isLocalMode())
+        {
+            return;
+        }
+        Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
+        if (!BslServerInstaller.isInstalled(stateDir))
+        {
+            statusLabel.setText(Messages.IssuesView_Status_InstallingEngine);
+            statusLabel.getParent().layout();
+        }
     }
 
     /**
@@ -430,7 +545,7 @@ public class SonarIssuesView extends ViewPart
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null || project.getLocation() == null)
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         selectedProject = project;
@@ -438,7 +553,7 @@ public class SonarIssuesView extends ViewPart
         Optional<SonarConnection> connection = new SonarConnectionFactory().create();
         if (!binding.isConfigured() || connection.isEmpty())
         {
-            statusLabel.setText(Messages.IssuesView_Status_NotConfigured);
+            applyNotConfiguredStatus();
             return;
         }
         String requested = resolveRequestedBranch(project, binding);
@@ -477,7 +592,12 @@ public class SonarIssuesView extends ViewPart
     {
         if (!statusLabel.isDisposed())
         {
+            // Clears any error tooltip/Details link left over from a previous refresh so it does not linger
+            // next to an unrelated branch-analysis status line (see #applyErrorStatus).
+            lastErrorMessage = null;
             statusLabel.setText(text);
+            statusLabel.setToolTipText(null);
+            setErrorDetailsVisible(false);
             statusLabel.getParent().layout();
         }
     }
@@ -587,7 +707,7 @@ public class SonarIssuesView extends ViewPart
         }
     }
 
-    private void onRefreshFinished(long generation, RefreshResult result)
+    private void onRefreshFinished(long generation, IIssueProvider refreshedProvider, RefreshResult result)
     {
         Display.getDefault().asyncExec(() ->
         {
@@ -599,15 +719,94 @@ public class SonarIssuesView extends ViewPart
             {
                 return;
             }
+            currentProvider = providerAfterRefresh(currentProvider, refreshedProvider, !result.isError());
             if (result.isError())
             {
-                statusLabel.setText(NLS.bind(Messages.IssuesView_Status_Error, result.errorMessage()));
+                applyErrorStatus(result.errorMessage());
                 return;
             }
             setInput(result.snapshot(), result.branchState());
             updateStatusAndBanner();
             scheduleMarkerSync();
         });
+    }
+
+    /**
+     * Shows a refresh failure on the status line: only the message's first line, as the one-line headline
+     * (see {@link #headlineOf}), with the full multi-line message (e.g. a {@code ProcessAnalyzeRunner}
+     * failure carries a "Full log: ..." path and a log tail after the headline) set as the label's tooltip
+     * and available on demand through the "Details" link (see {@link #showErrorDetails}). The link is never
+     * opened automatically from here - only its own click handler does that - so a background refresh (see
+     * {@link ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler}) can never pop up a dialog.
+     *
+     * @param errorMessage the full error message reported by the refresh job, not {@code null}
+     */
+    private void applyErrorStatus(String errorMessage)
+    {
+        lastErrorMessage = errorMessage;
+        statusLabel.setText(NLS.bind(Messages.IssuesView_Status_Error, headlineOf(errorMessage)));
+        statusLabel.setToolTipText(errorMessage);
+        setErrorDetailsVisible(true);
+        statusLabel.getParent().layout();
+    }
+
+    /**
+     * Extracts the first line of a (possibly multi-line) message, for use as a one-line status headline.
+     *
+     * @param message the full message, not {@code null}
+     * @return the first line, or {@code message} unchanged if it has no line break
+     */
+    static String headlineOf(String message)
+    {
+        return message.lines().findFirst().orElse(""); //$NON-NLS-1$
+    }
+
+    /**
+     * Opens the full error message in a read-only dialog. Called only from {@link #errorDetailsLink}'s own
+     * {@link SelectionListener} - i.e. only in direct response to an explicit user click - never from
+     * {@link #onRefreshFinished}, which can also run under the unattended background auto-sync timer.
+     */
+    private void showErrorDetails()
+    {
+        if (lastErrorMessage != null)
+        {
+            MessageDialog.openError(getSite().getShell(), Messages.IssuesView_Error_DetailsTitle, lastErrorMessage);
+        }
+    }
+
+    /**
+     * Shows or hides the "Details" link, which only makes sense while an error status is displayed.
+     *
+     * @param visible {@code true} to show the link, {@code false} to hide and exclude it from the layout
+     */
+    private void setErrorDetailsVisible(boolean visible)
+    {
+        ((GridData)errorDetailsLink.getLayoutData()).exclude = !visible;
+        errorDetailsLink.setVisible(visible);
+        errorDetailsLink.getParent().layout();
+    }
+
+    /**
+     * Decides which provider should serve rule-description lookups once a refresh attempt finishes.
+     *
+     * <p>A refresh always builds a brand-new {@link IIssueProvider}; in local analysis mode its rule
+     * description cache starts empty and is populated only by that instance's own successful
+     * {@link IIssueProvider#fetchIssues} call. Switching to it before that call succeeds would make
+     * {@link #requestRuleDescription} miss the cache for a rule the previous, still-displayed snapshot
+     * already knows in full, silently degrading its description down to just the rule name (issue #4 point
+     * 6) - so the previous provider keeps serving lookups until the new one proves itself by completing
+     * successfully.
+     *
+     * @param previousProvider the provider that served lookups before this refresh, or {@code null} before
+     *     the first successful refresh has ever completed
+     * @param refreshedProvider the provider this refresh attempt built and ran, not {@code null}
+     * @param refreshSucceeded whether this refresh attempt completed successfully
+     * @return {@code refreshedProvider} when {@code refreshSucceeded}, {@code previousProvider} otherwise
+     */
+    static IIssueProvider providerAfterRefresh(IIssueProvider previousProvider, IIssueProvider refreshedProvider,
+        boolean refreshSucceeded)
+    {
+        return refreshSucceeded ? refreshedProvider : previousProvider;
     }
 
     /**
@@ -653,7 +852,10 @@ public class SonarIssuesView extends ViewPart
 
     private void updateStatusAndBanner()
     {
+        lastErrorMessage = null;
         statusLabel.setText(buildStatusText());
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
         statusLabel.getParent().layout();
         updateBanner();
     }
@@ -677,6 +879,12 @@ public class SonarIssuesView extends ViewPart
         {
             text += "  " + NLS.bind(Messages.IssuesView_Status_Truncated, //$NON-NLS-1$
                 new Object[] { Integer.valueOf(count), Integer.valueOf(snapshot.serverTotal()) });
+        }
+        long unmapped = IssueTreeBuilder.countUnmapped(
+            IssueTreeBuilder.toEntries(snapshot.issues(), boundProjectKey, boundPathPrefix));
+        if (unmapped > 0)
+        {
+            text += NLS.bind(Messages.IssuesView_Status_UnmappedCount, Long.valueOf(unmapped));
         }
         return text;
     }

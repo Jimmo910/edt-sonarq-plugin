@@ -25,6 +25,7 @@ import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 
 import ru.jimmo.edt.sonarq.core.analysis.DownloadFunction;
+import ru.jimmo.edt.sonarq.ui.Messages;
 
 /**
  * Downloads and unpacks the self-contained BSL Language Server distribution into a state directory,
@@ -97,6 +98,46 @@ public final class BslServerInstaller
     public static String downloadUrl()
     {
         return BASE_URL + TAG_PREFIX + VERSION + '/' + ASSET_PREFIX + osClassifier() + ZIP_SUFFIX;
+    }
+
+    /**
+     * Tells whether the BSL Language Server distribution is already installed under {@code stateDir/bsl-ls}
+     * for the currently pinned {@link #VERSION}.
+     *
+     * <p>This is the same cheap check {@link #ensureServer} itself uses to decide whether to skip the
+     * download: it only stats the expected launcher file and reads the {@code .complete} marker, never
+     * acquires {@link #INSTALL_LOCK} and never touches the network. Safe to call often, for example to
+     * decide whether to show a "downloading..." hint before scheduling a refresh, or to show an
+     * installed/not-installed label on a preferences page.
+     *
+     * @param stateDir the plugin state directory the server would be unpacked under, not {@code null}
+     * @return {@code true} if the expected launcher exists and the completion marker records the current
+     *     {@link #VERSION}
+     */
+    public static boolean isInstalled(Path stateDir)
+    {
+        Path serverRoot = stateDir.resolve(SERVER_DIR);
+        Path executable = expectedExecutable(serverRoot);
+        Path marker = serverRoot.resolve(MARKER_FILE);
+        return Files.exists(executable) && isMarkedForCurrentVersion(marker);
+    }
+
+    /**
+     * Deletes the whole managed BSL Language Server distribution under {@code stateDir/bsl-ls}, including
+     * the completion marker, so the next {@link #ensureServer} call downloads and unpacks it again from
+     * scratch.
+     *
+     * <p>A no-op when nothing is installed there, so callers - for example a preferences page "delete
+     * downloaded engine" button - can invoke this unconditionally without first checking
+     * {@link #isInstalled}.
+     *
+     * @param stateDir the plugin state directory the server was (or would be) unpacked under, not
+     *     {@code null}
+     * @throws IOException if a file or directory under {@code stateDir/bsl-ls} cannot be deleted
+     */
+    public static void deleteServer(Path stateDir) throws IOException
+    {
+        deleteRecursively(stateDir.resolve(SERVER_DIR));
     }
 
     /**
@@ -260,8 +301,7 @@ public final class BslServerInstaller
     {
         Path serverRoot = stateDir.resolve(SERVER_DIR);
         Path executable = expectedExecutable(serverRoot);
-        Path marker = serverRoot.resolve(MARKER_FILE);
-        if (Files.exists(executable) && isMarkedForCurrentVersion(marker))
+        if (isInstalled(stateDir))
         {
             return executable;
         }
@@ -272,8 +312,17 @@ public final class BslServerInstaller
         deleteRecursively(serverRoot);
         Files.createDirectories(serverRoot);
         Path normalizedRoot = serverRoot.normalize();
+        Path marker = serverRoot.resolve(MARKER_FILE);
+        if (monitor != null)
+        {
+            monitor.subTask(Messages.BslInstaller_Downloading);
+        }
         try (ZipInputStream zip = new ZipInputStream(download.open(downloadUrl())))
         {
+            if (monitor != null)
+            {
+                monitor.subTask(Messages.BslInstaller_Unpacking);
+            }
             ZipEntry entry = zip.getNextEntry();
             while (entry != null)
             {
