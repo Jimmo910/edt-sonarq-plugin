@@ -387,9 +387,9 @@ public class SonarIssuesView extends ViewPart
         ProjectRefreshInputs refreshInputs = inputs.get();
         boundProjectKey = refreshInputs.mappingProjectKey();
         boundPathPrefix = refreshInputs.mappingPathPrefix();
-        currentProvider = refreshInputs.provider();
-        scheduleTracked(new RefreshIssuesJob(currentProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, result)));
+        IIssueProvider refreshedProvider = refreshInputs.provider();
+        scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
+            result -> onRefreshFinished(generation, refreshedProvider, result)));
     }
 
     /**
@@ -587,7 +587,7 @@ public class SonarIssuesView extends ViewPart
         }
     }
 
-    private void onRefreshFinished(long generation, RefreshResult result)
+    private void onRefreshFinished(long generation, IIssueProvider refreshedProvider, RefreshResult result)
     {
         Display.getDefault().asyncExec(() ->
         {
@@ -599,6 +599,7 @@ public class SonarIssuesView extends ViewPart
             {
                 return;
             }
+            currentProvider = providerAfterRefresh(currentProvider, refreshedProvider, !result.isError());
             if (result.isError())
             {
                 statusLabel.setText(NLS.bind(Messages.IssuesView_Status_Error, result.errorMessage()));
@@ -608,6 +609,29 @@ public class SonarIssuesView extends ViewPart
             updateStatusAndBanner();
             scheduleMarkerSync();
         });
+    }
+
+    /**
+     * Decides which provider should serve rule-description lookups once a refresh attempt finishes.
+     *
+     * <p>A refresh always builds a brand-new {@link IIssueProvider}; in local analysis mode its rule
+     * description cache starts empty and is populated only by that instance's own successful
+     * {@link IIssueProvider#fetchIssues} call. Switching to it before that call succeeds would make
+     * {@link #requestRuleDescription} miss the cache for a rule the previous, still-displayed snapshot
+     * already knows in full, silently degrading its description down to just the rule name (issue #4 point
+     * 6) - so the previous provider keeps serving lookups until the new one proves itself by completing
+     * successfully.
+     *
+     * @param previousProvider the provider that served lookups before this refresh, or {@code null} before
+     *     the first successful refresh has ever completed
+     * @param refreshedProvider the provider this refresh attempt built and ran, not {@code null}
+     * @param refreshSucceeded whether this refresh attempt completed successfully
+     * @return {@code refreshedProvider} when {@code refreshSucceeded}, {@code previousProvider} otherwise
+     */
+    static IIssueProvider providerAfterRefresh(IIssueProvider previousProvider, IIssueProvider refreshedProvider,
+        boolean refreshSucceeded)
+    {
+        return refreshSucceeded ? refreshedProvider : previousProvider;
     }
 
     /**
