@@ -30,8 +30,8 @@ against the project's sources, with no server involved.
 - **Run analysis from the view** — a toolbar action (local scanner or CI trigger).
 - **Serverless local mode** — analysis by the BSL Language Server straight from the sources,
   with no SonarQube server and no Java install required.
-- **Configurable checks** — a "BSL Checks" page that groups checks by category (EDT validator
-  duplicates, needs-tuning, inappropriate, other) with an "Apply recommended profile" button.
+- **Configurable checks** — a "BSL Checks" page that groups checks by type or by tag (the BSL
+  Language Server's own taxonomy) with an "Apply Recommended Profile" button.
 - **Local analysis scope** — per project: a base branch (show issues only on lines changed
   relative to it) and a subsystem filter.
 
@@ -74,7 +74,8 @@ against the project's sources, with no server involved.
 ## The Issues view
 
 The toolbar sits at the top of the view, the issue tree below it, the rule description pane
-under the tree, and a status line at the very bottom.
+under the tree, and a status line at the very bottom. Toolbar buttons show icons rather than
+text labels — the name and purpose of each button is shown in its hover tooltip.
 
 | Control | What it does |
 |---|---|
@@ -88,8 +89,19 @@ under the tree, and a status line at the very bottom.
 
 Also in the view:
 
-- The **status line** at the bottom shows the issue count, the branch, the last-refresh time,
-  and, on failures, the error text (for example an authentication or network error).
+- The **status line** at the bottom shows the issue count, the branch and the last-refresh
+  time, plus how many of the loaded issues are **not shown in the Problems view** (issues whose
+  file doesn't map to any workspace file) — part of the Issues view's unique value over the
+  standard Problems view, which never shows those at all.
+- On failure the status line shows a short error headline (for example an authentication or
+  network error); the full error text is shown in the line's hover tooltip, and a **Details**
+  button next to it opens the full text in a dialog. An out-of-memory error in local mode points
+  directly at the **BSL LS max heap** setting (see [Configuring local
+  mode](#configuring-local-mode-no-server) above).
+- In local mode the status line shows its own progress — a distinct background job title and
+  phases (including downloading the BSL Language Server engine on first run, ~170 MB) — instead
+  of the server-mode "downloading" wording; the status and error text are cleared on every new
+  run (**Refresh** or switching project), so nothing stale lingers from a previous run.
 - **Double-click** an issue to open the corresponding module at the reported line; a **single
   click** loads the rule description into the bottom pane.
 - Issues whose **file is not found locally** are shown greyed out; a tooltip explains that
@@ -171,6 +183,14 @@ overwriting an already-analyzed branch).
     Java is required.
   - **Use a local executable** — set the **BSL Language Server executable** path yourself
     (**Browse…** and **Verify** buttons; **Verify** runs the file with `--version`).
+- **BSL LS max heap (GB)** (4 by default) — the maximum JVM heap the plugin writes into the
+  downloaded engine before every local analysis. Increase it if analysis fails with an
+  out-of-memory error on a large configuration (the Issues view's error message points right at
+  this setting). It only applies to the managed downloaded engine — it has no effect on a
+  user-supplied executable (**Use a local executable**), and the field is disabled in that case.
+- The **analysis engine** status line shows whether the downloaded BSL Language Server is
+  installed, and a **Delete Downloaded Engine** button removes it — for example to force a
+  fresh download; the next local analysis downloads it again automatically.
 - Every **Refresh** runs a fresh local analysis.
 - Which checks run is configured separately — see [Choosing which checks
   run](#choosing-which-checks-run) below; every check bundled with the BSL Language Server is
@@ -183,20 +203,24 @@ overwriting an already-analyzed branch).
 Which diagnostics local analysis reports is configured on a separate page: **Preferences** →
 **SonarQube** → **BSL Checks** (the `BslChecksPreferencePage` class).
 
-- Diagnostics are shown as a tree grouped by category (**Key** and **Name** columns): **EDT
-  validator duplicates** — diagnostics that overlap a built-in EDT check (a row's tooltip names
-  the duplicated EDT check id); **Needs tuning for this project** — metric/threshold diagnostics
-  (complexity, sizes, magic numbers and the like); **Not a good fit for EDT** — opinionated or
-  EDT-conflicting diagnostics; **Other** — everything else. Each category has its own group
-  checkbox (toggles every diagnostic in that category at once, and shows a tri-state when the
-  category is a mix of enabled and disabled) and its own **"Disabled N of M"** count. A checked
-  diagnostic is enabled, an unchecked one is disabled. Every diagnostic is enabled by default.
-- The **Apply Recommended Profile** button disables the recommended set in one click — EDT
-  validator duplicates + needs-tuning + not-a-good-fit diagnostics (the **Other** category is
-  left untouched). This is opt-in: nothing changes until the button is pressed, so the default
-  stays every diagnostic enabled, exactly as before.
-- The category mapping is a first cut bundled with the plugin, not an authoritative
-  classification; the community is welcome to refine it via a Pull Request (see [issue
+- Diagnostics are shown as a tree (**Key** and **Name** columns) whose structure follows the
+  **"Group by"** dropdown above the tree: **By type** (the default) — grouped by the BSL
+  Language Server's own diagnostic type (Code smell, Error, Vulnerability, Security Hotspot);
+  **By tag** — grouped by BSL Language Server tags (`standard`, `badpractice`, `performance`,
+  `sql`, `brainoverload` and the like; a multi-tag diagnostic appears once under each of its
+  tags); **No grouping** — a flat list. A row's tooltip also shows its type and tags. Each group
+  has its own checkbox (toggles every diagnostic in that group at once, and shows a tri-state
+  when the group is a mix of enabled and disabled) and its own **"Disabled N of M"** count. A
+  checked diagnostic is enabled, an unchecked one is disabled. Every diagnostic is enabled by
+  default.
+- The **Apply Recommended Profile** button and the "Duplicates EDT check: …" tooltip are
+  independent of the tree's grouping — they use a separate, plugin-bundled classification of
+  reasons (EDT validator duplicates, needs-tuning, not-a-good-fit, other) and disable the
+  recommended set in one click — EDT validator duplicates + needs-tuning + not-a-good-fit
+  diagnostics (the **Other** category is left untouched). This is opt-in: nothing changes until
+  the button is pressed, so the default stays every diagnostic enabled, exactly as before.
+- This reason classification is a first cut bundled with the plugin, not an authoritative one;
+  the community is welcome to refine it via a Pull Request (see [issue
   #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
 - The filter field searches by key or name; **Enable All** / **Disable All** flip every
   diagnostic regardless of the current filter or category. The **"Disabled N of M"** label below
@@ -290,9 +314,9 @@ same content).
   single main branch.
 - In local mode the project's `src/` folder is analyzed (the conventional 1C configuration
   layout), or the project root when there is no `src/`.
-- The check-category mapping (the "BSL Checks" page) is a deliberately incomplete first cut
-  bundled with the plugin; it is refined by the community via pull requests (see
-  [issue #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
+- The recommended-profile reason classification (the "BSL Checks" page) is a deliberately
+  incomplete first cut bundled with the plugin; it is refined by the community via pull requests
+  (see [issue #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
 - The subsystem filter matches by subsystem name (as the BSL Language Server itself does), so
   same-named subsystems under different parents are filtered together.
 
