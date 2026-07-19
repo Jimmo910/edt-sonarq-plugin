@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -51,6 +52,16 @@ import ru.jimmo.edt.sonarq.core.analysis.Processes;
  * far because the test stand and its workspace happen to share the same drive letter. Verified live
  * 2026-07-17: the exact launcher invocation crashes when the process cwd is on {@code C:} while the
  * source tree is on {@code E:}, and succeeds once the cwd is moved onto the source tree's drive.
+ *
+ * <p>The child process's JVM max heap is capped two ways, belt-and-suspenders: primarily through the
+ * {@code _JAVA_OPTIONS} environment variable (see {@link #analyze} and {@link #mergeJavaOptions}), which
+ * every standard JVM launcher honors regardless of the jpackage app-image layout, and as a fallback
+ * through {@link BslServerInstaller#configureHeap} rewriting the launcher's {@code .cfg} file (invoked by
+ * {@link LocalIssueProvider#configureHeapBestEffort}) before this class is ever called. Both are set to
+ * the same value; the environment variable was verified live against the real 1.0.4 native build
+ * (2026-07-19): {@code _JAVA_OPTIONS=-Xmx16m} makes the JVM print {@code Picked up _JAVA_OPTIONS: -Xmx16m}
+ * to stdout and the analysis then fails with an {@link OutOfMemoryError}, confirming it overrides the
+ * {@code .cfg} file's {@code java-options=-Xmx4g}.
  */
 public final class ProcessAnalyzeRunner implements AnalyzeRunner
 {
@@ -62,11 +73,42 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
     private static final String OUT_OF_MEMORY_HINT =
         "BSL Language Server ran out of memory. Increase 'BSL LS max heap' in Settings -> SonarQube, " //$NON-NLS-1$
             + "then retry."; //$NON-NLS-1$
+    private static final String JAVA_OPTIONS_ENV_VAR = "_JAVA_OPTIONS"; //$NON-NLS-1$
+    private static final String XMX_FLAG_PREFIX = "-Xmx"; //$NON-NLS-1$
+    private static final String HEAP_UNIT_SUFFIX = "g"; //$NON-NLS-1$
 
     private static final long POLL_MILLIS = 500L;
     private static final long PUMP_JOIN_MILLIS = 2000L;
     private static final int CHUNK_SIZE = 8192;
     private static final int LOG_TAIL_LINES = 20;
+
+    /** The JVM max heap used when this runner is built with the no-arg constructor. */
+    private static final int DEFAULT_MAX_HEAP_GB = 4;
+
+    /** The floor {@link #maxHeapGb} is clamped to, mirroring {@code BslServerInstaller#MIN_HEAP_GB}. */
+    private static final int MIN_HEAP_GB = 1;
+
+    private final int maxHeapGb;
+
+    /**
+     * Creates a runner that caps the analysis process's JVM heap at {@link #DEFAULT_MAX_HEAP_GB} gigabytes
+     * via {@code _JAVA_OPTIONS} (see {@link #analyze}).
+     */
+    public ProcessAnalyzeRunner()
+    {
+        this(DEFAULT_MAX_HEAP_GB);
+    }
+
+    /**
+     * Creates a runner that caps the analysis process's JVM heap at {@code maxHeapGb} gigabytes via
+     * {@code _JAVA_OPTIONS} (see {@link #analyze}).
+     *
+     * @param maxHeapGb the desired maximum heap, in gigabytes; clamped up to {@link #MIN_HEAP_GB} if lower
+     */
+    public ProcessAnalyzeRunner(int maxHeapGb)
+    {
+        this.maxHeapGb = Math.max(MIN_HEAP_GB, maxHeapGb);
+    }
 
     @Override
     public Path analyze(Path serverExecutable, Path srcDir, Path outputDir, Path configPath,
@@ -77,6 +119,8 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(srcDir.toFile());
         builder.redirectErrorStream(true);
+        Map<String, String> env = builder.environment();
+        env.put(JAVA_OPTIONS_ENV_VAR, mergeJavaOptions(env.get(JAVA_OPTIONS_ENV_VAR), maxHeapGb));
         Path logFile = outputDir.resolve(LOG_FILE_NAME);
 
         Process process = builder.start();
@@ -117,6 +161,32 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
                 + System.lineSeparator() + tailLog(logFile));
         }
         return outputDir.resolve(SARIF_FILE_NAME);
+    }
+
+    /**
+     * Builds the {@code _JAVA_OPTIONS} value to set on the analysis process's environment, appending our
+     * heap cap to whatever the user (or the calling process's own environment) already set there.
+     *
+     * <p>Appending, rather than replacing, preserves any user-set {@code _JAVA_OPTIONS} the child process
+     * would otherwise have inherited; putting our {@code -Xmx} flag last means it wins, since the JVM
+     * applies later {@code -Xmx} occurrences over earlier ones. This variable takes priority over the
+     * launcher's own {@code .cfg} file heap setting - verified live against the real 1.0.4 native build
+     * (see the class javadoc) - which is why {@link #analyze} sets it in addition to, not instead of,
+     * {@link BslServerInstaller#configureHeap}.
+     *
+     * @param existing the analysis process's inherited {@code _JAVA_OPTIONS} value, or {@code null}/blank
+     *     if unset
+     * @param maxHeapGb the desired maximum heap, in gigabytes; clamped up to {@link #MIN_HEAP_GB} if lower
+     * @return the {@code _JAVA_OPTIONS} value to set, never {@code null}
+     */
+    static String mergeJavaOptions(String existing, int maxHeapGb)
+    {
+        String xmxFlag = XMX_FLAG_PREFIX + Math.max(MIN_HEAP_GB, maxHeapGb) + HEAP_UNIT_SUFFIX;
+        if (existing == null || existing.isBlank())
+        {
+            return xmxFlag;
+        }
+        return existing.strip() + ' ' + xmxFlag;
     }
 
     /**
@@ -167,9 +237,10 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
 
     /**
      * Tells whether the log file's content mentions an {@code OutOfMemoryError}, so a non-zero exit caused
-     * by the bundled BSL Language Server running out of its (configurable, see
-     * {@code BslServerInstaller#configureHeap}) heap limit can be reported with an actionable hint instead
-     * of a bare exit code - the language server itself gives no other indication of the cause.
+     * by the bundled BSL Language Server running out of its configurable heap limit - set via
+     * {@code _JAVA_OPTIONS} (see {@link #analyze} and {@link #mergeJavaOptions}) and, as a fallback,
+     * {@code BslServerInstaller#configureHeap} - can be reported with an actionable hint instead of a bare
+     * exit code - the language server itself gives no other indication of the cause.
      *
      * @param logFile the merged output log file, not {@code null}
      * @return {@code true} if the log file could be read and its content contains the marker
