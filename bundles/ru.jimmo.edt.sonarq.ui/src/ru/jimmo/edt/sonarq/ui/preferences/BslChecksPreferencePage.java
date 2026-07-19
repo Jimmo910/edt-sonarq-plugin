@@ -68,6 +68,7 @@ import ru.jimmo.edt.sonarq.core.checks.CategoryEntry;
 import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategories;
 import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategory;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslUpdateChannel;
 import ru.jimmo.edt.sonarq.core.localanalysis.DiagnosticsCatalog;
 import ru.jimmo.edt.sonarq.core.localanalysis.ProcessAnalyzeRunner;
 import ru.jimmo.edt.sonarq.core.localanalysis.SarifParser;
@@ -1057,7 +1058,9 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
         Path reportDir = null;
         try
         {
-            Path executable = BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, monitor);
+            // Task C replaces this temporary constant with the resolved PREF_BSL_LS_UPDATE_CHANNEL preference.
+            Path executable =
+                BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, BslUpdateChannel.STABLE, monitor);
             emptySrcDir = Files.createTempDirectory(TEMP_SRC_PREFIX);
             reportDir = Files.createTempDirectory(TEMP_REPORT_PREFIX);
             Path sarif = new ProcessAnalyzeRunner().analyze(executable, emptySrcDir, reportDir, null, monitor);

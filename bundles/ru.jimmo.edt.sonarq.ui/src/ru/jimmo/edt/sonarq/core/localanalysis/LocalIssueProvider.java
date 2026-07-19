@@ -94,6 +94,7 @@ public final class LocalIssueProvider implements IIssueProvider
     private final Path configPath;
     private final String baseBranch;
     private final int maxHeapGb;
+    private final BslUpdateChannel channel;
     private final AnalyzeRunner runner;
     private final BiFunction<File, String, ChangedLines> changedLinesSource;
 
@@ -116,12 +117,14 @@ public final class LocalIssueProvider implements IIssueProvider
      *     blank means no base-branch filtering
      * @param maxHeapGb the maximum JVM heap, in gigabytes, to configure the bundled BSL Language Server
      *     with before each analysis (see {@link BslServerInstaller#configureHeap})
+     * @param channel the BSL Language Server engine update channel used when resolving a managed download
+     *     (see {@link BslServerInstaller#ensureServer}), not {@code null}
      * @param runner runs the headless analysis, not {@code null}
      */
     public LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride,
-        Path configPath, String baseBranch, int maxHeapGb, AnalyzeRunner runner)
+        Path configPath, String baseBranch, int maxHeapGb, BslUpdateChannel channel, AnalyzeRunner runner)
     {
-        this(projectKey, projectRoot, stateDir, serverOverride, configPath, baseBranch, maxHeapGb, runner,
+        this(projectKey, projectRoot, stateDir, serverOverride, configPath, baseBranch, maxHeapGb, channel, runner,
             GitChangedLines::compute);
     }
 
@@ -142,12 +145,14 @@ public final class LocalIssueProvider implements IIssueProvider
      *     blank means no base-branch filtering
      * @param maxHeapGb the maximum JVM heap, in gigabytes, to configure the bundled BSL Language Server
      *     with before each analysis (see {@link BslServerInstaller#configureHeap})
+     * @param channel the BSL Language Server engine update channel used when resolving a managed download
+     *     (see {@link BslServerInstaller#ensureServer}), not {@code null}
      * @param runner runs the headless analysis, not {@code null}
      * @param changedLinesSource resolves the changed lines for a work-tree directory and base ref, not
      *     {@code null}; production code always passes {@link GitChangedLines#compute(File, String)}
      */
     LocalIssueProvider(String projectKey, Path projectRoot, Path stateDir, Path serverOverride, Path configPath,
-        String baseBranch, int maxHeapGb, AnalyzeRunner runner,
+        String baseBranch, int maxHeapGb, BslUpdateChannel channel, AnalyzeRunner runner,
         BiFunction<File, String, ChangedLines> changedLinesSource)
     {
         this.projectKey = projectKey;
@@ -157,6 +162,7 @@ public final class LocalIssueProvider implements IIssueProvider
         this.configPath = configPath;
         this.baseBranch = baseBranch;
         this.maxHeapGb = maxHeapGb;
+        this.channel = channel;
         this.runner = runner;
         this.changedLinesSource = changedLinesSource;
     }
@@ -170,7 +176,7 @@ public final class LocalIssueProvider implements IIssueProvider
             reportProgress(monitor, Messages.LocalProgress_PrepareEngine);
             Path executable = serverOverride != null
                 ? serverOverride
-                : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, monitor);
+                : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, channel, monitor);
             configureHeapBestEffort();
             Path srcDir = sourceDirectory();
             Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
@@ -290,6 +296,19 @@ public final class LocalIssueProvider implements IIssueProvider
     public int maxHeapGb()
     {
         return maxHeapGb;
+    }
+
+    /**
+     * The BSL Language Server engine update channel this provider was built with.
+     *
+     * <p>Exposed so callers that build the provider (the refresh-inputs factory) can assert which preference
+     * value was resolved, without running a fetch.
+     *
+     * @return the configured engine update channel, never {@code null}
+     */
+    public BslUpdateChannel channel()
+    {
+        return channel;
     }
 
     @Override

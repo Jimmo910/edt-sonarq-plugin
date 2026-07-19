@@ -14,6 +14,7 @@ import static org.junit.Assert.fail;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -145,7 +146,8 @@ public class BslServerInstallerTest
             return new ByteArrayInputStream(archive);
         };
 
-        Path executable = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
+        Path executable =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
 
         // The launcher nests under <bsl-ls>/bsl-language-server/ per the real distribution layout.
         // Path.resolve accepts the forward-slashed entry on every platform.
@@ -155,7 +157,10 @@ public class BslServerInstallerTest
         assertTrue(Files.isExecutable(executable));
         assertEquals(LAUNCHER_BODY, Files.readString(executable, StandardCharsets.UTF_8));
         assertEquals(1, downloads.get());
-        assertTrue(Files.exists(stateDir.resolve("bsl-ls").resolve(".complete")));
+        Path marker = stateDir.resolve("bsl-ls").resolve(".complete");
+        assertTrue(Files.exists(marker));
+        // The FIXED channel reproduces today's pinned install: the marker records the pinned VERSION.
+        assertEquals(BslServerInstaller.VERSION, Files.readString(marker, StandardCharsets.UTF_8).trim());
     }
 
     @Test
@@ -169,8 +174,10 @@ public class BslServerInstallerTest
             return new ByteArrayInputStream(archive);
         };
 
-        Path first = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
-        Path second = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
+        Path first =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
+        Path second =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
 
         assertEquals(first, second);
         assertEquals(1, downloads.get());
@@ -192,7 +199,8 @@ public class BslServerInstallerTest
             return new ByteArrayInputStream(archive);
         };
 
-        Path executable = BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
+        Path executable =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
 
         assertEquals(1, downloads.get());
         assertEquals(LAUNCHER_BODY, Files.readString(executable, StandardCharsets.UTF_8));
@@ -207,7 +215,7 @@ public class BslServerInstallerTest
 
         try
         {
-            BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor());
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
             fail("expected IOException for zip-slip entry");
         }
         catch (IOException e)
@@ -226,7 +234,7 @@ public class BslServerInstallerTest
 
         try
         {
-            BslServerInstaller.ensureServer(stateDir, download, monitor);
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, monitor);
             fail("expected OperationCanceledException for a cancelled monitor");
         }
         catch (OperationCanceledException e)
@@ -263,14 +271,16 @@ public class BslServerInstallerTest
         try
         {
             Future<Path> first = executor.submit(
-                () -> BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor()));
+                () -> BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED,
+                    new NullProgressMonitor()));
             assertTrue("first call should have started downloading", downloadStarted.await(5, TimeUnit.SECONDS));
 
             // The second caller must block on the install lock (held by the first, still mid-download)
             // rather than racing it; releasing the first only after submitting the second means the second
             // call's tryLock attempts genuinely overlap with the first holding the lock.
             Future<Path> second = executor.submit(
-                () -> BslServerInstaller.ensureServer(stateDir, download, new NullProgressMonitor()));
+                () -> BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED,
+                    new NullProgressMonitor()));
             releaseDownload.countDown();
 
             Path firstPath = first.get(10, TimeUnit.SECONDS);
@@ -384,15 +394,17 @@ public class BslServerInstallerTest
     }
 
     @Test
-    public void isInstalledFalseWhenMarkerHoldsWrongVersion() throws IOException
+    public void isInstalledIsVersionAgnosticGivenExecutableAndMarker() throws IOException
     {
         Path serverRoot = stateDir.resolve("bsl-ls");
         Path executable = serverRoot.resolve(launcherEntry());
         Files.createDirectories(executable.getParent());
         Files.writeString(executable, LAUNCHER_BODY, StandardCharsets.UTF_8);
+        // A marker recording some other version still counts as installed now: the update channel, not a
+        // pinned constant, decides whether a newer engine should replace it.
         Files.writeString(serverRoot.resolve(".complete"), "0.0.1", StandardCharsets.UTF_8);
 
-        assertFalse(BslServerInstaller.isInstalled(stateDir));
+        assertTrue(BslServerInstaller.isInstalled(stateDir));
     }
 
     @Test
@@ -440,7 +452,7 @@ public class BslServerInstallerTest
         BslServerInstaller.INSTALL_LOCK.lock();
         try
         {
-            BslServerInstaller.ensureServer(stateDir, download, monitor);
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, monitor);
             fail("expected OperationCanceledException");
         }
         catch (OperationCanceledException e)
@@ -454,6 +466,189 @@ public class BslServerInstallerTest
         finally
         {
             BslServerInstaller.INSTALL_LOCK.unlock();
+        }
+    }
+
+    @Test
+    public void fixedChannelNeverQueriesTheGithubApi() throws IOException
+    {
+        GithubFake download = new GithubFake(validZip(), "{}");
+
+        Path executable =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
+
+        assertTrue(Files.exists(executable));
+        assertEquals("the FIXED channel must resolve the pinned version without any GitHub API call", 0,
+            download.apiOpens.get());
+        assertEquals(1, download.assetOpens.get());
+        assertEquals(BslServerInstaller.VERSION,
+            Files.readString(stateDir.resolve("bsl-ls").resolve(".complete"), StandardCharsets.UTF_8).trim());
+    }
+
+    @Test
+    public void stableResolveSameVersionDoesNotRedownload() throws IOException
+    {
+        // The stable channel resolves the very version the pinned floor would install.
+        GithubFake download = new GithubFake(validZip(), latestJson(BslServerInstaller.VERSION, ASSET_URL));
+
+        BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+        assertEquals(1, download.assetOpens.get());
+        // Force the throttle stale so the next call re-queries the channel and exercises the version compare.
+        Files.deleteIfExists(stateDir.resolve("bsl-ls").resolve(".lastcheck"));
+
+        BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        // The second resolve returned the same version already on disk: no second download.
+        assertEquals(1, download.assetOpens.get());
+        assertEquals(2, download.apiOpens.get());
+    }
+
+    @Test
+    public void stableResolveNewerVersionReDownloadsAndUpdatesMarker() throws IOException
+    {
+        GithubFake download = new GithubFake(validZip(), latestJson(BslServerInstaller.VERSION, ASSET_URL));
+        BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+        assertEquals(1, download.assetOpens.get());
+
+        // A newer stable release appears; once the throttle goes stale it must be picked up and re-extracted.
+        download.apiJson = latestJson("9.9.9", ASSET_URL);
+        Files.deleteIfExists(stateDir.resolve("bsl-ls").resolve(".lastcheck"));
+
+        BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        assertEquals(2, download.assetOpens.get());
+        assertEquals("9.9.9",
+            Files.readString(stateDir.resolve("bsl-ls").resolve(".complete"), StandardCharsets.UTF_8).trim());
+    }
+
+    @Test
+    public void updateCheckIsThrottledWithinTheCheckInterval() throws IOException
+    {
+        GithubFake download = new GithubFake(validZip(), latestJson(BslServerInstaller.VERSION, ASSET_URL));
+
+        BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+        int apiOpensAfterInstall = download.apiOpens.get();
+
+        // Immediately after a successful check the throttle serves the installed engine without another API
+        // call.
+        BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        assertEquals(apiOpensAfterInstall, download.apiOpens.get());
+        assertEquals(1, download.assetOpens.get());
+    }
+
+    @Test
+    public void offlineResolveFailureWithSomethingInstalledReturnsInstalledExecutable() throws IOException
+    {
+        GithubFake download = new GithubFake(validZip(), latestJson(BslServerInstaller.VERSION, ASSET_URL));
+        Path installed =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+        assertEquals(1, download.assetOpens.get());
+
+        // The next check goes offline; with an engine already installed this must NOT fail.
+        download.apiThrowsIo = true;
+        Files.deleteIfExists(stateDir.resolve("bsl-ls").resolve(".lastcheck"));
+
+        Path result =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        assertEquals(installed, result);
+        assertTrue(Files.exists(result));
+        assertEquals("an offline update check must not re-download", 1, download.assetOpens.get());
+    }
+
+    @Test
+    public void malformedJsonResolveWithSomethingInstalledFallsBackToInstalled() throws IOException
+    {
+        GithubFake download = new GithubFake(validZip(), latestJson(BslServerInstaller.VERSION, ASSET_URL));
+        Path installed =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        // A 200 response with an unexpected body shape makes Gson throw an unchecked exception; the update
+        // check must degrade to the installed engine instead of propagating it (Task A review point).
+        download.apiJson = "[]";
+        Files.deleteIfExists(stateDir.resolve("bsl-ls").resolve(".lastcheck"));
+
+        Path result =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        assertEquals(installed, result);
+        assertEquals(1, download.assetOpens.get());
+    }
+
+    @Test
+    public void offlineResolveFailureWithNothingInstalledDownloadsThePinnedFloor() throws IOException
+    {
+        GithubFake download = new GithubFake(validZip(), "{}");
+        download.apiThrowsIo = true;
+
+        Path executable =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.STABLE, new NullProgressMonitor());
+
+        assertTrue(Files.exists(executable));
+        // The channel query failed and nothing was installed, so the resolver fell back to the pinned floor
+        // and downloaded it from the non-API GitHub download URL.
+        assertEquals(1, download.assetOpens.get());
+        assertEquals(BslServerInstaller.VERSION,
+            Files.readString(stateDir.resolve("bsl-ls").resolve(".complete"), StandardCharsets.UTF_8).trim());
+    }
+
+    private static final String ASSET_URL = "https://downloads.example.test/asset.zip";
+
+    private static String osClassifier()
+    {
+        if (isWindows())
+        {
+            return "win";
+        }
+        if (isMac())
+        {
+            return "mac";
+        }
+        return "nix";
+    }
+
+    private static String latestJson(String version, String assetUrl)
+    {
+        String assetName = "bsl-language-server_" + osClassifier() + ".zip";
+        return "{ \"tag_name\": \"v" + version + "\", \"assets\": [ { \"name\": \"" + assetName
+            + "\", \"browser_download_url\": \"" + assetUrl + "\" } ] }";
+    }
+
+    /**
+     * A fake {@link DownloadFunction} that dispatches by URL: any {@code https://api.github.com} URL serves a
+     * canned releases JSON (or a forced {@link IOException}), and every other URL serves the canned
+     * distribution zip. Separate open counters let a test assert whether the GitHub API and/or the asset were
+     * actually fetched.
+     */
+    private static final class GithubFake implements DownloadFunction
+    {
+        private final byte[] zip;
+        private volatile String apiJson;
+        private volatile boolean apiThrowsIo;
+        private final AtomicInteger apiOpens = new AtomicInteger();
+        private final AtomicInteger assetOpens = new AtomicInteger();
+
+        GithubFake(byte[] zip, String apiJson)
+        {
+            this.zip = zip;
+            this.apiJson = apiJson;
+        }
+
+        @Override
+        public InputStream open(String url) throws IOException
+        {
+            if (url.startsWith("https://api.github.com"))
+            {
+                apiOpens.incrementAndGet();
+                if (apiThrowsIo)
+                {
+                    throw new IOException("offline: " + url);
+                }
+                return new ByteArrayInputStream(apiJson.getBytes(StandardCharsets.UTF_8));
+            }
+            assetOpens.incrementAndGet();
+            return new ByteArrayInputStream(zip);
         }
     }
 }

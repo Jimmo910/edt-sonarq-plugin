@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -67,12 +68,20 @@ public final class BslServerInstaller
     private static final String EXE_WINDOWS = "bsl-language-server.exe"; //$NON-NLS-1$
     private static final String EXE_OTHER = "bsl-language-server"; //$NON-NLS-1$
     private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
+    private static final String LASTCHECK_FILE = ".lastcheck"; //$NON-NLS-1$
     private static final String CFG_FILE_NAME = "bsl-language-server.cfg"; //$NON-NLS-1$
     private static final String XMX_OPTION_PREFIX = "java-options=-Xmx"; //$NON-NLS-1$
     private static final String HEAP_UNIT_SUFFIX = "g"; //$NON-NLS-1$
     private static final int MIN_HEAP_GB = 1;
 
     private static final long LOCK_POLL_MILLIS = 200L;
+
+    /**
+     * How long a recorded update check stays "fresh": within this window a non-{@code FIXED} channel skips
+     * the GitHub API entirely and treats the already-installed engine as up to date, so back-to-back
+     * refreshes do not query {@code api.github.com} on every run.
+     */
+    private static final Duration CHECK_INTERVAL = Duration.ofMinutes(8);
 
     /**
      * Guards the whole check-install critical section of {@link #ensureServer}.
@@ -101,25 +110,24 @@ public final class BslServerInstaller
     }
 
     /**
-     * Tells whether the BSL Language Server distribution is already installed under {@code stateDir/bsl-ls}
-     * for the currently pinned {@link #VERSION}.
+     * Tells whether a BSL Language Server distribution is installed under {@code stateDir/bsl-ls}, at any
+     * version.
      *
-     * <p>This is the same cheap check {@link #ensureServer} itself uses to decide whether to skip the
-     * download: it only stats the expected launcher file and reads the {@code .complete} marker, never
-     * acquires {@link #INSTALL_LOCK} and never touches the network. Safe to call often, for example to
-     * decide whether to show a "downloading..." hint before scheduling a refresh, or to show an
-     * installed/not-installed label on a preferences page.
+     * <p>This only stats the expected launcher file and the {@code .complete} marker, never acquires
+     * {@link #INSTALL_LOCK} and never touches the network. Safe to call often, for example to decide whether
+     * to show a "downloading..." hint before scheduling a refresh, or to show an installed/not-installed
+     * label on a preferences page. The installed version is no longer pinned - the update channel can move
+     * it - so this deliberately checks only that <em>some</em> engine is present, not which version.
      *
      * @param stateDir the plugin state directory the server would be unpacked under, not {@code null}
-     * @return {@code true} if the expected launcher exists and the completion marker records the current
-     *     {@link #VERSION}
+     * @return {@code true} if the expected launcher exists and a completion marker is present
      */
     public static boolean isInstalled(Path stateDir)
     {
         Path serverRoot = stateDir.resolve(SERVER_DIR);
         Path executable = expectedExecutable(serverRoot);
         Path marker = serverRoot.resolve(MARKER_FILE);
-        return Files.exists(executable) && isMarkedForCurrentVersion(marker);
+        return Files.exists(executable) && Files.exists(marker);
     }
 
     /**
@@ -141,39 +149,51 @@ public final class BslServerInstaller
     }
 
     /**
-     * Ensures the BSL Language Server distribution is installed under {@code stateDir/bsl-ls} and returns
-     * its launcher executable.
+     * Ensures a BSL Language Server distribution matching {@code channel} is installed under
+     * {@code stateDir/bsl-ls} and returns its launcher executable.
      *
-     * <p>If the expected launcher already exists and a {@code .complete} marker file confirms a prior
-     * extraction ran to completion, the method returns immediately without invoking {@code download}.
-     * Otherwise any leftover directory (for example a half-extracted install left by a cancelled or
-     * crashed run) is deleted, the zip is streamed and unpacked with a zip-slip guard, the monitor being
-     * polled for cancellation before and per entry, and the marker is written only after the whole
-     * archive has been extracted successfully. On non-Windows systems every regular file in a {@code bin}
-     * directory (the launcher and the bundled runtime tools) is marked executable, since the zip does not
-     * carry Unix permission bits.
+     * <p>The target version is resolved through {@link BslReleaseResolver}: {@code FIXED} always resolves
+     * the pinned {@link #VERSION} without any network call; {@code STABLE} and {@code PRERELEASE} query the
+     * GitHub releases API through {@code download}. To avoid hitting {@code api.github.com} on every refresh,
+     * a non-{@code FIXED} channel is throttled by a {@code .lastcheck} timestamp: when an engine is already
+     * installed and the last check was less than {@link #CHECK_INTERVAL} ago, the installed engine is
+     * returned without querying the API.
      *
-     * <p>The whole check-install sequence runs under {@link #INSTALL_LOCK}, serializing concurrent callers
-     * against the same state directory (see the field javadoc); a caller blocked waiting for the lock still
-     * observes monitor cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even while
-     * another caller is mid-download.
+     * <p>An update check must never harden into a hard failure. If the channel query fails - whether with an
+     * {@link IOException} (offline) or an unchecked exception from parsing an unexpected response body - and
+     * an engine is already installed, that installed engine is returned; when nothing is installed the
+     * resolver falls back to the pinned {@link #VERSION} floor and downloads it.
+     *
+     * <p>When the resolved target version differs from the installed one (or nothing is installed), any
+     * leftover directory is deleted, the asset zip is streamed and unpacked with a zip-slip guard, the
+     * monitor being polled for cancellation before and per entry, and the marker is written with the
+     * resolved version only after the whole archive has been extracted successfully. On non-Windows systems
+     * every regular file in a {@code bin} directory (the launcher and the bundled runtime tools) is marked
+     * executable, since the zip does not carry Unix permission bits.
+     *
+     * <p>The whole resolve-check-install sequence runs under {@link #INSTALL_LOCK}, serializing concurrent
+     * callers against the same state directory (see the field javadoc); a caller blocked waiting for the lock
+     * still observes monitor cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even
+     * while another caller is mid-download.
      *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
-     * @param download the source of the archive bytes, not {@code null}
+     * @param download the source of the archive bytes and the GitHub API responses, not {@code null}
+     * @param channel the engine update channel controlling which release is resolved, not {@code null}
      * @param monitor the progress monitor checked for cancellation, or {@code null}
      * @return the path to the launcher executable, never {@code null}
-     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or the
-     *     calling thread is interrupted while waiting for {@link #INSTALL_LOCK}
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, no release
+     *     can be resolved even from the pinned floor, or the calling thread is interrupted while waiting for
+     *     {@link #INSTALL_LOCK}
      * @throws OperationCanceledException if the monitor is cancelled while waiting for the lock, before, or
      *     during unpacking
      */
-    public static Path ensureServer(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
-        throws IOException
+    public static Path ensureServer(Path stateDir, DownloadFunction download, BslUpdateChannel channel,
+        IProgressMonitor monitor) throws IOException
     {
         acquireInstallLock(monitor);
         try
         {
-            return doEnsureServer(stateDir, download, monitor);
+            return doEnsureServer(stateDir, download, channel, monitor);
         }
         finally
         {
@@ -287,37 +307,121 @@ public final class BslServerInstaller
     }
 
     /**
-     * The check-install sequence itself, run under {@link #INSTALL_LOCK} by {@link #ensureServer}.
+     * The resolve-check-install sequence itself, run under {@link #INSTALL_LOCK} by {@link #ensureServer}.
      *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
-     * @param download the source of the archive bytes, not {@code null}
+     * @param download the source of the archive bytes and the GitHub API responses, not {@code null}
+     * @param channel the engine update channel controlling which release is resolved, not {@code null}
      * @param monitor the progress monitor checked for cancellation, or {@code null}
      * @return the path to the launcher executable, never {@code null}
-     * @throws IOException if the archive cannot be read or an entry escapes the target directory
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or no
+     *     release can be resolved even from the pinned floor
      * @throws OperationCanceledException if the monitor is cancelled before or during unpacking
      */
-    private static Path doEnsureServer(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
-        throws IOException
+    private static Path doEnsureServer(Path stateDir, DownloadFunction download, BslUpdateChannel channel,
+        IProgressMonitor monitor) throws IOException
     {
         Path serverRoot = stateDir.resolve(SERVER_DIR);
         Path executable = expectedExecutable(serverRoot);
-        if (isInstalled(stateDir))
+        Path marker = serverRoot.resolve(MARKER_FILE);
+        String installedVersion = readMarkerVersion(marker);
+        boolean installed = Files.exists(executable) && installedVersion != null;
+
+        if (channel != BslUpdateChannel.FIXED && installed && isCheckFresh(serverRoot))
         {
             return executable;
         }
+
+        BslReleaseResolver.ResolvedRelease target = resolveTarget(download, channel, installed);
+        if (target == null)
+        {
+            // The channel query failed and an engine is already installed: return it (offline fallback)
+            // without touching .lastcheck, so the next refresh retries the update check.
+            return executable;
+        }
+
         if (monitor != null && monitor.isCanceled())
         {
             throw new OperationCanceledException();
         }
+        if (Files.exists(executable) && target.version().equals(installedVersion))
+        {
+            // Already the resolved version: nothing to download, just refresh the throttle timestamp.
+            writeLastCheck(serverRoot);
+            return executable;
+        }
+
+        extractDistribution(serverRoot, download, target.assetUrl(), monitor);
+        Files.writeString(marker, target.version(), StandardCharsets.UTF_8);
+        writeLastCheck(serverRoot);
+        return executable;
+    }
+
+    /**
+     * Resolves the release to install for {@code channel}, applying the offline/parse-failure fallback.
+     *
+     * <p>{@code FIXED} resolves the pinned {@link #VERSION} without any network call. For a channel query,
+     * a failure - {@link IOException} (offline) or an unchecked exception from parsing an unexpected
+     * response body - must never harden into a hard failure: when an engine is already installed the method
+     * returns {@code null} to signal "keep the installed engine", and otherwise falls back to the pinned
+     * {@link #VERSION} floor. An {@link OperationCanceledException} is never swallowed - cancellation always
+     * propagates.
+     *
+     * @param download the source of the GitHub API responses, not {@code null}
+     * @param channel the engine update channel, not {@code null}
+     * @param installed whether an engine is already installed, deciding the fallback
+     * @return the resolved release, or {@code null} to keep the already-installed engine (offline fallback)
+     * @throws IOException if the pinned-floor fallback itself cannot be resolved
+     * @throws OperationCanceledException if the underlying query is cancelled
+     */
+    private static BslReleaseResolver.ResolvedRelease resolveTarget(DownloadFunction download,
+        BslUpdateChannel channel, boolean installed) throws IOException
+    {
+        if (channel == BslUpdateChannel.FIXED)
+        {
+            return BslReleaseResolver.resolve(BslUpdateChannel.FIXED, download, osClassifier());
+        }
+        try
+        {
+            return BslReleaseResolver.resolve(channel, download, osClassifier());
+        }
+        catch (OperationCanceledException e)
+        {
+            throw e;
+        }
+        catch (IOException | RuntimeException e)
+        {
+            if (installed)
+            {
+                return null;
+            }
+            return BslReleaseResolver.resolve(BslUpdateChannel.FIXED, download, osClassifier());
+        }
+    }
+
+    /**
+     * Deletes any leftover distribution under {@code serverRoot} and unpacks {@code assetUrl} into it,
+     * zip-slip guarded, polling {@code monitor} for cancellation before and per entry, and marking POSIX
+     * executables afterwards.
+     *
+     * @param serverRoot the {@code bsl-ls} directory to unpack into, not {@code null}
+     * @param download the source of the archive bytes, not {@code null}
+     * @param assetUrl the asset URL to download, not {@code null}
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @throws IOException if the archive cannot be read or an entry escapes the target directory
+     * @throws OperationCanceledException if the monitor is cancelled during unpacking
+     */
+    private static void extractDistribution(Path serverRoot, DownloadFunction download, String assetUrl,
+        IProgressMonitor monitor) throws IOException
+    {
         deleteRecursively(serverRoot);
         Files.createDirectories(serverRoot);
         Path normalizedRoot = serverRoot.normalize();
-        Path marker = serverRoot.resolve(MARKER_FILE);
         if (monitor != null)
         {
             monitor.subTask(Messages.BslInstaller_Downloading);
         }
-        try (ZipInputStream zip = new ZipInputStream(download.open(downloadUrl())))
+        try (ZipInputStream zip = new ZipInputStream(download.open(assetUrl)))
         {
             if (monitor != null)
             {
@@ -352,26 +456,77 @@ public final class BslServerInstaller
         {
             markBinExecutable(serverRoot);
         }
-        Files.writeString(marker, VERSION, StandardCharsets.UTF_8);
-        return executable;
     }
 
     /**
-     * Tells whether the completion marker records the currently pinned version, so a version bump forces
-     * a fresh download instead of reusing a launcher extracted for an older release.
+     * Reads the installed version recorded in the completion marker.
      *
      * @param marker the completion marker file, not {@code null}
-     * @return {@code true} if the marker exists and holds the current {@link #VERSION}
+     * @return the recorded version, or {@code null} if the marker is absent, empty or unreadable
      */
-    private static boolean isMarkedForCurrentVersion(Path marker)
+    private static String readMarkerVersion(Path marker)
     {
         try
         {
-            return Files.exists(marker) && VERSION.equals(Files.readString(marker, StandardCharsets.UTF_8).trim());
+            if (!Files.exists(marker))
+            {
+                return null;
+            }
+            String version = Files.readString(marker, StandardCharsets.UTF_8).trim();
+            return version.isEmpty() ? null : version;
         }
         catch (IOException e)
         {
+            return null;
+        }
+    }
+
+    /**
+     * Tells whether the last update check recorded under {@code serverRoot} is still within
+     * {@link #CHECK_INTERVAL}.
+     *
+     * @param serverRoot the {@code bsl-ls} directory holding the {@code .lastcheck} timestamp, not
+     *     {@code null}
+     * @return {@code true} if a valid, non-future timestamp younger than {@link #CHECK_INTERVAL} is present
+     */
+    private static boolean isCheckFresh(Path serverRoot)
+    {
+        Path lastCheck = serverRoot.resolve(LASTCHECK_FILE);
+        try
+        {
+            if (!Files.exists(lastCheck))
+            {
+                return false;
+            }
+            long recorded = Long.parseLong(Files.readString(lastCheck, StandardCharsets.UTF_8).trim());
+            long elapsed = System.currentTimeMillis() - recorded;
+            return elapsed >= 0 && elapsed < CHECK_INTERVAL.toMillis();
+        }
+        catch (IOException | NumberFormatException e)
+        {
             return false;
+        }
+    }
+
+    /**
+     * Records the current time as the last update check under {@code serverRoot}, best-effort. A failure to
+     * write the throttle marker only means the next refresh re-queries the update channel, never a
+     * functional failure, so any {@link IOException} is swallowed.
+     *
+     * @param serverRoot the {@code bsl-ls} directory to write the {@code .lastcheck} timestamp under, not
+     *     {@code null}
+     */
+    private static void writeLastCheck(Path serverRoot)
+    {
+        try
+        {
+            Files.createDirectories(serverRoot);
+            Files.writeString(serverRoot.resolve(LASTCHECK_FILE), Long.toString(System.currentTimeMillis()),
+                StandardCharsets.UTF_8);
+        }
+        catch (IOException e)
+        {
+            // Best-effort throttle marker; see the javadoc.
         }
     }
 

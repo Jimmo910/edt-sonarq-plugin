@@ -36,6 +36,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.jimmo.edt.sonarq.core.localanalysis.BslUpdateChannel;
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
@@ -324,6 +325,21 @@ public class RefreshInputsFactoryTest
         LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
 
         assertEquals(12, provider.maxHeapGb());
+    }
+
+    @Test
+    public void localModeThreadsStableUpdateChannelIntoProviderForNow() throws BackingStoreException
+    {
+        // Task C replaces the temporary STABLE constant with the resolved PREF_BSL_LS_UPDATE_CHANNEL
+        // preference; until then the factory always threads STABLE into the provider.
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+
+        assertEquals(BslUpdateChannel.STABLE, provider.channel());
     }
 
     @Test

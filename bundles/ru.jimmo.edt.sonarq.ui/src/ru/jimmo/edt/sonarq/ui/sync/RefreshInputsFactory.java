@@ -21,6 +21,7 @@ import org.eclipse.core.runtime.preferences.IPreferencesService;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslConfigWriter;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslUpdateChannel;
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.localanalysis.ProcessAnalyzeRunner;
 import ru.jimmo.edt.sonarq.core.provider.ServerIssueProvider;
@@ -120,8 +121,9 @@ public final class RefreshInputsFactory
         Path override = overridePath.isBlank() ? null : Path.of(overridePath.trim());
         Path configPath = resolveConfigPath(stateDir, service, binding.subsystems());
         int maxHeapGb = resolveMaxHeapGb(service);
+        // Task C replaces this temporary constant with the resolved PREF_BSL_LS_UPDATE_CHANNEL preference.
         LocalIssueProvider provider = new LocalIssueProvider(projectKey, projectRoot, stateDir, override,
-            configPath, binding.baseBranch(), maxHeapGb, new ProcessAnalyzeRunner());
+            configPath, binding.baseBranch(), maxHeapGb, BslUpdateChannel.STABLE, new ProcessAnalyzeRunner());
         // Local component keys are <projectKey>:src/... already project-relative, so the mapping key is the
         // same effective key fed to the provider and the mapping prefix is always empty (the binding prefix,
         // which describes a server repository layout, must not be stripped from local paths).
