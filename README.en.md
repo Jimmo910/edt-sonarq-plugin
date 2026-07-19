@@ -30,6 +30,8 @@ against the project's sources, with no server involved.
 - **Run analysis from the view** — a toolbar action (local scanner or CI trigger).
 - **Serverless local mode** — analysis by the BSL Language Server straight from the sources,
   with no SonarQube server and no Java install required.
+- **BSL LS engine auto-update** — the downloaded BSL Language Server can auto-update to the
+  latest release (configurable channel: fixed / stable / incl. pre-release).
 - **Configurable checks** — a "BSL Checks" page that groups checks by type or by tag (the BSL
   Language Server's own taxonomy) with an "Apply Recommended Profile" button; selecting a check
   shows its description with a link to the online documentation.
@@ -185,6 +187,13 @@ overwriting an already-analyzed branch).
     Java is required.
   - **Use a local executable** — set the **BSL Language Server executable** path yourself
     (**Browse…** and **Verify** buttons; **Verify** runs the file with `--version`).
+- **BSL LS engine version** (default: **Latest stable release**) — which BSL Language Server
+  release the managed (downloaded) engine uses: **Fixed (1.0.4)** always uses the pinned version
+  with no update checks; **Latest stable release** auto-fetches the newest stable release from
+  GitHub; **Latest release (incl. pre-release)** also picks up pre-releases. The update check runs
+  at most once every few minutes; if GitHub is unreachable the already-downloaded engine is used,
+  and if nothing is downloaded yet the pinned 1.0.4 is fetched as a fallback. It has no effect with
+  **Use a local executable**.
 - **BSL LS max heap (GB)** (4 by default) — the maximum JVM heap the plugin writes into the
   downloaded engine before every local analysis. Increase it if analysis fails with an
   out-of-memory error on a large configuration (the Issues view's error message points right at
