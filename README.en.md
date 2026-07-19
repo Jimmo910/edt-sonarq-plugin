@@ -17,10 +17,10 @@ against the project's sources, with no server involved.
 
 ## Features
 
-- **SonarQube Issues view** — a tree of issues for the active project, grouped by file or by
-  rule, with toolbar filters for severity and type and a free-text search.
-- **Jump to code** — double-click an issue to open the module at the reported line; a single
-  click shows the rule description in the bottom pane.
+- **SonarQube Issues view** — a tree of issues for the active project, grouped by file, rule or
+  severity (the by-severity mode nests issues by rule), with toolbar filters for severity and
+  type and a free-text search.
+- **Jump to code** — double-click an issue to open the module at the reported line.
 - **Automatic git branch detection** — the view detects the project's current branch and
   queries issues for it (on commercial server editions).
 - **Per-project binding** — each project is bound to a SonarQube project key, with an
@@ -31,7 +31,8 @@ against the project's sources, with no server involved.
 - **Serverless local mode** — analysis by the BSL Language Server straight from the sources,
   with no SonarQube server and no Java install required.
 - **Configurable checks** — a "BSL Checks" page that groups checks by type or by tag (the BSL
-  Language Server's own taxonomy) with an "Apply Recommended Profile" button.
+  Language Server's own taxonomy) with an "Apply Recommended Profile" button; selecting a check
+  shows its description with a link to the online documentation.
 - **Local analysis scope** — per project: a base branch (show issues only on lines changed
   relative to it) and a subsystem filter.
 - **Quick-suppressing false positives** — a right-click in the Issues view, or a Problems-view
