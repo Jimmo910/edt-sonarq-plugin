@@ -27,6 +27,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
+import ru.jimmo.edt.sonarq.core.localanalysis.BslUpdateChannel;
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
@@ -232,7 +233,7 @@ public class RefreshIssuesJobTest
 
     private static LocalIssueProvider localProvider()
     {
-        return new LocalIssueProvider("k", Path.of("."), Path.of("."), null, null, "", 4,
+        return new LocalIssueProvider("k", Path.of("."), Path.of("."), null, null, "", 4, BslUpdateChannel.STABLE,
             (executable, srcDir, outputDir, configPath, monitor) -> outputDir);
     }
 }

@@ -42,5 +42,7 @@ public class PreferenceDefaultsTest
                 null));
         assertEquals("4",
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, null, null));
+        assertEquals("stable",
+            service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, null, null));
     }
 }

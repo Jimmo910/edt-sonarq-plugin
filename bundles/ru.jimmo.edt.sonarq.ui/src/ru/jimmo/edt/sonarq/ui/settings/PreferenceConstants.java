@@ -6,6 +6,8 @@
 
 package ru.jimmo.edt.sonarq.ui.settings;
 
+import ru.jimmo.edt.sonarq.core.localanalysis.BslUpdateChannel;
+
 /** Keys and defaults for the plug-in's workspace preferences. */
 public final class PreferenceConstants
 {
@@ -73,7 +75,47 @@ public final class PreferenceConstants
     /** The default BSL Language Server maximum JVM heap, in gigabytes. */
     public static final int DEFAULT_BSL_LS_MAX_HEAP_GB = 4;
 
+    /**
+     * The BSL Language Server engine update-channel preference key, used only in {@link #MODE_LOCAL}. Stored
+     * as one of {@link #UPDATE_CHANNEL_FIXED}, {@link #UPDATE_CHANNEL_STABLE} or
+     * {@link #UPDATE_CHANNEL_PRERELEASE}; see {@link #channelFromPreference(String)}.
+     */
+    public static final String PREF_BSL_LS_UPDATE_CHANNEL = "bslLsUpdateChannel"; //$NON-NLS-1$
+
+    /** The {@link #PREF_BSL_LS_UPDATE_CHANNEL} value mapping to {@link BslUpdateChannel#FIXED}. */
+    public static final String UPDATE_CHANNEL_FIXED = "fixed"; //$NON-NLS-1$
+
+    /** The {@link #PREF_BSL_LS_UPDATE_CHANNEL} value mapping to {@link BslUpdateChannel#STABLE}. */
+    public static final String UPDATE_CHANNEL_STABLE = "stable"; //$NON-NLS-1$
+
+    /** The {@link #PREF_BSL_LS_UPDATE_CHANNEL} value mapping to {@link BslUpdateChannel#PRERELEASE}. */
+    public static final String UPDATE_CHANNEL_PRERELEASE = "prerelease"; //$NON-NLS-1$
+
+    /** The default {@link #PREF_BSL_LS_UPDATE_CHANNEL} value. */
+    public static final String DEFAULT_BSL_LS_UPDATE_CHANNEL = UPDATE_CHANNEL_STABLE;
+
     private PreferenceConstants()
     {
+    }
+
+    /**
+     * Maps a stored {@link #PREF_BSL_LS_UPDATE_CHANNEL} value to the corresponding {@link BslUpdateChannel}.
+     * An unknown or blank value (including {@code null}) defaults to {@link BslUpdateChannel#STABLE}, the
+     * same as {@link #DEFAULT_BSL_LS_UPDATE_CHANNEL}.
+     *
+     * @param stored the stored preference value, may be {@code null} or blank
+     * @return the mapped channel, never {@code null}
+     */
+    public static BslUpdateChannel channelFromPreference(String stored)
+    {
+        if (UPDATE_CHANNEL_FIXED.equals(stored))
+        {
+            return BslUpdateChannel.FIXED;
+        }
+        if (UPDATE_CHANNEL_PRERELEASE.equals(stored))
+        {
+            return BslUpdateChannel.PRERELEASE;
+        }
+        return BslUpdateChannel.STABLE;
     }
 }

@@ -68,6 +68,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     private static final int BSL_SOURCE_INDEX_LOCAL = 1;
 
+    // The update-channel combo item order matches BslUpdateChannel's declaration order (FIXED, STABLE,
+    // PRERELEASE): the selection index is used directly as the enum ordinal (see #loadValues, #performOk),
+    // and this array maps that same index back to the stored preference value.
+    private static final String[] UPDATE_CHANNEL_VALUES = { PreferenceConstants.UPDATE_CHANNEL_FIXED,
+        PreferenceConstants.UPDATE_CHANNEL_STABLE, PreferenceConstants.UPDATE_CHANNEL_PRERELEASE };
+
     private Combo modeCombo;
 
     private Text urlText;
@@ -93,6 +99,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     private Label bslVerifyResultLabel;
 
     private Spinner bslMaxHeapSpinner;
+
+    private Combo bslUpdateChannelCombo;
 
     private Label engineStatusLabel;
 
@@ -252,6 +260,13 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         maxHeapHint.setText(Messages.PreferencePage_BslLsMaxHeapHint);
         maxHeapHint.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
 
+        new Label(group, SWT.NONE).setText(Messages.SonarPrefs_BslLsUpdateChannel_Label);
+        bslUpdateChannelCombo = new Combo(group, SWT.READ_ONLY);
+        // Item order is coupled to BslUpdateChannel's declaration order (see the UPDATE_CHANNEL_VALUES field).
+        bslUpdateChannelCombo.setItems(Messages.SonarPrefs_BslLsUpdateChannel_Fixed,
+            Messages.SonarPrefs_BslLsUpdateChannel_Stable, Messages.SonarPrefs_BslLsUpdateChannel_Prerelease);
+        bslUpdateChannelCombo.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 3, 1));
+
         engineStatusLabel = new Label(group, SWT.NONE);
         engineStatusLabel.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false, 2, 1));
 
@@ -264,9 +279,10 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     /**
      * Enables the BSL source widgets: the combo follows the page mode, the path row (text, browse and
      * verify buttons) is active only when the user chose a local executable over the automatic download,
-     * and the max-heap spinner only while local mode is selected AND the managed download is in effect
-     * (see {@link #heapSpinnerEnabled}) - {@link BslServerInstaller#configureHeap} rewrites only that
-     * downloaded engine's own launcher configuration file, so the spinner has no effect at all on a
+     * and the max-heap spinner and update-channel combo only while local mode is selected AND the managed
+     * download is in effect (see {@link #heapSpinnerEnabled}) - {@link BslServerInstaller#configureHeap}
+     * rewrites only that downloaded engine's own launcher configuration file, and the update channel only
+     * governs which release the same managed download resolves, so neither has any effect at all on a
      * user-supplied executable and must not invite the user to believe otherwise.
      */
     private void updateBslSourceEnablement()
@@ -279,6 +295,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslVerifyButton.setEnabled(local && ownExecutable);
         bslVerifyResultLabel.setEnabled(local && ownExecutable);
         bslMaxHeapSpinner.setEnabled(heapSpinnerEnabled(local, ownExecutable));
+        bslUpdateChannelCombo.setEnabled(heapSpinnerEnabled(local, ownExecutable));
         engineStatusLabel.setEnabled(local);
         deleteEngineButton.setEnabled(local);
         validateBslPath();
@@ -535,6 +552,9 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         bslSourceCombo.select(bslPath.isBlank() ? BSL_SOURCE_INDEX_DOWNLOAD : BSL_SOURCE_INDEX_LOCAL);
         bslMaxHeapSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, PreferenceConstants.DEFAULT_BSL_LS_MAX_HEAP_GB, null));
+        String updateChannel = service.getString(SonarqPlugin.PLUGIN_ID,
+            PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, PreferenceConstants.DEFAULT_BSL_LS_UPDATE_CHANNEL, null);
+        bslUpdateChannelCombo.select(PreferenceConstants.channelFromPreference(updateChannel).ordinal());
         refreshEngineStatus();
         String serverUrl =
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SERVER_URL, "", null); //$NON-NLS-1$
@@ -609,6 +629,8 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         node.put(PreferenceConstants.PREF_BSL_LS_PATH,
             ownExecutable ? bslLsPathText.getText().trim() : ""); //$NON-NLS-1$
         node.putInt(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, bslMaxHeapSpinner.getSelection());
+        node.put(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL,
+            UPDATE_CHANNEL_VALUES[bslUpdateChannelCombo.getSelectionIndex()]);
         String serverUrl = urlText.getText().trim();
         String ciUrl = ciUrlText.getText().trim();
         node.put(PreferenceConstants.PREF_SERVER_URL, serverUrl);
