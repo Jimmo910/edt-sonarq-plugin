@@ -1058,9 +1058,12 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
         Path reportDir = null;
         try
         {
-            // Task C replaces this temporary constant with the resolved PREF_BSL_LS_UPDATE_CHANNEL preference.
-            Path executable =
-                BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, BslUpdateChannel.STABLE, monitor);
+            IPreferencesService service = Platform.getPreferencesService();
+            String storedChannel = service.getString(SonarqPlugin.PLUGIN_ID,
+                PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, PreferenceConstants.DEFAULT_BSL_LS_UPDATE_CHANNEL,
+                null);
+            BslUpdateChannel channel = PreferenceConstants.channelFromPreference(storedChannel);
+            Path executable = BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, channel, monitor);
             emptySrcDir = Files.createTempDirectory(TEMP_SRC_PREFIX);
             reportDir = Files.createTempDirectory(TEMP_REPORT_PREFIX);
             Path sarif = new ProcessAnalyzeRunner().analyze(executable, emptySrcDir, reportDir, null, monitor);

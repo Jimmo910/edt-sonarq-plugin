@@ -62,6 +62,8 @@ public class RefreshInputsFactoryTest
 
     private String savedMaxHeapGb;
 
+    private String savedUpdateChannel;
+
     @Before
     public void setUp() throws CoreException, BackingStoreException
     {
@@ -70,9 +72,11 @@ public class RefreshInputsFactoryTest
         savedMode = node.get(PreferenceConstants.PREF_MODE, null);
         savedDisabled = node.get(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS, null);
         savedMaxHeapGb = node.get(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, null);
+        savedUpdateChannel = node.get(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, null);
         node.remove(PreferenceConstants.PREF_SERVER_URL);
         node.remove(PreferenceConstants.PREF_DISABLED_BSL_DIAGNOSTICS);
         node.remove(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB);
+        node.remove(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL);
         node.flush();
         project = ResourcesPlugin.getWorkspace().getRoot().getProject("refresh-inputs-test"); //$NON-NLS-1$
         if (!project.exists())
@@ -117,6 +121,14 @@ public class RefreshInputsFactoryTest
         else
         {
             node.put(PreferenceConstants.PREF_BSL_LS_MAX_HEAP_GB, savedMaxHeapGb);
+        }
+        if (savedUpdateChannel == null)
+        {
+            node.remove(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL);
+        }
+        else
+        {
+            node.put(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, savedUpdateChannel);
         }
         node.flush();
         if (project.exists())
@@ -328,10 +340,8 @@ public class RefreshInputsFactoryTest
     }
 
     @Test
-    public void localModeThreadsStableUpdateChannelIntoProviderForNow() throws BackingStoreException
+    public void localModeDefaultsUpdateChannelToStableWhenPreferenceIsUnset() throws BackingStoreException
     {
-        // Task C replaces the temporary STABLE constant with the resolved PREF_BSL_LS_UPDATE_CHANNEL
-        // preference; until then the factory always threads STABLE into the provider.
         IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
         node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
         node.flush();
@@ -340,6 +350,34 @@ public class RefreshInputsFactoryTest
         LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
 
         assertEquals(BslUpdateChannel.STABLE, provider.channel());
+    }
+
+    @Test
+    public void localModeThreadsConfiguredUpdateChannelIntoProvider() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.put(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, PreferenceConstants.UPDATE_CHANNEL_FIXED);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+
+        assertEquals(BslUpdateChannel.FIXED, provider.channel());
+    }
+
+    @Test
+    public void localModeThreadsPrereleaseUpdateChannelIntoProvider() throws BackingStoreException
+    {
+        IEclipsePreferences node = InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID);
+        node.put(PreferenceConstants.PREF_MODE, PreferenceConstants.MODE_LOCAL);
+        node.put(PreferenceConstants.PREF_BSL_LS_UPDATE_CHANNEL, PreferenceConstants.UPDATE_CHANNEL_PRERELEASE);
+        node.flush();
+
+        ProjectRefreshInputs inputs = RefreshInputsFactory.create(project).orElseThrow();
+        LocalIssueProvider provider = (LocalIssueProvider)inputs.provider();
+
+        assertEquals(BslUpdateChannel.PRERELEASE, provider.channel());
     }
 
     @Test
