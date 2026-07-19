@@ -118,6 +118,30 @@ public class ProcessAnalyzeRunnerTest
     }
 
     /**
+     * Writes a throwaway "server executable" that prints its received {@code _JAVA_OPTIONS} environment
+     * variable to stdout and exits immediately, ignoring any arguments, so the environment variable
+     * {@link ProcessAnalyzeRunner#analyze} sets on the child process can be observed without spawning the
+     * real native launcher.
+     *
+     * @param dir the directory to write the script into, not {@code null}
+     * @return the script path, never {@code null}
+     * @throws IOException if the script cannot be written
+     */
+    private static Path writePrintJavaOptionsScript(Path dir) throws IOException
+    {
+        if (isWindows())
+        {
+            Path script = dir.resolve("sonarq-print-java-options.bat");
+            Files.writeString(script, "@echo off\r\necho %_JAVA_OPTIONS%\r\n");
+            return script;
+        }
+        Path script = dir.resolve("sonarq-print-java-options.sh");
+        Files.writeString(script, "#!/bin/sh\necho \"$_JAVA_OPTIONS\"\n");
+        script.toFile().setExecutable(true);
+        return script;
+    }
+
+    /**
      * Writes a throwaway "server executable" that prints a known line to stdout and exits with a
      * non-zero code, ignoring any arguments, so the failure-message wiring in {@link ProcessAnalyzeRunner}
      * can be exercised without spawning the real native launcher.
@@ -250,6 +274,31 @@ public class ProcessAnalyzeRunnerTest
     }
 
     /**
+     * Regression test for the {@code _JAVA_OPTIONS} heap cap (belt-and-suspenders alongside
+     * {@code BslServerInstaller#configureHeap}, verified live against the real 1.0.4 native build): the
+     * analysis process must actually receive a {@code _JAVA_OPTIONS} environment variable ending in the
+     * requested {@code -Xmx<N>g} flag.
+     */
+    @Test
+    public void analyzeSetsJavaOptionsEnvironmentVariableWithRequestedHeap() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-java-options-test");
+        Path script = writePrintJavaOptionsScript(scratchDir);
+        Path srcDir = scratchDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Path outputDir = scratchDir.resolve("out");
+        Files.createDirectories(outputDir);
+
+        ProcessAnalyzeRunner runner = new ProcessAnalyzeRunner(7);
+        runner.analyze(script, srcDir, outputDir, null, new NullProgressMonitor());
+
+        Path logFile = outputDir.resolve("analyze.log");
+        String logged = Files.readString(logFile).trim();
+        assertTrue("expected the child's _JAVA_OPTIONS to end with -Xmx7g, got: " + logged,
+            logged.endsWith("-Xmx7g"));
+    }
+
+    /**
      * Regression test for issue #5: when the BSL Language Server exits with a non-zero code, the
      * {@link IOException} it raises must point the user at the absolute path of the full log file (in
      * addition to the existing log tail), since BSL LS itself never names the module that failed to parse.
@@ -339,6 +388,46 @@ public class ProcessAnalyzeRunnerTest
             assertTrue("expected message to still contain the exit code sentence, got: " + message,
                 message.contains("exited with code"));
         }
+    }
+
+    /**
+     * A {@code null} existing {@code _JAVA_OPTIONS} value must produce a bare {@code -Xmx<N>g} flag, since
+     * there is nothing to append to.
+     */
+    @Test
+    public void mergeJavaOptionsWithNullExistingReturnsBareXmxFlag()
+    {
+        assertEquals("-Xmx4g", ProcessAnalyzeRunner.mergeJavaOptions(null, 4));
+    }
+
+    /**
+     * A blank existing {@code _JAVA_OPTIONS} value (unset or whitespace-only) must also produce a bare
+     * {@code -Xmx<N>g} flag, not an appended one with leading whitespace.
+     */
+    @Test
+    public void mergeJavaOptionsWithBlankExistingReturnsBareXmxFlag()
+    {
+        assertEquals("-Xmx4g", ProcessAnalyzeRunner.mergeJavaOptions("   ", 4));
+    }
+
+    /**
+     * A non-blank existing {@code _JAVA_OPTIONS} value must be preserved, with our {@code -Xmx} flag
+     * appended last so it wins over any {@code -Xmx} the user may have set.
+     */
+    @Test
+    public void mergeJavaOptionsWithExistingValueAppendsXmxLast()
+    {
+        assertEquals("-Dx=y -Xmx6g", ProcessAnalyzeRunner.mergeJavaOptions("-Dx=y", 6));
+    }
+
+    /**
+     * A requested heap of zero (or negative) must clamp up to the 1 GB floor, mirroring
+     * {@code BslServerInstaller#configureHeap}'s own clamp.
+     */
+    @Test
+    public void mergeJavaOptionsClampsNonPositiveHeapToOneGigabyte()
+    {
+        assertEquals("-Xmx1g", ProcessAnalyzeRunner.mergeJavaOptions(null, 0));
     }
 
     /**
