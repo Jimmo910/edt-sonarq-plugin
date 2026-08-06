@@ -107,7 +107,6 @@ public final class Messages extends NLS
     public static String PreferencePage_DeleteEngineConfirm;
     public static String PreferencePage_DeleteEngineTitle;
     public static String PreferencePage_Description;
-    public static String PreferencePage_EngineInstalled;
     public static String PreferencePage_EngineNotInstalled;
     public static String PreferencePage_ExtraArgs;
     public static String PreferencePage_LaunchGroup;
