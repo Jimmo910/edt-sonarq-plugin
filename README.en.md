@@ -8,6 +8,11 @@
 
 **English** | [Русский](README.md)
 
+> ⚠️ **From version 0.9.0 the plugin runs only on 1C:EDT 2026.2 or newer.**
+> It is built for Java 25, the runtime of EDT 2026.2; on EDT 2026.1 and older (Java 17) it neither installs
+> nor starts. For EDT 2026.1 use plugin version
+> [0.8.1](https://github.com/Jimmo910/edt-sonarq-plugin/releases/tag/v0.8.1).
+
 A plugin for **1C:Enterprise Development Tools (EDT)** that shows **SonarQube** issues for
 1C:Enterprise (BSL) code right inside the IDE. Its default mode reads analysis results from a
 SonarQube server over the Web API and is branch-aware where the server edition supports it
@@ -42,8 +47,9 @@ against the project's sources, with no server involved.
 
 ## Requirements
 
-- 1C:Enterprise Development Tools **2026.2 or newer**. Earlier versions are not supported: since 0.9.0 the plugin
-  requires Java 25, while EDT 2026.1 and older run on Java 17. For EDT 2026.1 use plugin version **0.8.1**.
+- 1C:Enterprise Development Tools **2026.2 or newer** — a hard requirement. The plugin is built for **Java 25**
+  (`Require-Capability: osgi.ee JavaSE 25`); EDT 2026.1 and older run on Java 17, so installing there fails with a
+  "missing requirement" error. For EDT 2026.1 use plugin version **0.8.1**.
 - Java 25 — the one EDT 2026.2 already runs on (bundled with it, no separate install needed).
 - For server mode — a SonarQube server with an already-analyzed BSL project (for example,
   analyzed on CI with
