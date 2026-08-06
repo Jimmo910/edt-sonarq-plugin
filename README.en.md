@@ -363,6 +363,9 @@ same content).
   (see [issue #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
 - The subsystem filter matches by subsystem name (as the BSL Language Server itself does), so
   same-named subsystems under different parents are filtered together.
+- The first time the BSL Language Server downloader class is touched, the EDT log may show
+  `SLF4J: No SLF4J providers were found.` and similar lines - the vendored `slf4j-api` ships
+  without a provider bundle; this is expected and not an error.
 
 ## Feedback
 

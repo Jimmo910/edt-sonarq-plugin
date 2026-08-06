@@ -738,6 +738,32 @@ public class BslServerInstallerTest
     }
 
     @Test
+    public void configureHeapResolvesTheCfgOfTheCurrentlyInstalledVersionWhenTwoVersionsCoexist() throws IOException
+    {
+        // Two real (launcher-bearing) version directories can briefly coexist - for example right after a
+        // managed-channel update, before the upstream cleanup removes the superseded one. The heap rewrite
+        // must target the version installedVersion() reports as current (the newer one, semantically), not
+        // whichever cfg an unscoped tree walk happens to meet first.
+        fakeInstall("1.0.4");
+        fakeInstall("1.0.10");
+        Path supersededCfg =
+            stateDir.resolve("bsl-ls").resolve("1.0.4").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(supersededCfg.getParent());
+        Files.writeString(supersededCfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+        Path currentCfg =
+            stateDir.resolve("bsl-ls").resolve("1.0.10").resolve("app").resolve("bsl-language-server.cfg");
+        Files.createDirectories(currentCfg.getParent());
+        Files.writeString(currentCfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+
+        BslServerInstaller.configureHeap(stateDir, 8);
+
+        assertTrue("the current version's (1.0.10) cfg must be the one rewritten",
+            Files.readString(currentCfg, StandardCharsets.UTF_8).contains("java-options=-Xmx8g"));
+        assertFalse("the superseded version's (1.0.4) cfg must be left untouched",
+            Files.readString(supersededCfg, StandardCharsets.UTF_8).contains("-Xmx8g"));
+    }
+
+    @Test
     public void managedInstalledBinaryThatDoesNotExistFallsBackToTheFloor() throws IOException
     {
         byte[] archive = validZip();

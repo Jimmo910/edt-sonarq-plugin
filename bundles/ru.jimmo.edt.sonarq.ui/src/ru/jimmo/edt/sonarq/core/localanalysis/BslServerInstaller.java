@@ -231,6 +231,10 @@ public final class BslServerInstaller
      * cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even while another caller is
      * mid-download.
      *
+     * <p>For {@code STABLE}/{@code PRERELEASE}, cancellation during the upstream release lookup itself (before
+     * any bytes are downloaded) is only observed once that call returns - see the cancellation-gap note on
+     * {@link #progressListener(IProgressMonitor)}.
+     *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
      * @param download the source of the pinned asset bytes, not {@code null}; unused unless the pinned floor
      *     is installed
@@ -280,10 +284,11 @@ public final class BslServerInstaller
      *
      * <p>The file's location differs per operating system, jpackage layout ({@code app/...} on Windows,
      * {@code lib/app/...} on Linux, {@code Contents/app/...} on macOS) and installed version, so rather than
-     * hardcoding a relative path this walks the whole {@code stateDir/bsl-ls} tree looking for a file named
-     * {@code bsl-language-server.cfg}. Every existing {@code java-options=-Xmx...} line is removed and
-     * exactly one fresh line is appended, so repeated calls converge on the same content (idempotent)
-     * regardless of how many stale lines a previous run left behind.
+     * hardcoding a relative path this looks for a file named {@code bsl-language-server.cfg} under the
+     * currently installed version's own directory (see {@link #findCfgFile}). Every existing
+     * {@code java-options=-Xmx...} line is removed and exactly one fresh line is appended, so repeated calls
+     * converge on the same content (idempotent) regardless of how many stale lines a previous run left
+     * behind.
      *
      * <p>Never throws for a missing distribution: when the server has not been installed yet (or the
      * {@code bsl-ls} directory itself does not exist), this is a silent no-op, because a failure here must
@@ -297,7 +302,7 @@ public final class BslServerInstaller
     public static void configureHeap(Path stateDir, int maxHeapGb) throws IOException
     {
         int clamped = Math.max(MIN_HEAP_GB, maxHeapGb);
-        Path cfg = findCfgFile(stateDir.resolve(SERVER_DIR));
+        Path cfg = findCfgFile(stateDir);
         if (cfg == null)
         {
             return;
@@ -483,6 +488,13 @@ public final class BslServerInstaller
      * <p>Package-private so the headless test fragment can drive the listener directly and assert that a
      * cancelled monitor really does raise {@link OperationCanceledException} out of it.
      *
+     * <p><strong>Known cancellation gap:</strong> this listener only starts firing once the asset download
+     * begins. For the managed channels, {@link BslLanguageServerDownloader#downloadIfNeeded} first resolves
+     * the release via the upstream {@code latestRelease()} HTTP call, which is not itself monitor-aware and
+     * runs before this listener is ever invoked; a monitor cancelled during that call is only observed once
+     * the call returns (bounded by upstream's own request timeout, about 30 s), not the instant cancellation
+     * is requested. This is a known, accepted gap rather than a defect to fix here.
+     *
      * @param monitor the progress monitor checked for cancellation, or {@code null}
      * @return the listener to hand to the upstream downloader, never {@code null}
      */
@@ -666,29 +678,74 @@ public final class BslServerInstaller
     }
 
     /**
-     * Looks for a file named {@code bsl-language-server.cfg} anywhere under {@code installDir}, at
-     * whatever depth the current jpackage layout nests it at (see {@link #configureHeap}).
+     * Looks for a file named {@code bsl-language-server.cfg} belonging to the currently installed engine
+     * version, at whatever depth the current jpackage layout nests it at (see {@link #configureHeap}).
      *
-     * <p>Hidden directories are skipped, so a {@code .staging-<VERSION>} tree left behind by an interrupted
-     * install cannot win the walk over a real installed version and swallow the heap rewrite - hidden
-     * entries sort before the version directories on most file systems, so it would win by default.
+     * <p>Resolves {@link #installedVersion} first and, if it reports one, looks only under that version's own
+     * directory - this is the version the analysis will actually run, so it is the only cfg that must ever be
+     * rewritten. Two real (launcher-bearing) version directories can briefly coexist - for example right after
+     * a managed-channel update, before the upstream cleanup removes the superseded one - and an unscoped walk
+     * of the whole {@code installDir} tree would take whichever cfg the filesystem enumeration happens to
+     * visit first, which need not be the current version's.
      *
-     * @param installDir the {@code bsl-ls} directory holding the unpacked distribution, not {@code null}
-     * @return the found configuration file, or {@code null} if {@code installDir} does not exist or holds
-     *     no such file
+     * <p>Falls back to the old unscoped, whole-tree walk when {@link #installedVersion} reports nothing (no
+     * version directory has a launcher yet, for example right before the very first install) or when the
+     * current version's own directory holds no cfg at all, so a caller is never worse off than before this
+     * version-scoped lookup was added. Hidden directories are skipped in that fallback walk, so a
+     * {@code .staging-<VERSION>} tree left behind by an interrupted install cannot win over a real installed
+     * version and swallow the heap rewrite - hidden entries sort before the version directories on most file
+     * systems, so it would win by default.
+     *
+     * @param stateDir the plugin state directory the server was (or would be) unpacked under, not
+     *     {@code null}
+     * @return the found configuration file, or {@code null} if {@code stateDir/bsl-ls} does not exist or
+     *     holds no such file
      * @throws IOException if the distribution tree cannot be walked
      */
-    private static Path findCfgFile(Path installDir) throws IOException
+    private static Path findCfgFile(Path stateDir) throws IOException
     {
+        Path installDir = stateDir.resolve(SERVER_DIR);
         if (!Files.isDirectory(installDir))
         {
             return null;
+        }
+        Optional<String> currentVersion = installedVersion(stateDir);
+        if (currentVersion.isPresent())
+        {
+            Path underCurrentVersion = findCfgFileUnder(installDir.resolve(currentVersion.get()));
+            if (underCurrentVersion != null)
+            {
+                return underCurrentVersion;
+            }
         }
         try (Stream<Path> walk = Files.walk(installDir))
         {
             return walk.filter(Files::isRegularFile)
                 .filter(path -> CFG_FILE_NAME.equals(String.valueOf(path.getFileName())))
                 .filter(path -> !isUnderHiddenDirectory(installDir, path))
+                .findFirst()
+                .orElse(null);
+        }
+    }
+
+    /**
+     * Looks for a file named {@code bsl-language-server.cfg} anywhere under a single version directory.
+     *
+     * @param versionDir the version directory to search under, not {@code null}
+     * @return the found configuration file, or {@code null} if {@code versionDir} does not exist or holds
+     *     no such file
+     * @throws IOException if the version directory tree cannot be walked
+     */
+    private static Path findCfgFileUnder(Path versionDir) throws IOException
+    {
+        if (!Files.isDirectory(versionDir))
+        {
+            return null;
+        }
+        try (Stream<Path> walk = Files.walk(versionDir))
+        {
+            return walk.filter(Files::isRegularFile)
+                .filter(path -> CFG_FILE_NAME.equals(String.valueOf(path.getFileName())))
                 .findFirst()
                 .orElse(null);
         }
