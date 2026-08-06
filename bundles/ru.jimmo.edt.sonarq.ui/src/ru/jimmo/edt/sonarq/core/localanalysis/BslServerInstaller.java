@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import java.io.IOException;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,8 +17,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -25,30 +28,41 @@ import java.util.zip.ZipInputStream;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 
+import com.github._1c_syntax.utils.downloader.BslLanguageServerDownloader;
+import com.github._1c_syntax.utils.downloader.BslLanguageServerReleaseChannel;
+import com.github._1c_syntax.utils.downloader.DownloadProgressListener;
+import com.github._1c_syntax.utils.downloader.GitHubReleaseClient;
+
 import ru.jimmo.edt.sonarq.core.analysis.DownloadFunction;
 import ru.jimmo.edt.sonarq.ui.Messages;
 
 /**
- * Downloads and unpacks the self-contained BSL Language Server distribution into a state directory,
- * idempotently.
+ * Makes a self-contained BSL Language Server distribution available under a state directory, idempotently.
  *
- * <p>The plugin ships the {@code jpackage} application-image assets ({@code bsl-language-server_win.zip} /
- * {@code _nix.zip} / {@code _mac.zip}). Each zip bundles a private Java runtime, so the analysis runs
- * with no external JDK on the machine or on {@code PATH}. The nesting and launcher name differ per OS
- * (verified against the real 1.0.4 assets):
+ * <p>For the managed update channels ({@code STABLE}/{@code PRERELEASE}) this is a thin adapter over the
+ * upstream {@link BslLanguageServerDownloader} from {@code io.github.1c-syntax:utils} - the downloader the
+ * BSL Language Server maintainers share across their VS Code, IntelliJ and CLI clients (issue #8). Release
+ * resolution, the update-check throttle ({@code SERVER-INFO}), version comparison, extraction and cleanup of
+ * superseded versions all live upstream now. What stays here is what upstream has no concept of: the pinned
+ * {@code FIXED} channel, the offline floor, the {@link IProgressMonitor} cancellation bridge, the install
+ * lock and the heap {@code .cfg} rewrite.
+ *
+ * <p>Both paths share the upstream on-disk layout, so a single binary-path rule serves them
+ * ({@code installDir} being {@code stateDir/bsl-ls}):
  *
  * <ul>
- * <li>Windows: {@code bsl-language-server/bsl-language-server.exe}</li>
- * <li>Linux: {@code bsl-language-server/bin/bsl-language-server}</li>
- * <li>macOS: {@code bsl-language-server.app/Contents/MacOS/bsl-language-server}</li>
+ * <li>Windows: {@code <installDir>/<version>/bsl-language-server/bsl-language-server.exe}</li>
+ * <li>Linux: {@code <installDir>/<version>/bsl-language-server/bin/bsl-language-server}</li>
+ * <li>macOS: {@code <installDir>/<version>/bsl-language-server.app/Contents/MacOS/bsl-language-server}</li>
  * </ul>
  *
- * <p>A future user-override setting (task L4) may point at an existing {@code bsl-language-server}
- * executable; that path is used as-is and does not go through this installer.
+ * <p>Each zip bundles a private Java runtime, so the analysis runs with no external JDK on the machine or on
+ * {@code PATH}. A user-override setting may point at an existing {@code bsl-language-server} executable; that
+ * path is used as-is and does not go through this installer.
  */
 public final class BslServerInstaller
 {
-    /** The pinned BSL Language Server release version, used to build the download tag path. */
+    /** The pinned BSL Language Server release version, the offline floor and the {@code FIXED} channel target. */
     public static final String VERSION = "1.0.4"; //$NON-NLS-1$
 
     private static final String BASE_URL =
@@ -67,8 +81,8 @@ public final class BslServerInstaller
     private static final String BIN_DIR = "bin"; //$NON-NLS-1$
     private static final String EXE_WINDOWS = "bsl-language-server.exe"; //$NON-NLS-1$
     private static final String EXE_OTHER = "bsl-language-server"; //$NON-NLS-1$
-    private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
-    private static final String LASTCHECK_FILE = ".lastcheck"; //$NON-NLS-1$
+    private static final String STAGING_PREFIX = ".staging-"; //$NON-NLS-1$
+    private static final String HIDDEN_PREFIX = "."; //$NON-NLS-1$
     private static final String CFG_FILE_NAME = "bsl-language-server.cfg"; //$NON-NLS-1$
     private static final String XMX_OPTION_PREFIX = "java-options=-Xmx"; //$NON-NLS-1$
     private static final String HEAP_UNIT_SUFFIX = "g"; //$NON-NLS-1$
@@ -76,12 +90,8 @@ public final class BslServerInstaller
 
     private static final long LOCK_POLL_MILLIS = 200L;
 
-    /**
-     * How long a recorded update check stays "fresh": within this window a non-{@code FIXED} channel skips
-     * the GitHub API entirely and treats the already-installed engine as up to date, so back-to-back
-     * refreshes do not query {@code api.github.com} on every run.
-     */
-    private static final Duration CHECK_INTERVAL = Duration.ofMinutes(8);
+    /** Connect timeout of the HTTP client handed to the upstream downloader and its release client. */
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
 
     /**
      * Guards the whole check-install critical section of {@link #ensureServer}.
@@ -100,40 +110,88 @@ public final class BslServerInstaller
     }
 
     /**
-     * Returns the download URL of the operating-system-matching native distribution zip.
+     * Performs the managed (upstream) install attempt, so the fallback chain around it can be exercised
+     * without touching the network.
+     */
+    @FunctionalInterface
+    interface ManagedInstall
+    {
+        /**
+         * Runs the upstream downloader.
+         *
+         * @return the launcher path the upstream downloader settled on, possibly non-existent
+         * @throws IOException if the release cannot be fetched or downloaded and nothing is installed
+         */
+        Path install() throws IOException;
+    }
+
+    /**
+     * Returns the download URL of the operating-system-matching native distribution zip for the pinned
+     * {@link #VERSION}.
      *
      * @return the GitHub release asset URL, never {@code null}
      */
     public static String downloadUrl()
     {
-        return BASE_URL + TAG_PREFIX + VERSION + '/' + ASSET_PREFIX + osClassifier() + ZIP_SUFFIX;
+        return BASE_URL + TAG_PREFIX + VERSION + '/' + assetName(osClassifier());
     }
 
     /**
      * Tells whether a BSL Language Server distribution is installed under {@code stateDir/bsl-ls}, at any
      * version.
      *
-     * <p>This only stats the expected launcher file and the {@code .complete} marker, never acquires
-     * {@link #INSTALL_LOCK} and never touches the network. Safe to call often, for example to decide whether
-     * to show a "downloading..." hint before scheduling a refresh, or to show an installed/not-installed
-     * label on a preferences page. The installed version is no longer pinned - the update channel can move
-     * it - so this deliberately checks only that <em>some</em> engine is present, not which version.
+     * <p>Never acquires {@link #INSTALL_LOCK} and never touches the network, so it is safe to call often -
+     * for example to decide whether to show a "downloading..." hint before scheduling a refresh, or to render
+     * an installed/not-installed label on a preferences page. The installed version is not pinned - the
+     * update channel can move it - so this deliberately reports whether <em>some</em> engine is present.
      *
      * @param stateDir the plugin state directory the server would be unpacked under, not {@code null}
-     * @return {@code true} if the expected launcher exists and a completion marker is present
+     * @return {@code true} if a launcher exists under some version directory
      */
     public static boolean isInstalled(Path stateDir)
     {
-        Path serverRoot = stateDir.resolve(SERVER_DIR);
-        Path executable = expectedExecutable(serverRoot);
-        Path marker = serverRoot.resolve(MARKER_FILE);
-        return Files.exists(executable) && Files.exists(marker);
+        return installedVersion(stateDir).isPresent();
+    }
+
+    /**
+     * Returns the version of the BSL Language Server distribution installed under {@code stateDir/bsl-ls}.
+     *
+     * <p>Deliberately a plain filesystem scan rather than
+     * {@code new BslLanguageServerDownloader(...).installedVersion()}: the upstream call would force us to
+     * allocate a {@link GitHubReleaseClient} and an {@link HttpClient} (which owns a selector thread) on a
+     * query that views and preference pages make on every repaint, and it only sees installs upstream itself
+     * recorded in {@code SERVER-INFO} - it would miss a {@code FIXED}-channel install written by
+     * {@link #ensureServer}. Scanning the version directories sees both. Network-free and lock-free.
+     *
+     * @param stateDir the plugin state directory the server would be unpacked under, not {@code null}
+     * @return the installed version (the newest one if several are present), or empty if none is installed
+     */
+    public static Optional<String> installedVersion(Path stateDir)
+    {
+        Path installDir = stateDir.resolve(SERVER_DIR);
+        if (!Files.isDirectory(installDir))
+        {
+            return Optional.empty();
+        }
+        try (Stream<Path> children = Files.list(installDir))
+        {
+            return children.filter(Files::isDirectory)
+                .map(child -> String.valueOf(child.getFileName()))
+                .filter(name -> !name.startsWith(HIDDEN_PREFIX))
+                .sorted(Comparator.reverseOrder())
+                .filter(version -> Files.exists(binaryPath(installDir, version, osClassifier())))
+                .findFirst();
+        }
+        catch (IOException e)
+        {
+            return Optional.empty();
+        }
     }
 
     /**
      * Deletes the whole managed BSL Language Server distribution under {@code stateDir/bsl-ls}, including
-     * the completion marker, so the next {@link #ensureServer} call downloads and unpacks it again from
-     * scratch.
+     * every version directory and the upstream {@code SERVER-INFO} bookkeeping file, so the next
+     * {@link #ensureServer} call downloads and unpacks it again from scratch.
      *
      * <p>A no-op when nothing is installed there, so callers - for example a preferences page "delete
      * downloaded engine" button - can invoke this unconditionally without first checking
@@ -152,40 +210,34 @@ public final class BslServerInstaller
      * Ensures a BSL Language Server distribution matching {@code channel} is installed under
      * {@code stateDir/bsl-ls} and returns its launcher executable.
      *
-     * <p>The target version is resolved through {@link BslReleaseResolver}: {@code FIXED} always resolves
-     * the pinned {@link #VERSION} without any network call; {@code STABLE} and {@code PRERELEASE} query the
-     * GitHub releases API through {@code download}. To avoid hitting {@code api.github.com} on every refresh,
-     * a non-{@code FIXED} channel is throttled by a {@code .lastcheck} timestamp: when an engine is already
-     * installed and the last check was less than {@link #CHECK_INTERVAL} ago, the installed engine is
-     * returned without querying the API.
+     * <p>{@code FIXED} never touches the GitHub API: when the pinned {@link #VERSION} launcher is already on
+     * disk it is returned as is, otherwise the pinned asset is streamed from its release-download URL through
+     * {@code download} and unpacked. {@code STABLE} and {@code PRERELEASE} delegate to the upstream
+     * {@link BslLanguageServerDownloader}, which resolves the release, throttles its own update checks
+     * ({@code SERVER-INFO}, 8 minutes), downloads only on a version change and removes superseded versions.
      *
-     * <p>An update check must never harden into a hard failure. If the channel query fails - whether with an
-     * {@link IOException} (offline) or an unchecked exception from parsing an unexpected response body - and
-     * an engine is already installed, that installed engine is returned; when nothing is installed the
-     * resolver falls back to the pinned {@link #VERSION} floor and downloads it.
+     * <p>An update check must never harden into a hard failure. If the upstream call fails - an
+     * {@link IOException} (offline, HTTP error) or an unchecked exception from an unexpected response body -
+     * an already-installed engine is returned; if nothing is installed the pinned {@link #VERSION} floor is
+     * downloaded instead. Only if that floor download also fails does an {@link IOException} escape, so this
+     * never returns a path that does not exist. Cancellation is not a failure and is never swallowed.
      *
-     * <p>When the resolved target version differs from the installed one (or nothing is installed), any
-     * leftover directory is deleted, the asset zip is streamed and unpacked with a zip-slip guard, the
-     * monitor being polled for cancellation before and per entry, and the marker is written with the
-     * resolved version only after the whole archive has been extracted successfully. On non-Windows systems
-     * every regular file in a {@code bin} directory (the launcher and the bundled runtime tools) is marked
-     * executable, since the zip does not carry Unix permission bits.
-     *
-     * <p>The whole resolve-check-install sequence runs under {@link #INSTALL_LOCK}, serializing concurrent
-     * callers against the same state directory (see the field javadoc); a caller blocked waiting for the lock
-     * still observes monitor cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even
-     * while another caller is mid-download.
+     * <p>The whole sequence runs under {@link #INSTALL_LOCK}, serializing concurrent callers against the same
+     * state directory (see the field javadoc); a caller blocked waiting for the lock still observes monitor
+     * cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even while another caller is
+     * mid-download.
      *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
-     * @param download the source of the archive bytes and the GitHub API responses, not {@code null}
-     * @param channel the engine update channel controlling which release is resolved, not {@code null}
+     * @param download the source of the pinned asset bytes, not {@code null}; unused unless the pinned floor
+     *     is installed
+     * @param channel the engine update channel controlling which release is installed, not {@code null}
      * @param monitor the progress monitor checked for cancellation, or {@code null}
-     * @return the path to the launcher executable, never {@code null}
-     * @throws IOException if the archive cannot be read, an entry escapes the target directory, no release
-     *     can be resolved even from the pinned floor, or the calling thread is interrupted while waiting for
+     * @return the path to an existing launcher executable, never {@code null}
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, the pinned
+     *     floor cannot be installed, or the calling thread is interrupted while waiting for
      *     {@link #INSTALL_LOCK}
      * @throws OperationCanceledException if the monitor is cancelled while waiting for the lock, before, or
-     *     during unpacking
+     *     during downloading or unpacking
      */
     public static Path ensureServer(Path stateDir, DownloadFunction download, BslUpdateChannel channel,
         IProgressMonitor monitor) throws IOException
@@ -193,7 +245,16 @@ public final class BslServerInstaller
         acquireInstallLock(monitor);
         try
         {
-            return doEnsureServer(stateDir, download, channel, monitor);
+            Path installDir = stateDir.resolve(SERVER_DIR);
+            if (monitor != null && monitor.isCanceled())
+            {
+                throw new OperationCanceledException();
+            }
+            if (channel == BslUpdateChannel.FIXED)
+            {
+                return ensureFixedInstall(installDir, download, monitor);
+            }
+            return ensureManagedInstall(installDir, download, channel, monitor);
         }
         finally
         {
@@ -213,9 +274,9 @@ public final class BslServerInstaller
      * The jpackage launcher only reads its heap flag from this file - there is no command-line override -
      * so making the limit configurable means rewriting the file before every analysis run.
      *
-     * <p>The file's location differs per operating system and jpackage layout ({@code app/...} on
-     * Windows, {@code lib/app/...} on Linux, {@code Contents/app/...} on macOS), so rather than hardcoding
-     * a relative path this walks the whole {@code stateDir/bsl-ls} tree looking for a file named
+     * <p>The file's location differs per operating system, jpackage layout ({@code app/...} on Windows,
+     * {@code lib/app/...} on Linux, {@code Contents/app/...} on macOS) and installed version, so rather than
+     * hardcoding a relative path this walks the whole {@code stateDir/bsl-ls} tree looking for a file named
      * {@code bsl-language-server.cfg}. Every existing {@code java-options=-Xmx...} line is removed and
      * exactly one fresh line is appended, so repeated calls converge on the same content (idempotent)
      * regardless of how many stale lines a previous run left behind.
@@ -250,21 +311,276 @@ public final class BslServerInstaller
     }
 
     /**
-     * Looks for a file named {@code bsl-language-server.cfg} anywhere under {@code serverRoot}, at
+     * Builds the launcher path of an installed version, in the layout the upstream downloader uses (and that
+     * {@link #ensureFixedInstall} reproduces for the pinned floor).
+     *
+     * <p>Package-private, and taking the operating-system classifier as an argument rather than reading
+     * {@code os.name}, so the headless test fragment can pin every platform's layout.
+     *
+     * @param installDir the {@code bsl-ls} directory holding the version directories, not {@code null}
+     * @param version the installed version, the name of its directory under {@code installDir}, not
+     *     {@code null}
+     * @param osClassifier the operating-system classifier, one of {@code win}, {@code mac}, {@code nix}, not
+     *     {@code null}
+     * @return the launcher path, never {@code null}
+     */
+    static Path binaryPath(Path installDir, String version, String osClassifier)
+    {
+        Path versionDir = installDir.resolve(version);
+        if (OS_WINDOWS.equals(osClassifier))
+        {
+            return versionDir.resolve(APP_DIR).resolve(EXE_WINDOWS);
+        }
+        if (OS_MAC.equals(osClassifier))
+        {
+            return versionDir.resolve(APP_DIR_MAC).resolve(CONTENTS_DIR).resolve(MACOS_DIR).resolve(EXE_OTHER);
+        }
+        return versionDir.resolve(APP_DIR).resolve(BIN_DIR).resolve(EXE_OTHER);
+    }
+
+    /**
+     * Runs a managed install attempt and degrades to the offline fallbacks when it fails.
+     *
+     * <p>Package-private and taking the upstream call as a seam, so the headless test fragment can exercise
+     * every fallback branch without a network round trip. The contract, in order: a launcher the attempt
+     * produced <em>and that exists</em> wins; an {@link OperationCanceledException} propagates untouched
+     * (cancelling an update check is a user decision, not a failure to paper over); any other failure -
+     * checked or unchecked - falls back to an already-installed engine, and failing that to the pinned
+     * {@link #VERSION} floor, whose own {@link IOException} is allowed out so that a non-existent path is
+     * never returned.
+     *
+     * @param managed the upstream install attempt, not {@code null}
+     * @param installedBinary the network-free lookup of an already-installed launcher, not {@code null}
+     * @param installDir the {@code bsl-ls} directory, not {@code null}
+     * @param download the source of the pinned asset bytes for the floor, not {@code null}
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @return the path to an existing launcher executable, never {@code null}
+     * @throws IOException if the pinned floor itself cannot be installed
+     * @throws OperationCanceledException if the monitor is cancelled
+     */
+    static Path installWithFallback(ManagedInstall managed, Supplier<Optional<Path>> installedBinary,
+        Path installDir, DownloadFunction download, IProgressMonitor monitor) throws IOException
+    {
+        try
+        {
+            Path binary = managed.install();
+            if (binary != null && Files.exists(binary))
+            {
+                return binary;
+            }
+        }
+        catch (OperationCanceledException e)
+        {
+            throw e;
+        }
+        catch (IOException | RuntimeException e)
+        {
+            // An update check must never break the analysis: fall through to the offline fallbacks below.
+        }
+        Optional<Path> installed = installedBinary.get();
+        if (installed.isPresent())
+        {
+            return installed.get();
+        }
+        return ensureFixedInstall(installDir, download, monitor);
+    }
+
+    /**
+     * Delegates to the upstream {@link BslLanguageServerDownloader} for a managed channel, wrapped in the
+     * fallback chain of {@link #installWithFallback}.
+     *
+     * @param installDir the {@code bsl-ls} directory to install under, not {@code null}
+     * @param download the source of the pinned asset bytes for the floor, not {@code null}
+     * @param channel the engine update channel, not {@code null} and not {@code FIXED}
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @return the path to an existing launcher executable, never {@code null}
+     * @throws IOException if the upstream call fails and the pinned floor cannot be installed either
+     * @throws OperationCanceledException if the monitor is cancelled
+     */
+    private static Path ensureManagedInstall(Path installDir, DownloadFunction download, BslUpdateChannel channel,
+        IProgressMonitor monitor) throws IOException
+    {
+        HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(CONNECT_TIMEOUT)
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
+        try
+        {
+            BslLanguageServerDownloader downloader =
+                new BslLanguageServerDownloader(installDir, new GitHubReleaseClient(null, httpClient), httpClient);
+            BslLanguageServerReleaseChannel upstreamChannel = toUpstreamChannel(channel);
+            return installWithFallback(() -> downloader.downloadIfNeeded(upstreamChannel, progressListener(monitor)),
+                downloader::installedBinary, installDir, download, monitor);
+        }
+        finally
+        {
+            // shutdownNow, not close: every byte we care about is already on disk by now, and close() blocks
+            // until in-flight operations finish - it must never be able to stall an analysis job.
+            httpClient.shutdownNow();
+        }
+    }
+
+    /**
+     * Maps our preference-facing channel onto the upstream one, which knows no pinned channel.
+     *
+     * @param channel the engine update channel, not {@code null} and not {@code FIXED}
+     * @return the upstream channel, never {@code null}
+     */
+    private static BslLanguageServerReleaseChannel toUpstreamChannel(BslUpdateChannel channel)
+    {
+        return channel == BslUpdateChannel.PRERELEASE ? BslLanguageServerReleaseChannel.PRERELEASE
+            : BslLanguageServerReleaseChannel.STABLE;
+    }
+
+    /**
+     * Bridges an {@link IProgressMonitor} into the upstream download loop.
+     *
+     * <p>The upstream listener contract explicitly allows an implementation to throw a runtime exception to
+     * cancel the download - the exception propagates out of the download call and the partial file is
+     * deleted - which is exactly what an {@link OperationCanceledException} does here. The listener is
+     * invoked once per 256 KB chunk, so it stays allocation-light and reports the download sub-task only
+     * once, on the first chunk, rather than on every callback.
+     *
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @return the listener to hand to the upstream downloader, never {@code null}
+     */
+    private static DownloadProgressListener progressListener(IProgressMonitor monitor)
+    {
+        if (monitor == null)
+        {
+            return DownloadProgressListener.NONE;
+        }
+        boolean[] announced = new boolean[1];
+        return (bytesRead, totalBytes) ->
+        {
+            if (monitor.isCanceled())
+            {
+                throw new OperationCanceledException();
+            }
+            if (!announced[0])
+            {
+                announced[0] = true;
+                monitor.subTask(Messages.BslInstaller_Downloading);
+            }
+        };
+    }
+
+    /**
+     * Installs the pinned {@link #VERSION} without ever consulting the GitHub API.
+     *
+     * <p>Serves both the {@code FIXED} channel and the offline floor of {@link #installWithFallback}: when
+     * the pinned launcher is already on disk it is returned untouched, otherwise the pinned asset is streamed
+     * from its release-download URL through {@code download} and unpacked into
+     * {@code installDir/<VERSION>/}.
+     *
+     * @param installDir the {@code bsl-ls} directory to install under, not {@code null}
+     * @param download the source of the archive bytes, not {@code null}
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @return the path to the existing pinned launcher, never {@code null}
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or the
+     *     archive did not contain the expected launcher
+     * @throws OperationCanceledException if the monitor is cancelled before or during unpacking
+     */
+    private static Path ensureFixedInstall(Path installDir, DownloadFunction download, IProgressMonitor monitor)
+        throws IOException
+    {
+        Path binary = binaryPath(installDir, VERSION, osClassifier());
+        if (Files.exists(binary))
+        {
+            return binary;
+        }
+        extractDistribution(installDir, download, monitor);
+        if (!OS_WINDOWS.equals(osClassifier()))
+        {
+            // Only the launcher needs the executable bit - verified live on Linux against the 1.0.4 native
+            // asset, with every other bit stripped, for both --version and a full --analyze run.
+            binary.toFile().setExecutable(true, false);
+        }
+        if (!Files.exists(binary))
+        {
+            throw new IOException("BSL Language Server launcher missing after unpacking: " + binary); //$NON-NLS-1$
+        }
+        return binary;
+    }
+
+    /**
+     * Streams the pinned asset and unpacks it into {@code installDir/<VERSION>/}, zip-slip guarded, polling
+     * {@code monitor} for cancellation before and per entry.
+     *
+     * <p>The archive is unpacked into a staging directory and only then moved into place, so an install
+     * interrupted by a cancellation, a broken connection or a crash cannot leave a half-extracted tree that
+     * a later call would mistake for a complete one - which is what the {@code .complete} marker used to
+     * guard before the versioned layout replaced it.
+     *
+     * @param installDir the {@code bsl-ls} directory to install under, not {@code null}
+     * @param download the source of the archive bytes, not {@code null}
+     * @param monitor the progress monitor checked for cancellation, or {@code null}
+     * @throws IOException if the archive cannot be read or an entry escapes the target directory
+     * @throws OperationCanceledException if the monitor is cancelled during unpacking
+     */
+    private static void extractDistribution(Path installDir, DownloadFunction download, IProgressMonitor monitor)
+        throws IOException
+    {
+        Path staging = installDir.resolve(STAGING_PREFIX + VERSION);
+        deleteRecursively(staging);
+        Files.createDirectories(staging);
+        Path normalizedRoot = staging.normalize();
+        if (monitor != null)
+        {
+            monitor.subTask(Messages.BslInstaller_Downloading);
+        }
+        try (ZipInputStream zip = new ZipInputStream(download.open(downloadUrl())))
+        {
+            if (monitor != null)
+            {
+                monitor.subTask(Messages.BslInstaller_Unpacking);
+            }
+            ZipEntry entry = zip.getNextEntry();
+            while (entry != null)
+            {
+                if (monitor != null && monitor.isCanceled())
+                {
+                    throw new OperationCanceledException();
+                }
+                Path target = resolveEntry(normalizedRoot, entry.getName());
+                if (entry.isDirectory())
+                {
+                    Files.createDirectories(target);
+                }
+                else
+                {
+                    Path parent = target.getParent();
+                    if (parent != null)
+                    {
+                        Files.createDirectories(parent);
+                    }
+                    Files.copy(zip, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+                zip.closeEntry();
+                entry = zip.getNextEntry();
+            }
+        }
+        Path versionDir = installDir.resolve(VERSION);
+        deleteRecursively(versionDir);
+        Files.move(staging, versionDir);
+    }
+
+    /**
+     * Looks for a file named {@code bsl-language-server.cfg} anywhere under {@code installDir}, at
      * whatever depth the current jpackage layout nests it at (see {@link #configureHeap}).
      *
-     * @param serverRoot the {@code bsl-ls} directory holding the unpacked distribution, not {@code null}
-     * @return the found configuration file, or {@code null} if {@code serverRoot} does not exist or holds
+     * @param installDir the {@code bsl-ls} directory holding the unpacked distribution, not {@code null}
+     * @return the found configuration file, or {@code null} if {@code installDir} does not exist or holds
      *     no such file
      * @throws IOException if the distribution tree cannot be walked
      */
-    private static Path findCfgFile(Path serverRoot) throws IOException
+    private static Path findCfgFile(Path installDir) throws IOException
     {
-        if (!Files.isDirectory(serverRoot))
+        if (!Files.isDirectory(installDir))
         {
             return null;
         }
-        try (Stream<Path> walk = Files.walk(serverRoot))
+        try (Stream<Path> walk = Files.walk(installDir))
         {
             return walk.filter(Files::isRegularFile)
                 .filter(path -> CFG_FILE_NAME.equals(String.valueOf(path.getFileName())))
@@ -307,236 +623,10 @@ public final class BslServerInstaller
     }
 
     /**
-     * The resolve-check-install sequence itself, run under {@link #INSTALL_LOCK} by {@link #ensureServer}.
-     *
-     * @param stateDir the plugin state directory to unpack under, not {@code null}
-     * @param download the source of the archive bytes and the GitHub API responses, not {@code null}
-     * @param channel the engine update channel controlling which release is resolved, not {@code null}
-     * @param monitor the progress monitor checked for cancellation, or {@code null}
-     * @return the path to the launcher executable, never {@code null}
-     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or no
-     *     release can be resolved even from the pinned floor
-     * @throws OperationCanceledException if the monitor is cancelled before or during unpacking
-     */
-    private static Path doEnsureServer(Path stateDir, DownloadFunction download, BslUpdateChannel channel,
-        IProgressMonitor monitor) throws IOException
-    {
-        Path serverRoot = stateDir.resolve(SERVER_DIR);
-        Path executable = expectedExecutable(serverRoot);
-        Path marker = serverRoot.resolve(MARKER_FILE);
-        String installedVersion = readMarkerVersion(marker);
-        boolean installed = Files.exists(executable) && installedVersion != null;
-
-        if (channel != BslUpdateChannel.FIXED && installed && isCheckFresh(serverRoot))
-        {
-            return executable;
-        }
-
-        BslReleaseResolver.ResolvedRelease target = resolveTarget(download, channel, installed);
-        if (target == null)
-        {
-            // The channel query failed and an engine is already installed: return it (offline fallback)
-            // without touching .lastcheck, so the next refresh retries the update check.
-            return executable;
-        }
-
-        if (monitor != null && monitor.isCanceled())
-        {
-            throw new OperationCanceledException();
-        }
-        if (Files.exists(executable) && target.version().equals(installedVersion))
-        {
-            // Already the resolved version: nothing to download, just refresh the throttle timestamp.
-            writeLastCheck(serverRoot);
-            return executable;
-        }
-
-        extractDistribution(serverRoot, download, target.assetUrl(), monitor);
-        Files.writeString(marker, target.version(), StandardCharsets.UTF_8);
-        writeLastCheck(serverRoot);
-        return executable;
-    }
-
-    /**
-     * Resolves the release to install for {@code channel}, applying the offline/parse-failure fallback.
-     *
-     * <p>{@code FIXED} resolves the pinned {@link #VERSION} without any network call. For a channel query,
-     * a failure - {@link IOException} (offline) or an unchecked exception from parsing an unexpected
-     * response body - must never harden into a hard failure: when an engine is already installed the method
-     * returns {@code null} to signal "keep the installed engine", and otherwise falls back to the pinned
-     * {@link #VERSION} floor. An {@link OperationCanceledException} is never swallowed - cancellation always
-     * propagates.
-     *
-     * @param download the source of the GitHub API responses, not {@code null}
-     * @param channel the engine update channel, not {@code null}
-     * @param installed whether an engine is already installed, deciding the fallback
-     * @return the resolved release, or {@code null} to keep the already-installed engine (offline fallback)
-     * @throws IOException if the pinned-floor fallback itself cannot be resolved
-     * @throws OperationCanceledException if the underlying query is cancelled
-     */
-    private static BslReleaseResolver.ResolvedRelease resolveTarget(DownloadFunction download,
-        BslUpdateChannel channel, boolean installed) throws IOException
-    {
-        if (channel == BslUpdateChannel.FIXED)
-        {
-            return BslReleaseResolver.resolve(BslUpdateChannel.FIXED, download, osClassifier());
-        }
-        try
-        {
-            return BslReleaseResolver.resolve(channel, download, osClassifier());
-        }
-        catch (OperationCanceledException e)
-        {
-            throw e;
-        }
-        catch (IOException | RuntimeException e)
-        {
-            if (installed)
-            {
-                return null;
-            }
-            return BslReleaseResolver.resolve(BslUpdateChannel.FIXED, download, osClassifier());
-        }
-    }
-
-    /**
-     * Deletes any leftover distribution under {@code serverRoot} and unpacks {@code assetUrl} into it,
-     * zip-slip guarded, polling {@code monitor} for cancellation before and per entry, and marking POSIX
-     * executables afterwards.
-     *
-     * @param serverRoot the {@code bsl-ls} directory to unpack into, not {@code null}
-     * @param download the source of the archive bytes, not {@code null}
-     * @param assetUrl the asset URL to download, not {@code null}
-     * @param monitor the progress monitor checked for cancellation, or {@code null}
-     * @throws IOException if the archive cannot be read or an entry escapes the target directory
-     * @throws OperationCanceledException if the monitor is cancelled during unpacking
-     */
-    private static void extractDistribution(Path serverRoot, DownloadFunction download, String assetUrl,
-        IProgressMonitor monitor) throws IOException
-    {
-        deleteRecursively(serverRoot);
-        Files.createDirectories(serverRoot);
-        Path normalizedRoot = serverRoot.normalize();
-        if (monitor != null)
-        {
-            monitor.subTask(Messages.BslInstaller_Downloading);
-        }
-        try (ZipInputStream zip = new ZipInputStream(download.open(assetUrl)))
-        {
-            if (monitor != null)
-            {
-                monitor.subTask(Messages.BslInstaller_Unpacking);
-            }
-            ZipEntry entry = zip.getNextEntry();
-            while (entry != null)
-            {
-                if (monitor != null && monitor.isCanceled())
-                {
-                    throw new OperationCanceledException();
-                }
-                Path target = resolveEntry(normalizedRoot, entry.getName());
-                if (entry.isDirectory())
-                {
-                    Files.createDirectories(target);
-                }
-                else
-                {
-                    Path parent = target.getParent();
-                    if (parent != null)
-                    {
-                        Files.createDirectories(parent);
-                    }
-                    Files.copy(zip, target, StandardCopyOption.REPLACE_EXISTING);
-                }
-                zip.closeEntry();
-                entry = zip.getNextEntry();
-            }
-        }
-        if (!OS_WINDOWS.equals(osClassifier()))
-        {
-            markBinExecutable(serverRoot);
-        }
-    }
-
-    /**
-     * Reads the installed version recorded in the completion marker.
-     *
-     * @param marker the completion marker file, not {@code null}
-     * @return the recorded version, or {@code null} if the marker is absent, empty or unreadable
-     */
-    private static String readMarkerVersion(Path marker)
-    {
-        try
-        {
-            if (!Files.exists(marker))
-            {
-                return null;
-            }
-            String version = Files.readString(marker, StandardCharsets.UTF_8).trim();
-            return version.isEmpty() ? null : version;
-        }
-        catch (IOException e)
-        {
-            return null;
-        }
-    }
-
-    /**
-     * Tells whether the last update check recorded under {@code serverRoot} is still within
-     * {@link #CHECK_INTERVAL}.
-     *
-     * @param serverRoot the {@code bsl-ls} directory holding the {@code .lastcheck} timestamp, not
-     *     {@code null}
-     * @return {@code true} if a valid, non-future timestamp younger than {@link #CHECK_INTERVAL} is present
-     */
-    private static boolean isCheckFresh(Path serverRoot)
-    {
-        Path lastCheck = serverRoot.resolve(LASTCHECK_FILE);
-        try
-        {
-            if (!Files.exists(lastCheck))
-            {
-                return false;
-            }
-            long recorded = Long.parseLong(Files.readString(lastCheck, StandardCharsets.UTF_8).trim());
-            long elapsed = System.currentTimeMillis() - recorded;
-            return elapsed >= 0 && elapsed < CHECK_INTERVAL.toMillis();
-        }
-        catch (IOException | NumberFormatException e)
-        {
-            return false;
-        }
-    }
-
-    /**
-     * Records the current time as the last update check under {@code serverRoot}, best-effort. A failure to
-     * write the throttle marker only means the next refresh re-queries the update channel, never a
-     * functional failure, so any {@link IOException} is swallowed.
-     *
-     * @param serverRoot the {@code bsl-ls} directory to write the {@code .lastcheck} timestamp under, not
-     *     {@code null}
-     */
-    private static void writeLastCheck(Path serverRoot)
-    {
-        try
-        {
-            Files.createDirectories(serverRoot);
-            Files.writeString(serverRoot.resolve(LASTCHECK_FILE), Long.toString(System.currentTimeMillis()),
-                StandardCharsets.UTF_8);
-        }
-        catch (IOException e)
-        {
-            // Best-effort throttle marker; see the javadoc.
-        }
-    }
-
-    /**
      * Recursively deletes a directory tree, tolerating a directory that does not exist.
      *
-     * <p>Used to discard a poisoned half-extracted install (no completion marker) before retrying.
-     *
      * @param dir the directory to delete, not {@code null}
-     * @throws IOException if a file or directory cannot be deleted
+     * @throws IOException if the tree cannot be walked
      */
     private static void deleteRecursively(Path dir) throws IOException
     {
@@ -548,45 +638,6 @@ public final class BslServerInstaller
         {
             walk.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
         }
-    }
-
-    /**
-     * Marks every regular file inside a launcher directory ({@code bin} on Linux and the bundled
-     * runtime, {@code MacOS} on macOS) of the unpacked distribution as executable, covering the launcher
-     * and the bundled runtime tools on POSIX systems where the zip carries no Unix permission bits.
-     *
-     * @param serverRoot the {@code bsl-ls} directory holding the unpacked distribution, not {@code null}
-     * @throws IOException if the distribution tree cannot be walked
-     */
-    private static void markBinExecutable(Path serverRoot) throws IOException
-    {
-        if (!Files.isDirectory(serverRoot))
-        {
-            return;
-        }
-        try (Stream<Path> files = Files.walk(serverRoot))
-        {
-            files.filter(Files::isRegularFile)
-                .filter(BslServerInstaller::isInExecutableDirectory)
-                .forEach(file -> file.toFile().setExecutable(true, false));
-        }
-    }
-
-    /**
-     * Tests whether a file's immediate parent directory holds executables ({@code bin} or {@code MacOS}).
-     *
-     * @param file the file to test, not {@code null}
-     * @return {@code true} if the file sits directly inside a {@code bin} or {@code MacOS} directory
-     */
-    private static boolean isInExecutableDirectory(Path file)
-    {
-        Path parent = file.getParent();
-        if (parent == null)
-        {
-            return false;
-        }
-        String parentName = String.valueOf(parent.getFileName());
-        return BIN_DIR.equals(parentName) || MACOS_DIR.equals(parentName);
     }
 
     /**
@@ -608,23 +659,14 @@ public final class BslServerInstaller
     }
 
     /**
-     * Returns the expected launcher path for the current operating system.
+     * Builds the expected native asset file name for an operating-system classifier.
      *
-     * @param serverRoot the {@code bsl-ls} directory, not {@code null}
-     * @return the launcher path, never {@code null}
+     * @param osClassifier the operating-system classifier, not {@code null}
+     * @return the asset file name, never {@code null}
      */
-    private static Path expectedExecutable(Path serverRoot)
+    private static String assetName(String osClassifier)
     {
-        String os = osClassifier();
-        if (OS_WINDOWS.equals(os))
-        {
-            return serverRoot.resolve(APP_DIR).resolve(EXE_WINDOWS);
-        }
-        if (OS_MAC.equals(os))
-        {
-            return serverRoot.resolve(APP_DIR_MAC).resolve(CONTENTS_DIR).resolve(MACOS_DIR).resolve(EXE_OTHER);
-        }
-        return serverRoot.resolve(APP_DIR).resolve(BIN_DIR).resolve(EXE_OTHER);
+        return ASSET_PREFIX + osClassifier + ZIP_SUFFIX;
     }
 
     private static String osClassifier()
