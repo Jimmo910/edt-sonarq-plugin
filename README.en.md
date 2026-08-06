@@ -236,7 +236,9 @@ Which diagnostics local analysis reports is configured on a separate page: **Pre
   rule's online documentation** link. This helps you decide whether a check is worth keeping. The
   description texts come from a catalog populated after the first local analysis or via the
   **Fetch Checks List** button (see below); until the catalog is filled, a hint to run an
-  analysis is shown instead.
+  analysis is shown instead. **In server mode** no local analysis runs, so the catalog is never
+  filled automatically — press **Fetch Checks List**, which works in either mode (it downloads the
+  BSL Language Server and reads the list from it).
 - The **Apply Recommended Profile** button and the "Duplicates EDT check: …" tooltip are
   independent of the tree's grouping — they use a separate, plugin-bundled classification of
   reasons (EDT validator duplicates, needs-tuning, not-a-good-fit, other) and disable the
