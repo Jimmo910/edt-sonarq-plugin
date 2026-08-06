@@ -12,6 +12,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -388,6 +389,57 @@ public class ProcessAnalyzeRunnerTest
             assertTrue("expected message to still contain the exit code sentence, got: " + message,
                 message.contains("exited with code"));
         }
+    }
+
+    /**
+     * The failure message quotes only the tail of the log, and must read only the tail off disk: a failing
+     * analysis of a large configuration can leave a log far bigger than anything worth holding in memory.
+     * The log written here is ~3 MB, well past the 64 KB window, so a line from its start proves the whole
+     * file was not read.
+     */
+    @Test
+    public void tailLogReturnsTheLastLinesOfALargeLogWithoutReadingItAll() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-tail-test");
+        Path logFile = scratchDir.resolve("analyze.log");
+        StringBuilder content = new StringBuilder();
+        content.append("FIRST-LINE-MARKER\n");
+        for (int i = 0; i < 50_000; i++)
+        {
+            content.append("analyzing module number ").append(i).append('\n');
+        }
+        Files.writeString(logFile, content.toString(), StandardCharsets.UTF_8);
+
+        String tail = ProcessAnalyzeRunner.tailLog(logFile);
+
+        assertEquals(20, tail.lines().count());
+        assertTrue("expected the very last written line, got: " + tail, tail.endsWith("analyzing module number 49999"));
+        assertTrue("expected the 20th line from the end, got: " + tail,
+            tail.startsWith("analyzing module number 49980"));
+        assertFalse("the tail must not contain the start of the file: " + tail, tail.contains("FIRST-LINE-MARKER"));
+    }
+
+    /**
+     * A log smaller than the tail window is returned whole, first line included - the window then starts at
+     * the beginning of the file, so nothing may be skipped as a partial line.
+     */
+    @Test
+    public void tailLogReturnsAShortLogInFull() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-short-tail-test");
+        Path logFile = scratchDir.resolve("analyze.log");
+        Files.writeString(logFile, "first\nsecond\nthird\n", StandardCharsets.UTF_8);
+
+        assertEquals("first" + System.lineSeparator() + "second" + System.lineSeparator() + "third",
+            ProcessAnalyzeRunner.tailLog(logFile));
+    }
+
+    /** A log that does not exist yields an empty tail rather than an exception out of the failure path. */
+    @Test
+    public void tailLogOfAMissingFileIsEmpty() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-missing-tail-test");
+        assertEquals("", ProcessAnalyzeRunner.tailLog(scratchDir.resolve("nope.log")));
     }
 
     /**

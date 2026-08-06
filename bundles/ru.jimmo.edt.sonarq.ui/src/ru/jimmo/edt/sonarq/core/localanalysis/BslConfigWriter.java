@@ -23,8 +23,17 @@ import com.google.gson.JsonObject;
  */
 public final class BslConfigWriter
 {
-    /** The BSL Language Server configuration file name, written under the plugin state directory. */
-    private static final String CONFIG_FILE_NAME = "bsl-ls-config.json"; //$NON-NLS-1$
+    /** The prefix of the per-project configuration file names written under the plugin state directory. */
+    private static final String CONFIG_FILE_PREFIX = "bsl-ls-config"; //$NON-NLS-1$
+
+    /** The suffix of the per-project configuration file names written under the plugin state directory. */
+    private static final String CONFIG_FILE_SUFFIX = ".json"; //$NON-NLS-1$
+
+    /**
+     * The single workspace-wide configuration file written by plugin versions up to 0.9.1, removed on the
+     * first per-project write so it does not linger in the state directory forever.
+     */
+    private static final String LEGACY_CONFIG_FILE_NAME = CONFIG_FILE_PREFIX + CONFIG_FILE_SUFFIX;
 
     private static final String DIAGNOSTICS_MEMBER = "diagnostics"; //$NON-NLS-1$
 
@@ -39,12 +48,20 @@ public final class BslConfigWriter
     }
 
     /**
-     * Writes a {@code bsl-ls-config.json} file under {@code stateDir} that disables every key in
+     * Writes a {@code bsl-ls-config<project>.json} file under {@code stateDir} that disables every key in
      * {@code disabledKeys} and/or restricts analysis to the subsystems in {@code includeSubsystems}, in
      * the shape the BSL Language Server expects:
      * {@code {"diagnostics":{"parameters":{"Key":false,...},"subsystemsFilter":{"include":["Name",...]}}}},
      * with each member present only when its input is non-empty and its entries written in sorted order.
      * Any file previously written at that path is overwritten.
+     *
+     * <p>The file name carries {@code projectKey}, because its content is partly per-project: the subsystem
+     * filter comes from the project's own binding. Up to 0.9.1 every project shared one workspace-wide
+     * {@code bsl-ls-config.json}, so refreshing project B while an analysis of project A was still running
+     * could make A run with B's subsystem filter. The name is derived the same way the per-project report
+     * directory's is ({@link SafeFileNames#segmentFor}), so a key like {@code proj:key} cannot reach the
+     * filesystem raw. Each project keeps a single, stable file - nothing accumulates per run - and the
+     * superseded workspace-wide file is removed on the first write.
      *
      * <p>This is called from {@code RefreshInputsFactory} on every project refresh once any diagnostic is
      * disabled or a subsystem filter is configured - on the UI thread for a manually triggered refresh -
@@ -54,13 +71,14 @@ public final class BslConfigWriter
      * file write on every refresh.
      *
      * @param stateDir the plugin state directory to write the config file under, not {@code null}
+     * @param projectKey the key of the project the configuration is generated for, not {@code null}
      * @param disabledKeys the diagnostic keys to disable, may be {@code null} or empty
      * @param includeSubsystems the subsystem names to restrict analysis to, may be {@code null} or empty
      * @return the written file's path, or {@code null} if both {@code disabledKeys} and
      *     {@code includeSubsystems} are {@code null} or empty and no config file is needed
      * @throws IOException if the existing file cannot be read or the new content cannot be written
      */
-    public static Path write(Path stateDir, Collection<String> disabledKeys,
+    public static Path write(Path stateDir, String projectKey, Collection<String> disabledKeys,
         Collection<String> includeSubsystems) throws IOException
     {
         boolean hasDisabled = disabledKeys != null && !disabledKeys.isEmpty();
@@ -94,13 +112,46 @@ public final class BslConfigWriter
         root.add(DIAGNOSTICS_MEMBER, diagnostics);
         String json = root.toString();
 
-        Path file = stateDir.resolve(CONFIG_FILE_NAME);
+        Path file = configFile(stateDir, projectKey);
+        deleteLegacyConfig(stateDir);
         if (isUnchanged(file, json))
         {
             return file;
         }
         Files.writeString(file, json, StandardCharsets.UTF_8);
         return file;
+    }
+
+    /**
+     * Builds the per-project configuration file path.
+     *
+     * @param stateDir the plugin state directory the config file lives under, not {@code null}
+     * @param projectKey the key of the project the configuration is generated for, not {@code null}
+     * @return the configuration file path, never {@code null}
+     */
+    private static Path configFile(Path stateDir, String projectKey)
+    {
+        return stateDir.resolve(CONFIG_FILE_PREFIX + SafeFileNames.segmentFor(projectKey) + CONFIG_FILE_SUFFIX);
+    }
+
+    /**
+     * Removes the workspace-wide configuration file older plugin versions wrote, best-effort.
+     *
+     * <p>Nothing reads it any more, so failing to remove it costs a few hundred stale bytes and must never
+     * fail the refresh that is about to run.
+     *
+     * @param stateDir the plugin state directory the legacy file lives under, not {@code null}
+     */
+    private static void deleteLegacyConfig(Path stateDir)
+    {
+        try
+        {
+            Files.deleteIfExists(stateDir.resolve(LEGACY_CONFIG_FILE_NAME));
+        }
+        catch (IOException e)
+        {
+            // Best effort - see the method javadoc.
+        }
     }
 
     /**

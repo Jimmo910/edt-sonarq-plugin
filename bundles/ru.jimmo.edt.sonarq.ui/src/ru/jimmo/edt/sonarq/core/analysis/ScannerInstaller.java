@@ -12,6 +12,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -40,6 +42,20 @@ public final class ScannerInstaller
     private static final String EXE_OTHER = "sonar-scanner"; //$NON-NLS-1$
     private static final String MARKER_FILE = ".complete"; //$NON-NLS-1$
 
+    private static final long LOCK_POLL_MILLIS = 200L;
+
+    /**
+     * Guards the whole check-install critical section of {@link #ensureScanner}.
+     *
+     * <p>Two analysis jobs for different projects can run {@link #ensureScanner} concurrently against the
+     * same state directory. Without this lock both could observe "not installed", both would delete the same
+     * {@code stateDir/scanner} tree and both would extract into it, so one caller would be handed an
+     * executable the other is still overwriting - the same race
+     * {@code BslServerInstaller#INSTALL_LOCK} guards for the language server. Package-private so the headless
+     * test fragment can hold it directly to exercise the cancellation-while-waiting path.
+     */
+    static final ReentrantLock INSTALL_LOCK = new ReentrantLock();
+
     private ScannerInstaller()
     {
     }
@@ -63,14 +79,47 @@ public final class ScannerInstaller
      * crashed run) is deleted, the archive is streamed and unpacked with a zip-slip guard, and the marker
      * is written only after the whole archive has been extracted successfully.
      *
+     * <p>The whole sequence runs under {@link #INSTALL_LOCK}, serializing concurrent callers against the same
+     * state directory (see the field javadoc); a caller blocked waiting for the lock still observes monitor
+     * cancellation promptly, via {@link #acquireInstallLock(IProgressMonitor)}, even while another caller is
+     * mid-download.
+     *
      * @param stateDir the plugin state directory to unpack under, not {@code null}
      * @param download the source of the archive bytes, not {@code null}
      * @param monitor the progress monitor checked for cancellation per entry, or {@code null}
      * @return the path to the scanner executable, never {@code null}
-     * @throws IOException if the archive cannot be read or an entry escapes the target directory
-     * @throws OperationCanceledException if the monitor is cancelled during unpacking
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, a leftover
+     *     install cannot be deleted, or the calling thread is interrupted while waiting for
+     *     {@link #INSTALL_LOCK}
+     * @throws OperationCanceledException if the monitor is cancelled while waiting for the lock or during
+     *     unpacking
      */
     public static Path ensureScanner(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
+        throws IOException
+    {
+        acquireInstallLock(monitor);
+        try
+        {
+            return install(stateDir, download, monitor);
+        }
+        finally
+        {
+            INSTALL_LOCK.unlock();
+        }
+    }
+
+    /**
+     * Performs the check-install sequence of {@link #ensureScanner}, with {@link #INSTALL_LOCK} already held.
+     *
+     * @param stateDir the plugin state directory to unpack under, not {@code null}
+     * @param download the source of the archive bytes, not {@code null}
+     * @param monitor the progress monitor checked for cancellation per entry, or {@code null}
+     * @return the path to the scanner executable, never {@code null}
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or a
+     *     leftover install cannot be deleted
+     * @throws OperationCanceledException if the monitor is cancelled during unpacking
+     */
+    private static Path install(Path stateDir, DownloadFunction download, IProgressMonitor monitor)
         throws IOException
     {
         Path scannerRoot = stateDir.resolve(SCANNER_DIR);
@@ -119,12 +168,51 @@ public final class ScannerInstaller
     }
 
     /**
+     * Acquires {@link #INSTALL_LOCK}, polling in short slices so a monitor cancellation is observed promptly
+     * even while another caller is mid-download (the critical section can run for as long as the scanner
+     * download takes).
+     *
+     * @param monitor the progress monitor checked for cancellation before and between poll attempts, or
+     *     {@code null}
+     * @throws IOException if the calling thread is interrupted while waiting for the lock
+     * @throws OperationCanceledException if the monitor is cancelled before or while waiting for the lock
+     */
+    private static void acquireInstallLock(IProgressMonitor monitor) throws IOException
+    {
+        if (monitor != null && monitor.isCanceled())
+        {
+            throw new OperationCanceledException();
+        }
+        try
+        {
+            while (!INSTALL_LOCK.tryLock(LOCK_POLL_MILLIS, TimeUnit.MILLISECONDS))
+            {
+                if (monitor != null && monitor.isCanceled())
+                {
+                    throw new OperationCanceledException();
+                }
+            }
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    /**
      * Recursively deletes a directory tree, tolerating a directory that does not exist.
      *
      * <p>Used to discard a poisoned half-extracted install (no completion marker) before retrying.
      *
+     * <p>Every single deletion is done with {@link Files#deleteIfExists}, so an entry that cannot be removed
+     * raises an {@link IOException} naming it instead of being silently skipped - the earlier
+     * {@code File#delete()} discarded that boolean, so a leftover the caller believed gone was extracted
+     * into. {@code deleteIfExists} rather than {@code delete} because an entry that disappeared on its own
+     * between the walk and the deletion is not a failure to report.
+     *
      * @param dir the directory to delete, not {@code null}
-     * @throws IOException if a file or directory cannot be deleted
+     * @throws IOException if the tree cannot be walked, or one of its entries cannot be deleted
      */
     private static void deleteRecursively(Path dir) throws IOException
     {
@@ -134,7 +222,10 @@ public final class ScannerInstaller
         }
         try (Stream<Path> walk = Files.walk(dir))
         {
-            walk.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            for (Path path : walk.sorted(Comparator.reverseOrder()).toList())
+            {
+                Files.deleteIfExists(path);
+            }
         }
     }
 

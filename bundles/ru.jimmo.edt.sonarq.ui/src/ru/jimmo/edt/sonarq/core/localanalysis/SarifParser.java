@@ -19,6 +19,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategories;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
@@ -38,6 +39,15 @@ public final class SarifParser
     private static final String SLASH = "/"; //$NON-NLS-1$
 
     private static final String EMPTY = ""; //$NON-NLS-1$
+
+    /** The BSL Language Server diagnostic type that maps onto {@link SonarIssueType#BUG}. */
+    private static final String BSL_TYPE_ERROR = "Error"; //$NON-NLS-1$
+
+    /** The BSL Language Server diagnostic type that maps onto {@link SonarIssueType#VULNERABILITY}. */
+    private static final String BSL_TYPE_VULNERABILITY = "Vulnerability"; //$NON-NLS-1$
+
+    /** The BSL Language Server diagnostic type reported as a potential security weakness. */
+    private static final String BSL_TYPE_SECURITY_HOTSPOT = "Security Hotspot"; //$NON-NLS-1$
 
     private SarifParser()
     {
@@ -67,6 +77,9 @@ public final class SarifParser
      * and stripped case-insensitively from the front of the scheme-stripped URI, tolerating a Windows
      * drive-letter case difference. An empty or {@code null} prefix leaves URIs unchanged.
      *
+     * <p>Each result's {@link SonarIssueType} is derived from the bundled diagnostic catalog (see
+     * {@link #issueTypeOf}); the catalog is loaded once per call, never per result.
+     *
      * @param json the SARIF document, not {@code null}
      * @param projectKey the SonarQube project key used to build component keys, not {@code null}
      * @param uriBasePrefix the absolute path prefix to strip from artifact URIs, may be empty or {@code null}
@@ -80,11 +93,12 @@ public final class SarifParser
         JsonArray runs = root.getAsJsonArray("runs"); //$NON-NLS-1$
         if (runs != null)
         {
+            DiagnosticCategories categories = DiagnosticCategories.load();
             for (JsonElement runElement : runs)
             {
                 JsonObject run = runElement.getAsJsonObject();
                 rules.putAll(parseRules(run));
-                issues.addAll(parseResults(run, projectKey, uriBasePrefix));
+                issues.addAll(parseResults(run, projectKey, uriBasePrefix, categories));
             }
         }
         return new SarifReport(issues, rules);
@@ -149,7 +163,8 @@ public final class SarifParser
             .replace(">", "&gt;"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    private static List<SonarIssue> parseResults(JsonObject run, String projectKey, String uriBasePrefix)
+    private static List<SonarIssue> parseResults(JsonObject run, String projectKey, String uriBasePrefix,
+        DiagnosticCategories categories)
     {
         List<SonarIssue> issues = new ArrayList<>();
         JsonArray results = run.getAsJsonArray("results"); //$NON-NLS-1$
@@ -157,23 +172,56 @@ public final class SarifParser
         {
             for (JsonElement element : results)
             {
-                issues.add(parseResult(element.getAsJsonObject(), projectKey, uriBasePrefix));
+                issues.add(parseResult(element.getAsJsonObject(), projectKey, uriBasePrefix, categories));
             }
         }
         return issues;
     }
 
-    private static SonarIssue parseResult(JsonObject result, String projectKey, String uriBasePrefix)
+    private static SonarIssue parseResult(JsonObject result, String projectKey, String uriBasePrefix,
+        DiagnosticCategories categories)
     {
         String ruleId = asString(result, "ruleId"); //$NON-NLS-1$
         String message = asMessage(result);
         SonarSeverity severity = severityFromLevel(asString(result, "level")); //$NON-NLS-1$
+        SonarIssueType type = issueTypeOf(categories.typeOf(ruleId));
         JsonObject physicalLocation = firstPhysicalLocation(result);
         String uri = normalizeUri(locationUri(physicalLocation), uriBasePrefix);
         int line = locationLine(physicalLocation);
         String componentKey = projectKey + ":" + uri; //$NON-NLS-1$
         String key = ruleId + ":" + uri + ":" + line; //$NON-NLS-1$ //$NON-NLS-2$
-        return new SonarIssue(key, ruleId, severity, SonarIssueType.CODE_SMELL, componentKey, message, line);
+        return new SonarIssue(key, ruleId, severity, type, componentKey, message, line);
+    }
+
+    /**
+     * Maps a BSL Language Server diagnostic type onto the SonarQube issue type the view filters by.
+     *
+     * <p>A local run's SARIF results carry no issue type of their own, so before this mapping every local
+     * issue was reported as a {@link SonarIssueType#CODE_SMELL} and the view's Type filter had nothing to
+     * filter. The type comes from the bundled diagnostic catalog instead (see
+     * {@link DiagnosticCategories#typeOf}), which records the language server's own classification.
+     *
+     * <p>{@code Security Hotspot} maps onto {@link SonarIssueType#VULNERABILITY}: SonarQube models hotspots
+     * as a type of their own, which this plug-in's enum - built from the server Web API's
+     * {@code BUG|VULNERABILITY|CODE_SMELL} - does not have, and the security bucket is the closest and the
+     * only one that keeps such a diagnostic visible under a security-oriented filter. An unknown or missing
+     * type (a rule the bundled catalog does not list, e.g. one added by a newer language server) falls back
+     * to {@link SonarIssueType#CODE_SMELL}, the pre-existing behavior for every diagnostic.
+     *
+     * @param bslType the bundled catalog's diagnostic type, may be empty or {@code null}
+     * @return the mapped issue type, never {@code null}
+     */
+    static SonarIssueType issueTypeOf(String bslType)
+    {
+        if (BSL_TYPE_ERROR.equalsIgnoreCase(bslType))
+        {
+            return SonarIssueType.BUG;
+        }
+        if (BSL_TYPE_VULNERABILITY.equalsIgnoreCase(bslType) || BSL_TYPE_SECURITY_HOTSPOT.equalsIgnoreCase(bslType))
+        {
+            return SonarIssueType.VULNERABILITY;
+        }
+        return SonarIssueType.CODE_SMELL;
     }
 
     private static String asMessage(JsonObject result)
@@ -213,13 +261,24 @@ public final class SarifParser
         return region != null ? asInt(region, "startLine", 0) : 0; //$NON-NLS-1$
     }
 
+    /**
+     * Maps a SARIF result level onto a SonarQube severity.
+     *
+     * <p>An absent level is <em>not</em> the lowest severity: the SARIF 2.1.0 specification defines
+     * {@code warning} as the default value of {@code result.level}, so a result that omits it is a warning
+     * and maps to {@link SonarSeverity#MAJOR}. Only a level that is present but unrecognized (including
+     * SARIF's own {@code none}) degrades to {@link SonarSeverity#INFO}.
+     *
+     * @param level the raw {@code result.level} value, {@code ""} when the member is absent
+     * @return the mapped severity, never {@code null}
+     */
     private static SonarSeverity severityFromLevel(String level)
     {
         if ("error".equals(level)) //$NON-NLS-1$
         {
             return SonarSeverity.CRITICAL;
         }
-        if ("warning".equals(level)) //$NON-NLS-1$
+        if ("warning".equals(level) || level.isEmpty()) //$NON-NLS-1$
         {
             return SonarSeverity.MAJOR;
         }

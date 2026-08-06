@@ -7,17 +7,25 @@
 package ru.jimmo.edt.sonarq.core.analysis;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -189,6 +197,163 @@ public class ScannerInstallerTest
         catch (OperationCanceledException e)
         {
             // expected
+        }
+    }
+
+    @Test
+    public void leftoverThatCannotBeDeletedIsReportedInsteadOfExtractedInto() throws IOException
+    {
+        // POSIX unlinks an open file happily, so an undeletable entry cannot be simulated there. Probed on
+        // a throwaway file, so the assumption never hides a regression in the code under test.
+        assumeTrue("this platform deletes an open file; an undeletable entry cannot be simulated",
+            canSimulateUndeletableFile(stateDir));
+        byte[] archive = validZip();
+        Path scannerRoot = stateDir.resolve("scanner");
+        Path staleExecutable = scannerRoot.resolve(executableEntry());
+        Files.createDirectories(staleExecutable.getParent());
+        Files.writeString(staleExecutable, "stale-half-extracted", StandardCharsets.UTF_8);
+        AtomicInteger downloads = new AtomicInteger();
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            return new ByteArrayInputStream(archive);
+        };
+        // A concurrent run holds the leftover open, exactly like this.
+        try (FileOutputStream held = new FileOutputStream(staleExecutable.toFile(), true))
+        {
+            try
+            {
+                ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor());
+                fail("expected an IOException naming the entry that could not be deleted");
+            }
+            catch (IOException e)
+            {
+                assertTrue("the failure must name the entry that could not be deleted, got: " + e.getMessage(),
+                    String.valueOf(e.getMessage()).contains(staleExecutable.getFileName().toString()));
+            }
+            // The discriminating assertion: a swallowed delete failure would have carried on and extracted
+            // on top of a tree it only believed it had cleaned.
+            assertEquals("the failed cleanup must abort before the archive is fetched", 0, downloads.get());
+            assertEquals("the poisoned install must not be extracted into", "stale-half-extracted",
+                Files.readString(staleExecutable, StandardCharsets.UTF_8));
+            assertFalse("a failed install must not leave a completion marker",
+                Files.exists(scannerRoot.resolve(".complete")));
+        }
+    }
+
+    /**
+     * Tells whether holding a file open on this platform really does make its deletion fail, so a test that
+     * needs an undeletable entry can skip honestly instead of asserting nothing.
+     *
+     * @param dir an existing directory to probe in
+     * @return {@code true} if an open file cannot be deleted here
+     * @throws IOException if the probe file cannot be created or cleaned up
+     */
+    private static boolean canSimulateUndeletableFile(Path dir) throws IOException
+    {
+        Path probe = Files.createTempFile(dir, "undeletable-probe", ".tmp");
+        try
+        {
+            // Deliberately java.io, not java.nio: Files.newOutputStream opens with FILE_SHARE_DELETE on
+            // Windows and would let the deletion through.
+            try (FileOutputStream held = new FileOutputStream(probe.toFile(), true))
+            {
+                Files.deleteIfExists(probe);
+                return false;
+            }
+            catch (IOException e)
+            {
+                return true;
+            }
+        }
+        finally
+        {
+            Files.deleteIfExists(probe);
+        }
+    }
+
+    @Test
+    public void concurrentEnsureScannerCallsInstallOnlyOnce() throws Exception
+    {
+        byte[] archive = validZip();
+        AtomicInteger downloads = new AtomicInteger();
+        CountDownLatch downloadStarted = new CountDownLatch(1);
+        CountDownLatch releaseDownload = new CountDownLatch(1);
+        // The second call can only ever reach this callback if the lock failed to serialize the two
+        // callers (both would then observe "not installed", both would delete the same tree and both would
+        // extract into it).
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            downloadStarted.countDown();
+            try
+            {
+                releaseDownload.await(5, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return new ByteArrayInputStream(archive);
+        };
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try
+        {
+            Future<Path> first = executor.submit(
+                () -> ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor()));
+            assertTrue("first call should have started downloading", downloadStarted.await(5, TimeUnit.SECONDS));
+
+            // The second caller must block on the install lock (held by the first, still mid-download)
+            // rather than racing it; releasing the first only after submitting the second means the second
+            // call's tryLock attempts genuinely overlap with the first holding the lock.
+            Future<Path> second = executor.submit(
+                () -> ScannerInstaller.ensureScanner(stateDir, download, new NullProgressMonitor()));
+            releaseDownload.countDown();
+
+            Path firstPath = first.get(10, TimeUnit.SECONDS);
+            Path secondPath = second.get(10, TimeUnit.SECONDS);
+
+            assertEquals(firstPath, secondPath);
+            assertEquals(1, downloads.get());
+            assertEquals(EXECUTABLE_BODY, Files.readString(firstPath, StandardCharsets.UTF_8));
+        }
+        finally
+        {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void cancelledMonitorWhileLockHeldAbortsWithoutDownloading() throws InterruptedException
+    {
+        DownloadFunction download = url ->
+        {
+            fail("must not download when the monitor is already cancelled");
+            return null;
+        };
+        NullProgressMonitor monitor = new NullProgressMonitor();
+        monitor.setCanceled(true);
+
+        // Hold the lock from this thread (reentrant, so this does not itself block) to prove the
+        // cancellation check runs before ensureScanner ever attempts to proceed with the install.
+        ScannerInstaller.INSTALL_LOCK.lock();
+        try
+        {
+            ScannerInstaller.ensureScanner(stateDir, download, monitor);
+            fail("expected OperationCanceledException");
+        }
+        catch (OperationCanceledException e)
+        {
+            // expected
+        }
+        catch (IOException e)
+        {
+            fail("expected OperationCanceledException, got IOException: " + e.getMessage());
+        }
+        finally
+        {
+            ScannerInstaller.INSTALL_LOCK.unlock();
         }
     }
 }

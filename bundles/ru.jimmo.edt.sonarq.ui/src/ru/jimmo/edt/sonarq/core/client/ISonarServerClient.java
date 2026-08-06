@@ -14,7 +14,6 @@ import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 
 /** Client for the SonarQube Web API operations used by this plug-in. */
 public interface ISonarServerClient
@@ -54,15 +53,6 @@ public interface ISonarServerClient
      * @throws SonarServerException if the call fails
      */
     IssuesPage searchIssuesPage(IssueQuery query, int page) throws SonarServerException;
-
-    /**
-     * Fetches the description of a rule.
-     *
-     * @param ruleKey the rule key, e.g. {@code bsl:MethodSize}, not {@code null}
-     * @return the rule description, never {@code null}
-     * @throws SonarServerException if the call fails
-     */
-    SonarRule showRule(String ruleKey) throws SonarServerException;
 
     /**
      * Searches projects by (partial) name.

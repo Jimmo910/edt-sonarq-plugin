@@ -304,9 +304,11 @@ public class SonarProjectPropertyPage extends PropertyPage
         {
             String key = null;
             String error = null;
-            try
+            // A one-shot lookup: the client is closed here rather than left for the garbage collector to
+            // reclaim along with its selector thread (the shared client of a refresh is not disturbed).
+            try (SonarHttpClient client = new SonarHttpClient(connection.get()))
             {
-                List<ComponentInfo> found = new SonarHttpClient(connection.get()).searchProjects(projectName);
+                List<ComponentInfo> found = client.searchProjects(projectName);
                 key = found.isEmpty() ? null : found.get(0).key();
             }
             catch (SonarServerException e)

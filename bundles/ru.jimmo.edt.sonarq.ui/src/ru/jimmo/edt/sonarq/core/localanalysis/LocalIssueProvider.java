@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
@@ -27,7 +26,6 @@ import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.scope.ChangedLines;
 import ru.jimmo.edt.sonarq.core.scope.ChangedLinesIssueFilter;
@@ -53,9 +51,8 @@ import ru.jimmo.edt.sonarq.ui.Messages;
  * executable (a user override, or a managed download via {@link BslServerInstaller}), rewrites the
  * bundled launcher's pinned JVM heap limit to {@link #maxHeapGb} (best-effort - see
  * {@link BslServerInstaller#configureHeap}), recreates a clean report directory, runs the analysis and
- * parses the resulting report, caching its rule descriptions for {@link #describeRule(String)}. Branches
- * are not a local-analysis concept: {@link #listBranches(String)} always returns an empty list and
- * {@link #branchAnalysisSupported()} always returns {@code false}.
+ * parses the resulting report. Branches are not a local-analysis concept: {@link #listBranches(String)}
+ * always returns an empty list and {@link #branchAnalysisSupported()} always returns {@code false}.
  *
  * <p>A generated checks configuration ({@code configPath}) is passed to the language server, but a
  * project-local {@code .bsl-language-server.json} always takes priority — looked up first under
@@ -84,8 +81,6 @@ public final class LocalIssueProvider implements IIssueProvider
     private static final String BSL_REPORT_DIR = "bsl-report"; //$NON-NLS-1$
     private static final String SRC_DIR_NAME = "src"; //$NON-NLS-1$
     private static final String PROJECT_CONFIG_FILE_NAME = ".bsl-language-server.json"; //$NON-NLS-1$
-    private static final String EMPTY_DESCRIPTION = ""; //$NON-NLS-1$
-    private static final int MAX_DIR_NAME_LENGTH = 80;
 
     private final String projectKey;
     private final Path projectRoot;
@@ -97,8 +92,6 @@ public final class LocalIssueProvider implements IIssueProvider
     private final BslUpdateChannel channel;
     private final AnalyzeRunner runner;
     private final BiFunction<File, String, ChangedLines> changedLinesSource;
-
-    private volatile Map<String, SonarRule> ruleCache = Map.of();
 
     /**
      * Creates the provider.
@@ -179,7 +172,7 @@ public final class LocalIssueProvider implements IIssueProvider
                 : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, channel, monitor);
             configureHeapBestEffort();
             Path srcDir = sourceDirectory();
-            Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
+            Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(SafeFileNames.segmentFor(projectKey));
             recreateOutputDir(outputDir);
             Path projectConfig = findProjectConfigFile(srcDir);
             Path effectiveConfigPath = projectConfig != null ? projectConfig : configPath;
@@ -187,7 +180,6 @@ public final class LocalIssueProvider implements IIssueProvider
             Path sarif = runner.analyze(executable, srcDir, outputDir, effectiveConfigPath, monitor);
             SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
                 projectRoot.toString());
-            ruleCache = report.rules();
             saveDiagnosticsCatalog(report);
             List<SonarIssue> issues = report.issues();
             if (baseBranch != null && !baseBranch.isBlank())
@@ -312,13 +304,6 @@ public final class LocalIssueProvider implements IIssueProvider
     }
 
     @Override
-    public SonarRule describeRule(String ruleKey)
-    {
-        SonarRule cached = ruleCache.get(ruleKey);
-        return cached != null ? cached : new SonarRule(ruleKey, ruleKey, EMPTY_DESCRIPTION);
-    }
-
-    @Override
     public List<BranchInfo> listBranches(String projectKeyArg)
     {
         return List.of();
@@ -328,30 +313,6 @@ public final class LocalIssueProvider implements IIssueProvider
     public boolean branchAnalysisSupported()
     {
         return false;
-    }
-
-    /**
-     * Turns a SonarQube project key into a safe single path segment for the report directory. Real Sonar
-     * keys routinely contain characters that are illegal or dangerous in a file name ({@code :}, {@code /},
-     * {@code ..}), and the report directory is recursively deleted before each run, so the raw key must
-     * never reach the filesystem. The key itself is still used verbatim for component-key mapping.
-     *
-     * @param key the project key, not {@code null}
-     * @return a file-name-safe segment, never {@code null} or a path-traversal token
-     */
-    private static String safeDirName(String key)
-    {
-        // Allow only letters, digits, underscore and hyphen. Dots are deliberately excluded so the name
-        // can never be "."/".." nor end in a dot (which Windows silently trims), and separators/colons
-        // become underscores - the result is always a single, contained path segment. A short hash suffix
-        // keeps the name unique and bounded even for long keys or collisions after sanitising, and a
-        // leading underscore keeps it clear of Windows reserved device names (CON, NUL, COM1, ...).
-        String cleaned = key.replaceAll("[^A-Za-z0-9_-]", "_"); //$NON-NLS-1$ //$NON-NLS-2$
-        if (cleaned.length() > MAX_DIR_NAME_LENGTH)
-        {
-            cleaned = cleaned.substring(0, MAX_DIR_NAME_LENGTH);
-        }
-        return '_' + cleaned + '_' + Integer.toHexString(key.hashCode());
     }
 
     /**

@@ -20,7 +20,6 @@ import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 
 /** Tests for {@link SonarJsonParser}. */
@@ -91,31 +90,11 @@ public class SonarJsonParserTest
     }
 
     @Test
-    public void parseRuleOnEmptyObjectYieldsEmptyFields()
-    {
-        SonarRule rule = SonarJsonParser.parseRule("{}");
-        assertEquals("", rule.key());
-        assertEquals("", rule.name());
-        assertEquals("", rule.htmlDescription());
-    }
-
-    @Test
     public void parseCeTaskOnEmptyObjectYieldsEmptyFields()
     {
         CeTask task = SonarJsonParser.parseCeTask("{}");
         assertEquals("", task.status());
         assertEquals("", task.errorMessage());
-    }
-
-    @Test
-    public void parsesRule()
-    {
-        String json = """
-            { "rule": { "key": "bsl:MethodSize", "name": "Method size", "htmlDesc": "<p>Too long</p>" } }""";
-        SonarRule rule = SonarJsonParser.parseRule(json);
-        assertEquals("bsl:MethodSize", rule.key());
-        assertEquals("Method size", rule.name());
-        assertEquals("<p>Too long</p>", rule.htmlDescription());
     }
 
     @Test

@@ -35,15 +35,16 @@ public class IssueViewerFilter extends ViewerFilter
         {
             return state.matches(entry.issue());
         }
+        // Deliberately expressed through the same count the group header displays (see
+        // IssueFilterState#countMatching): a node is shown exactly when its header would claim a non-zero
+        // number of rows, so the label and the visibility can never disagree.
         if (element instanceof IssueGroup group)
         {
-            return group.entries().stream().anyMatch(entry -> state.matches(entry.issue()));
+            return state.countMatching(group) > 0;
         }
         if (element instanceof IssueSuperGroup superGroup)
         {
-            return superGroup.groups().stream()
-                .flatMap(group -> group.entries().stream())
-                .anyMatch(entry -> state.matches(entry.issue()));
+            return state.countMatching(superGroup) > 0;
         }
         return true;
     }

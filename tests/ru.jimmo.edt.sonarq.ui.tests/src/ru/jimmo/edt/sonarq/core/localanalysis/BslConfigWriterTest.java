@@ -8,6 +8,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -30,6 +31,8 @@ import org.junit.Test;
 /** Tests for {@link BslConfigWriter}. */
 public class BslConfigWriterTest
 {
+    private static final String PROJECT_KEY = "proj:key";
+
     private Path tempDir;
 
     @After
@@ -50,7 +53,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path result = BslConfigWriter.write(tempDir, null, List.of());
+        Path result = BslConfigWriter.write(tempDir, PROJECT_KEY, null, List.of());
 
         assertNull(result);
         assertTrue(Files.list(tempDir).findAny().isEmpty());
@@ -61,7 +64,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path result = BslConfigWriter.write(tempDir, List.of(), List.of());
+        Path result = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of(), List.of());
 
         assertNull(result);
     }
@@ -71,9 +74,11 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"), List.of());
+        Path result = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("Typo", "MethodSize"), List.of());
 
-        assertEquals(tempDir.resolve("bsl-ls-config.json"), result);
+        assertTrue("expected a per-project config file name, got: " + result.getFileName(),
+            String.valueOf(result.getFileName()).startsWith("bsl-ls-config"));
+        assertEquals(tempDir, result.getParent());
         String json = Files.readString(result, StandardCharsets.UTF_8);
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         JsonObject parameters = root.getAsJsonObject("diagnostics").getAsJsonObject("parameters");
@@ -91,8 +96,8 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        BslConfigWriter.write(tempDir, List.of("First"), List.of());
-        Path result = BslConfigWriter.write(tempDir, List.of("Second"), List.of());
+        BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("First"), List.of());
+        Path result = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("Second"), List.of());
 
         String json = Files.readString(result, StandardCharsets.UTF_8);
         JsonObject parameters = JsonParser.parseString(json).getAsJsonObject()
@@ -105,13 +110,13 @@ public class BslConfigWriterTest
     public void secondWriteWithSameKeysDoesNotModifyFile() throws IOException
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
-        Path result = BslConfigWriter.write(tempDir, List.of("Typo", "MethodSize"), List.of());
+        Path result = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("Typo", "MethodSize"), List.of());
         // Push the timestamp back in time so a skipped write is distinguishable from one that merely
         // completed within the same filesystem timestamp-resolution tick.
         FileTime old = FileTime.fromMillis(Files.getLastModifiedTime(result).toMillis() - 60_000L);
         Files.setLastModifiedTime(result, old);
 
-        Path second = BslConfigWriter.write(tempDir, List.of("MethodSize", "Typo"), List.of());
+        Path second = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("MethodSize", "Typo"), List.of());
 
         assertEquals(result, second);
         assertEquals(old, Files.getLastModifiedTime(second));
@@ -122,7 +127,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path file = BslConfigWriter.write(tempDir, List.of(), List.of("ЮТДвижок",
+        Path file = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of(), List.of("ЮТДвижок",
             "Общий"));
 
         JsonObject root = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
@@ -139,7 +144,7 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        Path file = BslConfigWriter.write(tempDir, List.of("MethodSize"),
+        Path file = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("MethodSize"),
             List.of("ЮТДвижок"));
         JsonObject diag = JsonParser.parseString(Files.readString(file)).getAsJsonObject()
             .getAsJsonObject("diagnostics");
@@ -152,6 +157,56 @@ public class BslConfigWriterTest
     {
         tempDir = Files.createTempDirectory("bsl-config-writer-test");
 
-        assertNull(BslConfigWriter.write(tempDir, List.of(), List.of()));
+        assertNull(BslConfigWriter.write(tempDir, PROJECT_KEY, List.of(), List.of()));
+    }
+
+    @Test
+    public void differentProjectKeysGetTheirOwnConfigFile() throws IOException
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+
+        Path first = BslConfigWriter.write(tempDir, "projectA", List.of(), List.of("SubsystemA"));
+        Path second = BslConfigWriter.write(tempDir, "projectB", List.of(), List.of("SubsystemB"));
+
+        assertNotEquals("each project must get its own generated configuration file", first, second);
+        // The point of the separation: writing B's filter must not silently retarget an analysis of A that
+        // is still running with the path handed to it earlier.
+        assertEquals("SubsystemA", onlyIncludedSubsystem(first));
+        assertEquals("SubsystemB", onlyIncludedSubsystem(second));
+    }
+
+    @Test
+    public void projectKeyWithFileSystemHostileCharactersStaysASingleContainedFile() throws IOException
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+
+        Path file = BslConfigWriter.write(tempDir, "../../evil:key", List.of("MethodSize"), List.of());
+
+        assertEquals("the generated file must stay directly under the state directory", tempDir,
+            file.getParent());
+        assertTrue(Files.isRegularFile(file));
+    }
+
+    @Test
+    public void writeRemovesTheLegacyWorkspaceWideConfigFile() throws IOException
+    {
+        tempDir = Files.createTempDirectory("bsl-config-writer-test");
+        Path legacy = tempDir.resolve("bsl-ls-config.json");
+        Files.writeString(legacy, "{}", StandardCharsets.UTF_8);
+
+        Path file = BslConfigWriter.write(tempDir, PROJECT_KEY, List.of("MethodSize"), List.of());
+
+        assertNotEquals(legacy, file);
+        assertFalse("the superseded workspace-wide config must not linger", Files.exists(legacy));
+        assertTrue(Files.isRegularFile(file));
+    }
+
+    private static String onlyIncludedSubsystem(Path configFile) throws IOException
+    {
+        JsonArray include = JsonParser.parseString(Files.readString(configFile, StandardCharsets.UTF_8))
+            .getAsJsonObject().getAsJsonObject("diagnostics").getAsJsonObject("subsystemsFilter")
+            .getAsJsonArray("include");
+        assertEquals(1, include.size());
+        return include.get(0).getAsString();
     }
 }

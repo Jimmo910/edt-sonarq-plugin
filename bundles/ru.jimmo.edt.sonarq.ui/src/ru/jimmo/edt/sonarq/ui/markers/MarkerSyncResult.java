@@ -13,7 +13,8 @@ package ru.jimmo.edt.sonarq.ui.markers;
  *     in the project
  * @param missingFile the number of entries with a non-{@code null} relative path (see
  *     {@link ru.jimmo.edt.sonarq.ui.views.IssueEntry#relativePath()}) whose file does not exist in the
- *     project even after the pre-sync {@link org.eclipse.core.resources.IProject#refreshLocal} - i.e.
+ *     project even after that path was refreshed from disk ({@link
+ *     org.eclipse.core.resources.IResource#refreshLocal}) - i.e.
  *     issues that were mapped to a project path but still cannot show as a Problems-view marker. This is
  *     distinct from an entry whose component never mapped to a path at all, which
  *     {@link ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder#countUnmapped} already tracks and which this

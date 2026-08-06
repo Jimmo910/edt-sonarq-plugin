@@ -23,19 +23,24 @@ import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 
 /**
  * {@link ISonarServerClient} implementation on top of {@link java.net.http.HttpClient}.
  * Instances are safe for concurrent use from multiple threads.
+ *
+ * <p>Each instance owns a {@link HttpClient}, which owns a selector thread and a connection pool, so
+ * instances are meant to be shared and outlive a single request - see {@link SonarHttpClients}, which keeps
+ * one per connection configuration - and released through {@link #close()} rather than left to the garbage
+ * collector.
  */
-public final class SonarHttpClient implements ISonarServerClient
+public final class SonarHttpClient implements ISonarServerClient, AutoCloseable
 {
     private static final int PAGE_SIZE = 500;
 
     private final SonarConnection connection;
     private final HttpClient http;
     private volatile boolean useBasicAuth;
+    private volatile boolean closed;
 
     /**
      * Creates a client for the given connection.
@@ -48,6 +53,32 @@ public final class SonarHttpClient implements ISonarServerClient
         this.http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(connection.timeoutSeconds()))
             .build();
+    }
+
+    /**
+     * Releases the underlying {@link HttpClient} and its selector thread.
+     *
+     * <p>Uses {@link HttpClient#shutdownNow()} rather than {@link HttpClient#close()}: {@code close()} blocks
+     * until every in-flight exchange finishes, which would let a hung server stall whoever is disposing the
+     * client (a preference page being closed, or the plug-in stopping). Idempotent; the instance must not be
+     * used afterwards. Per-request timeouts and job cancellation are unaffected - this is a teardown call,
+     * never made while the client is still an active refresh's client (see {@link SonarHttpClients}).
+     */
+    @Override
+    public void close()
+    {
+        closed = true;
+        http.shutdownNow();
+    }
+
+    /**
+     * Tells whether {@link #close()} has been called on this client.
+     *
+     * @return {@code true} once the client has been closed
+     */
+    public boolean isClosed()
+    {
+        return closed;
     }
 
     @Override
@@ -104,12 +135,6 @@ public final class SonarHttpClient implements ISonarServerClient
             url.append("&branch=").append(encode(query.branch())); //$NON-NLS-1$
         }
         return SonarJsonParser.parseIssuesPage(get(url.toString()));
-    }
-
-    @Override
-    public SonarRule showRule(String ruleKey) throws SonarServerException
-    {
-        return SonarJsonParser.parseRule(get("/api/rules/show?key=" + encode(ruleKey))); //$NON-NLS-1$
     }
 
     @Override

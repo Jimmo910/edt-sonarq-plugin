@@ -32,6 +32,11 @@ public class IssueTreeBuilderTest
         return (IssueSuperGroup)node;
     }
 
+    private static int totalEntries(IssueSuperGroup superGroup)
+    {
+        return superGroup.groups().stream().mapToInt(group -> group.entries().size()).sum();
+    }
+
     private static SonarIssue issue(String component, String rule, int line)
     {
         return issue(component, rule, line, SonarSeverity.MAJOR);
@@ -119,15 +124,15 @@ public class IssueTreeBuilderTest
 
         assertEquals(2, nodes.size());
         assertEquals("BLOCKER", asSuper(nodes.get(0)).label());
-        assertEquals(1, asSuper(nodes.get(0)).totalEntries());
+        assertEquals(1, totalEntries(asSuper(nodes.get(0))));
         assertEquals("MAJOR", asSuper(nodes.get(1)).label());
-        assertEquals(2, asSuper(nodes.get(1)).totalEntries());
+        assertEquals(2, totalEntries(asSuper(nodes.get(1))));
     }
 
     /**
      * Issue #4: grouping by severity is a three-level tree - each severity {@link IssueSuperGroup} nests one
-     * {@link IssueGroup} per rule key (ordered alphabetically), and {@link IssueSuperGroup#totalEntries()}
-     * sums the issues across those rule groups.
+     * {@link IssueGroup} per rule key (ordered alphabetically), holding between them every issue of
+     * that severity.
      */
     @Test
     public void groupsBySeverityNestsRuleGroupsUnderEachSeverity()
@@ -145,7 +150,7 @@ public class IssueTreeBuilderTest
         assertEquals("BLOCKER", blocker.label());
         assertEquals(1, blocker.groups().size());
         assertEquals("bsl:R3", blocker.groups().get(0).label());
-        assertEquals(1, blocker.totalEntries());
+        assertEquals(1, totalEntries(blocker));
 
         IssueSuperGroup major = asSuper(nodes.get(1));
         assertEquals("MAJOR", major.label());
@@ -154,7 +159,7 @@ public class IssueTreeBuilderTest
         assertEquals(2, major.groups().get(0).entries().size());
         assertEquals("bsl:R2", major.groups().get(1).label());
         assertEquals(1, major.groups().get(1).entries().size());
-        assertEquals(3, major.totalEntries());
+        assertEquals(3, totalEntries(major));
     }
 
     @Test

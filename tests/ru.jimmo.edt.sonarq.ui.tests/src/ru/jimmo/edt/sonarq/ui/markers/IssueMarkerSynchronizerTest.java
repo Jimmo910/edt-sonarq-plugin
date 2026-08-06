@@ -13,6 +13,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import org.eclipse.core.resources.IFile;
@@ -165,6 +166,46 @@ public class IssueMarkerSynchronizerTest
 
         assertEquals(1, result.created());
         assertEquals(0, result.missingFile());
+    }
+
+    @Test
+    public void syncRefreshesAWholeMissingFolderChainSoADeeplyWrittenFileIsFound()
+        throws CoreException, IOException
+    {
+        // Not just the file: the folders leading to it are unknown to the workspace too (a git checkout
+        // outside EDT looks like this), and a resource can only be created once its parent is in the tree.
+        String newRelativePath = "src/Fresh/Deep/Module.bsl";
+        IFile newFile = project.getFile(newRelativePath);
+        Path onDisk = newFile.getLocation().toFile().toPath();
+        Files.createDirectories(onDisk.getParent());
+        Files.write(onDisk, "test".getBytes(StandardCharsets.UTF_8));
+        assertFalse(project.getFolder("src/Fresh").exists());
+        assertFalse(newFile.exists());
+
+        MarkerSyncResult result = synchronizer.sync(project,
+            List.of(new IssueEntry(issue("k16", "bsl:Rule16", SonarSeverity.MAJOR, 3), newRelativePath)));
+
+        assertEquals(1, result.created());
+        assertEquals(0, result.missingFile());
+        assertEquals(1, newFile.findMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_ZERO).length);
+    }
+
+    @Test
+    public void syncOfPresentFilesDoesNotRefreshTheRestOfTheProject() throws CoreException, IOException
+    {
+        // A file written straight to disk that no entry refers to: the full-depth project refresh this
+        // sync used to run unconditionally would have pulled it into the resource tree as a side effect.
+        // Nothing else in a sync touches the tree, so its continued absence is exactly "no full-depth
+        // refresh happened".
+        IFile unrelated = project.getFile("src/Unrelated.bsl");
+        Files.write(unrelated.getLocation().toFile().toPath(), "test".getBytes(StandardCharsets.UTF_8));
+        assertFalse(unrelated.exists());
+
+        MarkerSyncResult result = synchronizer.sync(project,
+            List.of(new IssueEntry(issue("k17", "bsl:Rule17", SonarSeverity.MAJOR, 1), RELATIVE_PATH)));
+
+        assertEquals(1, result.created());
+        assertFalse("only the files the sync is about to mark may be refreshed", unrelated.exists());
     }
 
     @Test

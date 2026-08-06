@@ -27,7 +27,6 @@ import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 
 /** Tests for {@link ServerIssueProvider}. */
@@ -39,7 +38,6 @@ public class ServerIssueProviderTest
         final List<IssuesPage> pages = new ArrayList<>();
         String edition = "community";
         int searchCalls;
-        int ruleCalls;
         int editionCalls;
 
         @Override
@@ -54,13 +52,6 @@ public class ServerIssueProviderTest
         {
             editionCalls++;
             return edition;
-        }
-
-        @Override
-        public SonarRule showRule(String ruleKey)
-        {
-            ruleCalls++;
-            return new SonarRule(ruleKey, "name", "<p/>");
         }
 
         @Override
@@ -110,12 +101,6 @@ public class ServerIssueProviderTest
         public String serverEdition()
         {
             return "community";
-        }
-
-        @Override
-        public SonarRule showRule(String ruleKey)
-        {
-            return new SonarRule(ruleKey, "name", "<p/>");
         }
 
         @Override
@@ -212,16 +197,6 @@ public class ServerIssueProviderTest
         assertEquals(12_000, snapshot.serverTotal());
         assertTrue(snapshot.truncated());
         assertEquals(20, client.searchCalls);
-    }
-
-    @Test
-    public void ruleDescriptionsAreCached() throws Exception
-    {
-        FakeClient client = new FakeClient();
-        ServerIssueProvider provider = new ServerIssueProvider(client);
-        provider.describeRule("bsl:R");
-        provider.describeRule("bsl:R");
-        assertEquals(1, client.ruleCalls);
     }
 
     @Test

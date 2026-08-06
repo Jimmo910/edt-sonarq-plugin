@@ -12,6 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -60,7 +61,7 @@ import org.eclipse.ui.part.ViewPart;
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchConfig;
 import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
-import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
+import ru.jimmo.edt.sonarq.core.client.SonarHttpClients;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
@@ -92,6 +93,15 @@ public class SonarIssuesView extends ViewPart
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss"); //$NON-NLS-1$
 
+    /** The EDT nature of a 1C configuration project (see {@link #isOneCProject}). */
+    private static final String V8_CONFIGURATION_NATURE = "com._1c.g5.v8.dt.core.V8ConfigurationNature"; //$NON-NLS-1$
+
+    /** The EDT nature of a 1C extension project (see {@link #isOneCProject}). */
+    private static final String V8_EXTENSION_NATURE = "com._1c.g5.v8.dt.core.V8ExtensionNature"; //$NON-NLS-1$
+
+    /** The conventional source folder of a 1C project (see {@link #isOneCProject}). */
+    private static final String SOURCE_FOLDER_NAME = "src"; //$NON-NLS-1$
+
     private static final int LOCATION_COLUMN_WIDTH = 260;
     private static final int SEVERITY_COLUMN_WIDTH = 90;
     private static final int RULE_COLUMN_WIDTH = 140;
@@ -117,6 +127,7 @@ public class SonarIssuesView extends ViewPart
     private Job inFlightJob;
     private TreeColumn severityColumn;
     private TreeColumn ruleColumn;
+    private final IssueColumnWidths columnWidths = new IssueColumnWidths();
 
     @Override
     public void createPartControl(Composite parent)
@@ -397,31 +408,54 @@ public class SonarIssuesView extends ViewPart
      * Hides whichever columns {@link #hiddenColumnFor} reports for the current {@link #grouping}, and
      * restores the rest. Hiding zeroes a column's width and disables resizing rather than disposing the
      * column, so the tree's column indices stay stable and {@link #createColumns()} only ever runs once.
+     *
+     * <p>Runs on every {@link #rebuildTree()}, i.e. after every refresh - including the unattended auto-sync
+     * ones - so it must not touch a column whose hidden state did not change: re-applying the designed width
+     * would throw away whatever width the user dragged the column to. {@link IssueColumnWidths} owns that
+     * decision and the remembered widths.
      */
     private void applyColumnVisibility()
     {
         Set<IssueColumn> columnsToHide = hiddenColumnFor(grouping);
-        setColumnHidden(severityColumn, SEVERITY_COLUMN_WIDTH, columnsToHide.contains(IssueColumn.SEVERITY));
-        setColumnHidden(ruleColumn, RULE_COLUMN_WIDTH, columnsToHide.contains(IssueColumn.RULE));
+        applyColumnHidden(IssueColumn.SEVERITY, severityColumn, SEVERITY_COLUMN_WIDTH,
+            columnsToHide.contains(IssueColumn.SEVERITY));
+        applyColumnHidden(IssueColumn.RULE, ruleColumn, RULE_COLUMN_WIDTH,
+            columnsToHide.contains(IssueColumn.RULE));
     }
 
-    private static void setColumnHidden(TreeColumn column, int visibleWidth, boolean hidden)
+    /**
+     * Applies one column's requested hidden state, leaving its width alone when the state did not change.
+     *
+     * @param id the column's identity in {@link #columnWidths}, not {@code null}
+     * @param column the tree column to update, not {@code null}
+     * @param defaultWidth the column's designed width, used when no user width was ever remembered
+     * @param hide {@code true} to hide the column, {@code false} to show it
+     */
+    private void applyColumnHidden(IssueColumn id, TreeColumn column, int defaultWidth, boolean hide)
     {
-        column.setWidth(hidden ? 0 : visibleWidth);
-        column.setResizable(!hidden);
+        OptionalInt width = columnWidths.widthFor(id, hide, column.getWidth(), defaultWidth);
+        if (width.isEmpty())
+        {
+            return;
+        }
+        column.setWidth(width.getAsInt());
+        column.setResizable(!hide);
     }
 
     private void createColumns()
     {
         addColumn(Messages.IssuesView_Column_Location, LOCATION_COLUMN_WIDTH, element ->
         {
+            // The counts must describe the rows actually shown under the node, not every row it holds: the
+            // tree's IssueViewerFilter hides entries rejected by the same state, so an unfiltered count would
+            // claim "File.bsl (12)" over two visible children.
             if (element instanceof IssueSuperGroup superGroup)
             {
-                return superGroup.label() + " (" + superGroup.totalEntries() + ')'; //$NON-NLS-1$
+                return superGroup.label() + " (" + state.countMatching(superGroup) + ')'; //$NON-NLS-1$
             }
             if (element instanceof IssueGroup group)
             {
-                return group.label() + " (" + group.entries().size() + ')'; //$NON-NLS-1$
+                return group.label() + " (" + state.countMatching(group) + ')'; //$NON-NLS-1$
             }
             int line = ((IssueEntry)element).issue().line();
             return line > 0 ? String.valueOf(line) : ""; //$NON-NLS-1$
@@ -709,9 +743,28 @@ public class SonarIssuesView extends ViewPart
     }
 
     /**
-     * Cancels the previous refresh or analysis job before scheduling a new one, so consecutive user
-     * actions cannot run concurrently and race on the same analyzer install, report and {@code
-     * scannerwork} directories (a real hazard in local-analysis mode where each run spawns a process).
+     * Asks the previous refresh or analysis job to cancel, then schedules and tracks the new one.
+     *
+     * <p>What this actually guarantees, precisely:
+     *
+     * <ul>
+     * <li>the previous job is <em>asked</em> to stop - {@link Job#cancel()} does not wait for it, and a job
+     * already running keeps running until its own body observes the cancelled monitor (in local-analysis mode
+     * that is bounded by {@code ProcessAnalyzeRunner}'s 500 ms poll, plus the time it takes to destroy the
+     * language-server process);</li>
+     * <li>the new job does not <em>start</em> while a job of the same project is still running, because both
+     * carry a {@link ru.jimmo.edt.sonarq.ui.sync.ProjectAnalysisRule} and the job manager holds the newcomer
+     * until the rule is free;</li>
+     * <li>a superseded job's result cannot reach the tree, because {@link #onRefreshFinished} drops any
+     * result whose {@link #refreshGeneration} is no longer current.</li>
+     * </ul>
+     *
+     * <p>What it does <em>not</em> guarantee: cross-project exclusion. Switching the selected project
+     * schedules a job under a different {@link ru.jimmo.edt.sonarq.ui.sync.ProjectAnalysisRule}, which does
+     * not conflict with the outgoing one, so the two can overlap for as long as the cancelled job takes to
+     * notice. That overlap is safe rather than merely tolerated: the report directory is per project key (see
+     * {@code LocalIssueProvider}), and the one genuinely shared resource - the managed BSL Language Server
+     * installation - is serialized by {@code BslServerInstaller}'s own install lock.
      *
      * @param job the job to schedule and track, not {@code null}
      */
@@ -772,7 +825,7 @@ public class SonarIssuesView extends ViewPart
         AnalysisLaunchConfig config = new AnalysisLaunchConfigFactory().create();
         String ciSecret = new SecureTokenStore().loadCiSecret(config.ciUrl());
         Path stateLocation = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
-        ISonarServerClient client = new SonarHttpClient(connection);
+        ISonarServerClient client = SonarHttpClients.shared(connection);
         AnalysisRequest request = new AnalysisRequest(project, binding, connection, config, requested,
             branchesSupported, ciSecret, stateLocation, client);
         scheduleTracked(new AnalysisJob(request,
@@ -1053,16 +1106,68 @@ public class SonarIssuesView extends ViewPart
         bannerComposite.getParent().layout();
     }
 
+    /**
+     * Picks the project to work on when the user has not chosen one yet, preferring a 1C project.
+     *
+     * <p>The workspace of an EDT installation holds more than configuration projects (test fragments, plain
+     * Java or documentation projects), and the projects come back in alphabetical order, so taking the first
+     * open one would routinely bind the view to a project that has no BSL sources at all. An open project is
+     * therefore only taken as-is if nothing 1C-shaped is open; the check itself stays cheap - a nature lookup
+     * and, failing that, the existence of a {@code src} folder (see {@link #isOneCProject}) - because it runs
+     * on the UI thread before every refresh.
+     *
+     * @return the preferred project, or {@code null} when the workspace has no open project at all
+     */
     private static IProject firstOpenProject()
     {
+        IProject firstOpen = null;
         for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
         {
-            if (project.isOpen())
+            if (!project.isOpen())
+            {
+                continue;
+            }
+            if (isOneCProject(project))
             {
                 return project;
             }
+            if (firstOpen == null)
+            {
+                firstOpen = project;
+            }
         }
-        return null;
+        return firstOpen;
+    }
+
+    /**
+     * Tells whether an open project looks like a 1C project this plug-in can analyze.
+     *
+     * <p>Recognizes the two EDT natures a 1C project carries - {@code V8ConfigurationNature} for a
+     * configuration and {@code V8ExtensionNature} for an extension - and, as a fallback for a project whose
+     * natures cannot be read (EDT not installed in this workbench, description not yet loaded), the
+     * conventional {@code src} source folder a 1C project keeps its BSL modules in.
+     *
+     * <p>Package-private and taking the project as an argument so the headless test fragment can drive it
+     * with real workspace projects. Never throws: an unreadable project simply is not preferred.
+     *
+     * @param project the open workspace project to test, not {@code null}
+     * @return {@code true} when the project carries an EDT nature or has a {@code src} folder
+     */
+    static boolean isOneCProject(IProject project)
+    {
+        try
+        {
+            if (project.hasNature(V8_CONFIGURATION_NATURE) || project.hasNature(V8_EXTENSION_NATURE))
+            {
+                return true;
+            }
+        }
+        catch (CoreException e)
+        {
+            // The project closed underneath us, or its description cannot be read: fall through to the
+            // layout check, which needs neither.
+        }
+        return project.getFolder(SOURCE_FOLDER_NAME).exists();
     }
 
     @Override

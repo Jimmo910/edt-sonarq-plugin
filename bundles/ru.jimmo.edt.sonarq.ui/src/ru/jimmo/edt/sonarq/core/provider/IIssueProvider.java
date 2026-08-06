@@ -15,9 +15,8 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 
-/** Source of SonarQube issues, rule descriptions and branch information for one project. */
+/** Source of SonarQube issues and branch information for one project. */
 public interface IIssueProvider
 {
     /**
@@ -30,16 +29,6 @@ public interface IIssueProvider
      * @throws OperationCanceledException if the monitor is cancelled before the fetch completes
      */
     IssueSnapshot fetchIssues(IssueQuery query, IProgressMonitor monitor) throws SonarServerException;
-
-    /**
-     * Describes a rule, using a per-instance cache so repeated calls for the same rule do not
-     * re-query the server.
-     *
-     * @param ruleKey the rule key, e.g. {@code bsl:MethodSize}, not {@code null}
-     * @return the rule description, never {@code null}
-     * @throws SonarServerException if the call fails
-     */
-    SonarRule describeRule(String ruleKey) throws SonarServerException;
 
     /**
      * Lists the branches known to the server for a project.

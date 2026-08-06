@@ -11,9 +11,11 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -653,6 +655,63 @@ public class BslServerInstallerTest
 
         assertFalse(Files.exists(stateDir.resolve("bsl-ls")));
         assertFalse(BslServerInstaller.isInstalled(stateDir));
+    }
+
+    @Test
+    public void deleteServerReportsAnEntryItCouldNotDeleteInsteadOfClaimingSuccess() throws IOException
+    {
+        // POSIX unlinks an open file happily, so an undeletable entry cannot be simulated there. Probed on
+        // a throwaway file, so the assumption never hides a regression in the code under test.
+        assumeTrue("this platform deletes an open file; an undeletable entry cannot be simulated",
+            canSimulateUndeletableFile(stateDir));
+        Path launcher = fakeInstall(BslServerInstaller.VERSION);
+        // A running analysis holds the launcher open, exactly like this.
+        try (FileOutputStream held = new FileOutputStream(launcher.toFile(), true))
+        {
+            try
+            {
+                BslServerInstaller.deleteServer(stateDir);
+                fail("expected an IOException naming the entry that could not be deleted");
+            }
+            catch (IOException e)
+            {
+                assertTrue("the failure must name the entry that could not be deleted, got: " + e.getMessage(),
+                    String.valueOf(e.getMessage()).contains(launcher.getFileName().toString()));
+            }
+            assertTrue("the engine is still installed, so it must never be reported as deleted",
+                BslServerInstaller.isInstalled(stateDir));
+        }
+    }
+
+    /**
+     * Tells whether holding a file open on this platform really does make its deletion fail, so a test that
+     * needs an undeletable entry can skip honestly instead of asserting nothing.
+     *
+     * @param dir an existing directory to probe in
+     * @return {@code true} if an open file cannot be deleted here
+     * @throws IOException if the probe file cannot be created or cleaned up
+     */
+    private static boolean canSimulateUndeletableFile(Path dir) throws IOException
+    {
+        Path probe = Files.createTempFile(dir, "undeletable-probe", ".tmp");
+        try
+        {
+            // Deliberately java.io, not java.nio: Files.newOutputStream opens with FILE_SHARE_DELETE on
+            // Windows and would let the deletion through.
+            try (FileOutputStream held = new FileOutputStream(probe.toFile(), true))
+            {
+                Files.deleteIfExists(probe);
+                return false;
+            }
+            catch (IOException e)
+            {
+                return true;
+            }
+        }
+        finally
+        {
+            Files.deleteIfExists(probe);
+        }
     }
 
     @Test

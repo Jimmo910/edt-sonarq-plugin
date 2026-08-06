@@ -52,6 +52,29 @@ public final class IssueFilterState
     }
 
     /**
+     * Counts the entries of a group that pass the current filters, i.e. the rows the tree actually shows
+     * under it (see {@link IssueViewerFilter}).
+     *
+     * @param group the group to count, not {@code null}
+     * @return the number of matching entries, zero when the group is hidden entirely
+     */
+    public long countMatching(IssueGroup group)
+    {
+        return group.entries().stream().filter(entry -> matches(entry.issue())).count();
+    }
+
+    /**
+     * Counts the entries of a super-group that pass the current filters, across all of its sub-groups.
+     *
+     * @param superGroup the super-group to count, not {@code null}
+     * @return the number of matching entries, zero when the super-group is hidden entirely
+     */
+    public long countMatching(IssueSuperGroup superGroup)
+    {
+        return superGroup.groups().stream().mapToLong(this::countMatching).sum();
+    }
+
+    /**
      * Toggles whether the given severity is included by {@link #matches(SonarIssue)}.
      *
      * @param severity the severity to toggle, not {@code null}

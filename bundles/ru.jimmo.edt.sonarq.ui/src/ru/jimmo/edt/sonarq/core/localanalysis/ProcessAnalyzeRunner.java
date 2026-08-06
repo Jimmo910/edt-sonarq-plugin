@@ -9,12 +9,17 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
@@ -81,6 +86,9 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
     private static final long PUMP_JOIN_MILLIS = 2000L;
     private static final int CHUNK_SIZE = 8192;
     private static final int LOG_TAIL_LINES = 20;
+
+    /** The size of the window read from the end of the log file by {@link #tailLog}, in bytes. */
+    private static final int LOG_TAIL_BYTES = 64 * 1024;
 
     /** The JVM max heap used when this runner is built with the no-arg constructor. */
     private static final int DEFAULT_MAX_HEAP_GB = 4;
@@ -218,21 +226,84 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
     /**
      * Reads the last {@value #LOG_TAIL_LINES} lines of the log file, for inclusion in a failure message.
      *
+     * <p>Only the final {@value #LOG_TAIL_BYTES} bytes of the file are ever read into memory. A failing
+     * analysis of a large configuration can leave a log of hundreds of megabytes - the language server prints
+     * a line per analyzed file, and a parse failure typically comes at the end of a long run - and pulling all
+     * of it into a {@code List<String>} just to keep twenty lines is exactly the wrong thing to do while
+     * reporting a failure.
+     *
+     * <p>The window is decoded as UTF-8 starting from the first line break inside it, so a multi-byte
+     * character straddling the window boundary is dropped rather than decoded as replacement characters; a
+     * window that holds no line break at all is decoded whole (a single very long line, e.g. a stack-trace
+     * free {@code IllegalStateException} banner). Package-private so the headless test fragment can drive it
+     * against a real file.
+     *
      * @param logFile the log file, not {@code null}
      * @return the tail of the log, or an empty string if it cannot be read
      */
-    private static String tailLog(Path logFile)
+    static String tailLog(Path logFile)
     {
-        try
+        try (SeekableByteChannel channel = Files.newByteChannel(logFile, StandardOpenOption.READ))
         {
-            List<String> lines = Files.readAllLines(logFile, StandardCharsets.UTF_8);
-            int from = Math.max(0, lines.size() - LOG_TAIL_LINES);
-            return String.join(System.lineSeparator(), lines.subList(from, lines.size()));
+            long size = channel.size();
+            long from = Math.max(0L, size - LOG_TAIL_BYTES);
+            ByteBuffer buffer = ByteBuffer.allocate((int)Math.min(size, LOG_TAIL_BYTES));
+            channel.position(from);
+            while (buffer.hasRemaining() && channel.read(buffer) >= 0)
+            {
+                // Reading until the requested window is full or the file ends.
+            }
+            return lastLines(decodeTail(buffer.array(), buffer.position(), from > 0L));
         }
         catch (IOException e)
         {
             return EMPTY;
         }
+    }
+
+    /**
+     * Decodes a tail window as UTF-8, skipping the partial first line when the window does not start at the
+     * beginning of the file.
+     *
+     * @param window the bytes read from the end of the file, not {@code null}
+     * @param length the number of valid bytes in {@code window}
+     * @param partialStart {@code true} when the window starts mid-file and its first line may be truncated
+     * @return the decoded text, never {@code null}
+     */
+    private static String decodeTail(byte[] window, int length, boolean partialStart)
+    {
+        int offset = 0;
+        if (partialStart)
+        {
+            while (offset < length && window[offset] != '\n')
+            {
+                offset++;
+            }
+            if (offset < length)
+            {
+                offset++;
+            }
+            else
+            {
+                // No line break in the whole window: it is one long line, so decode all of it rather than
+                // returning nothing at all.
+                offset = 0;
+            }
+        }
+        return new String(window, offset, length - offset, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Keeps the last {@value #LOG_TAIL_LINES} lines of a decoded tail window.
+     *
+     * @param tail the decoded tail window, not {@code null}
+     * @return the last lines, joined with the platform line separator, never {@code null}
+     */
+    private static String lastLines(String tail)
+    {
+        List<String> lines = tail.lines().toList();
+        int from = Math.max(0, lines.size() - LOG_TAIL_LINES);
+        return String.join(System.lineSeparator(), lines.subList(from, lines.size()));
     }
 
     /**
@@ -242,17 +313,22 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
      * {@code BslServerInstaller#configureHeap} - can be reported with an actionable hint instead of a bare
      * exit code - the language server itself gives no other indication of the cause.
      *
+     * <p>Scanned line by line rather than by reading the whole file into a {@link String}: the marker can sit
+     * anywhere in the log, so the whole file has to be looked at, but a failing run's log can be very large
+     * (see {@link #tailLog}) and only one line of it needs to be in memory at a time.
+     *
      * @param logFile the merged output log file, not {@code null}
      * @return {@code true} if the log file could be read and its content contains the marker
      */
     private static boolean logContainsOutOfMemory(Path logFile)
     {
-        try
+        try (Stream<String> lines = Files.lines(logFile, StandardCharsets.UTF_8))
         {
-            return Files.readString(logFile, StandardCharsets.UTF_8).contains(OUT_OF_MEMORY_MARKER);
+            return lines.anyMatch(line -> line.contains(OUT_OF_MEMORY_MARKER));
         }
-        catch (IOException e)
+        catch (IOException | UncheckedIOException e)
         {
+            // UncheckedIOException: Files.lines reports a malformed UTF-8 sequence lazily, while streaming.
             return false;
         }
     }

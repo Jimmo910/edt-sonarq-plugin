@@ -27,7 +27,7 @@ public final class SonarqStartup implements IStartup
     private static IPreferenceChangeListener listener;
 
     @Override
-    public void earlyStartup()
+    public synchronized void earlyStartup()
     {
         AutoSyncScheduler.applyPreferences();
         listener = SonarqStartup::onPreferenceChange;
@@ -35,11 +35,29 @@ public final class SonarqStartup implements IStartup
     }
 
     /**
+     * Tells whether this class is currently watching the plug-in's preferences, i.e. whether early start-up
+     * has run and has not been shut down since.
+     *
+     * <p>The auto-sync scheduler is normally armed from {@link #earlyStartup()} and re-armed by the listener
+     * that method registers. A user can switch this plug-in's early start-up off (Preferences &gt; General &gt;
+     * Startup and Shutdown), and then neither happens: toggling the auto-sync preference would have no effect
+     * until the next EDT restart. The preference page therefore applies the scheduler itself, but only when
+     * this returns {@code false} - when the listener is live it already does exactly that, and arming twice
+     * would cancel and reschedule the freshly armed job for nothing.
+     *
+     * @return {@code true} when the preference listener is registered
+     */
+    public static synchronized boolean isWatchingPreferences()
+    {
+        return listener != null;
+    }
+
+    /**
      * Detaches the preference listener and stops the background scheduler. Called when the plug-in stops so
      * a dynamic update or uninstall leaves no stale callback or recurring timer bound to the old class
      * loader.
      */
-    public static void shutdown()
+    public static synchronized void shutdown()
     {
         if (listener != null)
         {
