@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -90,6 +91,12 @@ public final class BslServerInstaller
     private static final int MIN_HEAP_GB = 1;
 
     private static final long LOCK_POLL_MILLIS = 200L;
+
+    /** How many times the staging-to-version rename is retried when the platform refuses it. */
+    private static final int MOVE_ATTEMPTS = 5;
+
+    /** Pause between rename attempts, long enough for a scanner to release a freshly written file. */
+    private static final long MOVE_RETRY_DELAY_MILLIS = 150L;
 
     /** Connect timeout of the HTTP client handed to the upstream downloader and its release client. */
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
@@ -685,7 +692,61 @@ public final class BslServerInstaller
         }
         Path versionDir = installDir.resolve(VERSION);
         deleteRecursively(versionDir);
-        Files.move(staging, versionDir);
+        moveIntoPlace(staging, versionDir);
+    }
+
+    /**
+     * Renames the fully extracted staging tree onto its final version directory, retrying briefly when the
+     * platform refuses the rename.
+     *
+     * <p>On Windows a file inside a freshly written tree can still be held for a moment by an antivirus or
+     * indexer scanning it, which surfaces as an {@code AccessDeniedException} (a
+     * {@link FileSystemException}) from an otherwise valid same-directory rename. That window is short, so a few spaced retries turn a spurious install failure
+     * (and a flaky test) into a successful one; a rename that keeps failing still propagates, naming the
+     * paths involved.
+     *
+     * @param staging the completed staging tree, not {@code null}
+     * @param versionDir the final version directory, which must not exist, not {@code null}
+     * @throws IOException if the rename keeps failing after the retries, or the thread is interrupted
+     */
+    private static void moveIntoPlace(Path staging, Path versionDir) throws IOException
+    {
+        for (int attempt = 1; attempt <= MOVE_ATTEMPTS; attempt++)
+        {
+            try
+            {
+                Files.move(staging, versionDir);
+                return;
+            }
+            catch (FileSystemException e)
+            {
+                if (attempt == MOVE_ATTEMPTS)
+                {
+                    throw new IOException("Cannot move " + staging + " to " + versionDir //$NON-NLS-1$ //$NON-NLS-2$
+                        + " (still locked after " + MOVE_ATTEMPTS + " attempts)", e); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                sleepBeforeRetry();
+            }
+        }
+    }
+
+    /**
+     * Waits briefly between rename attempts, restoring the interrupt flag and failing the install when the
+     * calling thread is interrupted while waiting.
+     *
+     * @throws IOException if the calling thread is interrupted
+     */
+    private static void sleepBeforeRetry() throws IOException
+    {
+        try
+        {
+            Thread.sleep(MOVE_RETRY_DELAY_MILLIS);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            throw new IOException(interrupted.getMessage(), interrupted);
+        }
     }
 
     /**
