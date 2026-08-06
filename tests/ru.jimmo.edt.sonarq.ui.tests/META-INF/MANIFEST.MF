@@ -5,6 +5,6 @@ Bundle-SymbolicName: ru.jimmo.edt.sonarq.ui.tests
 Bundle-Version: 0.8.1.qualifier
 Bundle-Vendor: Jimmo910
 Fragment-Host: ru.jimmo.edt.sonarq.ui
-Bundle-RequiredExecutionEnvironment: JavaSE-21
+Bundle-RequiredExecutionEnvironment: JavaSE-25
 Automatic-Module-Name: ru.jimmo.edt.sonarq.ui.tests
 Import-Package: org.junit;version="4.13.0"
