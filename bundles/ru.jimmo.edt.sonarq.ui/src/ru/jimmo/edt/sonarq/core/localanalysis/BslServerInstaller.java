@@ -701,9 +701,9 @@ public final class BslServerInstaller
      *
      * <p>On Windows a file inside a freshly written tree can still be held for a moment by an antivirus or
      * indexer scanning it, which surfaces as an {@code AccessDeniedException} (a
-     * {@link FileSystemException}) from an otherwise valid same-directory rename. That window is short, so a few spaced retries turn a spurious install failure
-     * (and a flaky test) into a successful one; a rename that keeps failing still propagates, naming the
-     * paths involved.
+     * {@link FileSystemException}) from an otherwise valid same-directory rename. That window is short, so
+     * a few spaced retries turn a spurious install failure (and a flaky test) into a successful one; a
+     * rename that keeps failing still propagates, naming the paths involved.
      *
      * @param staging the completed staging tree, not {@code null}
      * @param versionDir the final version directory, which must not exist, not {@code null}
