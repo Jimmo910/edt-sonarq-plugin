@@ -8,6 +8,11 @@ Bundle-Activator: ru.jimmo.edt.sonarq.ui.SonarqPlugin
 Bundle-ActivationPolicy: lazy
 Bundle-Localization: plugin
 Bundle-RequiredExecutionEnvironment: JavaSE-21
+Bundle-ClassPath: .,
+ lib/utils-0.10.1.jar,
+ lib/semver4j-6.0.0.jar,
+ lib/jspecify-1.0.0.jar,
+ lib/slf4j-api-2.0.18.jar
 Require-Bundle: org.eclipse.ui;bundle-version="[3.205.0,4.0.0)",
  org.eclipse.core.runtime;bundle-version="[3.30.0,4.0.0)",
  org.eclipse.core.resources;bundle-version="[3.20.0,4.0.0)",
