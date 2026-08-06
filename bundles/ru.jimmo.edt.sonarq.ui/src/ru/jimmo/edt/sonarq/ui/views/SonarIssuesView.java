@@ -551,6 +551,11 @@ public class SonarIssuesView extends ViewPart
      * Inserts BSL Language Server suppression comments around the issue's line, so the false-positive stops
      * being reported, then updates the tree and markers in place.
      *
+     * <p>The in-memory renumbering only runs when {@link SuppressionApplier#apply} reports it really wrote
+     * the comment pair. A refused or guarded-away edit leaves the file unchanged, so shifting the model
+     * after it would desynchronize the two and make the next suppression in the same file wrap the wrong
+     * lines; on such a no-op this action simply does nothing.
+     *
      * @param entry the issue entry to suppress, not {@code null}
      */
     private void suppressIssue(IssueEntry entry)
@@ -562,13 +567,43 @@ public class SonarIssuesView extends ViewPart
         }
         try
         {
-            SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage());
-            applySuppressionLineShift(entry);
+            if (SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage()))
+            {
+                applySuppressionLineShift(entry.issue());
+            }
         }
         catch (CoreException | BadLocationException e)
         {
             SonarqPlugin.getInstance().getLog().error(e.getMessage(), e);
         }
+    }
+
+    /**
+     * Applies the same in-place model update {@link #suppressIssue} performs, for a suppression that was
+     * applied from outside this view - the Problems view's "Suppress" quick fix (see
+     * {@code ru.jimmo.edt.sonarq.ui.suppress.SuppressMarkerResolution}). Without it the file would grow by
+     * the two comment lines while this view kept the old line numbers, which is the same desynchronization
+     * as shifting after a no-op, only from the other direction.
+     *
+     * <p>Does nothing when the view holds no issues yet, when its controls are gone, or when the suppressed
+     * issue is not part of the current snapshot (a refresh has since replaced it). Must be called on the UI
+     * thread, as marker resolutions are.
+     *
+     * @param issueKey the {@link SonarIssue#key()} of the issue that was just suppressed, may be
+     *     {@code null} or empty, in which case nothing happens
+     */
+    public void issueSuppressedExternally(String issueKey)
+    {
+        if (issueKey == null || issueKey.isEmpty() || snapshot == null || viewer == null
+            || viewer.getControl().isDisposed())
+        {
+            return;
+        }
+        snapshot.issues()
+            .stream()
+            .filter(issue -> issueKey.equals(issue.key()))
+            .findFirst()
+            .ifPresent(this::applySuppressionLineShift);
     }
 
     /**
@@ -580,18 +615,18 @@ public class SonarIssuesView extends ViewPart
      * a stale line number for it - {@link SuppressionLineShift#applyAfterSuppress} is what keeps every other
      * issue in the file numbered correctly for the comment pair {@link SuppressionApplier#apply} just wrote,
      * so this method never needs a fresh server or local-analysis round-trip to stay correct (issue #7
-     * follow-up).
+     * follow-up). Only ever called once an insertion is known to have happened.
      *
-     * @param entry the issue entry that was just suppressed, not {@code null}
+     * @param issue the issue that was just suppressed, not {@code null}
      */
-    private void applySuppressionLineShift(IssueEntry entry)
+    private void applySuppressionLineShift(SonarIssue issue)
     {
         if (snapshot == null)
         {
             return;
         }
-        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), entry.issue().key(),
-            entry.issue().componentKey(), entry.issue().line());
+        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), issue.key(),
+            issue.componentKey(), issue.line());
         snapshot = new IssueSnapshot(snapshot.query(), adjusted, adjusted.size(), snapshot.loadedAt());
         rebuildTree();
         scheduleMarkerSync();
