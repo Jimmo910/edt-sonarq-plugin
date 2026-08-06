@@ -18,13 +18,9 @@ import java.util.function.Function;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.resources.WorkspaceJob;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Platform;
-import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.preferences.IPreferencesService;
 import org.eclipse.jface.action.Action;
@@ -77,7 +73,7 @@ import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
-import ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
 import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
@@ -946,8 +942,13 @@ public class SonarIssuesView extends ViewPart
     }
 
     /**
-     * Schedules a background job that replaces the workspace markers of {@link #selectedProject} with
+     * Schedules a {@link MarkerSyncJob} that replaces the workspace markers of {@link #selectedProject} with
      * markers derived from the current {@link #snapshot}, unless the user disabled editor markers.
+     *
+     * <p>The synchronization has to happen in a job of its own, scoped to the project's resource rule,
+     * rather than in the refresh job that produced the snapshot: that job runs under a
+     * {@link ru.jimmo.edt.sonarq.ui.sync.ProjectAnalysisRule}, which contains no resource rule (see
+     * {@link MarkerSyncJob}).
      *
      * <p>Must run on the UI thread: it reads the view's fields once, into locals, before scheduling the
      * job so the job body never reads mutable view state from a background thread. Once the job completes,
@@ -968,34 +969,10 @@ public class SonarIssuesView extends ViewPart
         String projectKey = boundProjectKey;
         String pathPrefix = boundPathPrefix;
         long generation = refreshGeneration;
-        WorkspaceJob job = new WorkspaceJob(Messages.MarkerSyncJob_Name)
-        {
-            @Override
-            public IStatus runInWorkspace(IProgressMonitor monitor)
-            {
-                try
-                {
-                    List<IssueEntry> entries =
-                        IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix);
-                    MarkerSyncResult result = new IssueMarkerSynchronizer().sync(project, entries);
-                    if (result.missingFile() > 0)
-                    {
-                        Platform.getLog(SonarIssuesView.class).warn(result.missingFile()
-                            + " issue(s) resolved to a project file that does not exist even after a " //$NON-NLS-1$
-                            + "workspace refresh; they are not shown as Problems-view markers"); //$NON-NLS-1$
-                    }
-                    Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result));
-                }
-                catch (CoreException e)
-                {
-                    Platform.getLog(SonarIssuesView.class).warn(e.getMessage(), e);
-                }
-                return Status.OK_STATUS;
-            }
-        };
-        job.setRule(project);
-        job.setSystem(true);
-        job.schedule();
+        new MarkerSyncJob(project,
+            () -> IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix),
+            result -> Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result)))
+                .schedule();
     }
 
     /**

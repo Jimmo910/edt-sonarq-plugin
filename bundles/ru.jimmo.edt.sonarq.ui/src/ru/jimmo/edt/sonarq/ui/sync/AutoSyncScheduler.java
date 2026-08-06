@@ -7,10 +7,11 @@
 package ru.jimmo.edt.sonarq.ui.sync;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Platform;
@@ -20,8 +21,7 @@ import org.eclipse.core.runtime.preferences.IPreferencesService;
 
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
-import ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer;
-import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 import ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder;
@@ -141,8 +141,13 @@ public final class AutoSyncScheduler
     }
 
     /**
-     * Runs one project's refresh to completion before returning, so a whole cycle finishes before the
-     * timer reschedules and slow refreshes cannot overlap or let a stale response overwrite newer markers.
+     * Runs one project's refresh, and then its marker synchronization, to completion before returning, so a
+     * whole cycle finishes before the timer reschedules and slow refreshes cannot overlap or let a stale
+     * response overwrite newer markers.
+     *
+     * <p>The refresh job only records its result here; everything that follows runs in this thread, after
+     * {@link Job#join()}, i.e. once the refresh job and its {@link ProjectAnalysisRule} are gone. Doing the
+     * marker work in the job's callback instead would run it under that rule - see {@link #syncMarkers}.
      *
      * @param project the open workspace project to refresh, not {@code null}
      * @return {@code true} to continue the cycle, {@code false} if the thread was interrupted while waiting
@@ -155,8 +160,76 @@ public final class AutoSyncScheduler
             return true;
         }
         ProjectRefreshInputs refresh = inputs.get();
+        AtomicReference<RefreshResult> refreshed = new AtomicReference<>();
         Job job = new RefreshIssuesJob(refresh.provider(), refresh.project(), refresh.binding(), null,
-            result -> onRefreshed(refresh, result));
+            refreshed::set);
+        job.schedule();
+        try
+        {
+            job.join();
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return onRefreshed(refresh, refreshed.get());
+    }
+
+    /**
+     * Handles one finished refresh: logs a failed one, and otherwise synchronizes the project's markers
+     * unless the user disabled them - the same gate the issues view applies before it schedules its own
+     * synchronization.
+     *
+     * @param inputs the refreshed project's inputs, not {@code null}
+     * @param result the refresh outcome, or {@code null} when the refresh was cancelled before reporting one
+     * @return {@code true} to continue the cycle, {@code false} if the thread was interrupted while waiting
+     */
+    private static boolean onRefreshed(ProjectRefreshInputs inputs, RefreshResult result)
+    {
+        if (result == null)
+        {
+            // Cancelled: RefreshIssuesJob returns without ever calling the callback. Nothing to synchronize.
+            return true;
+        }
+        if (result.isError())
+        {
+            Platform.getLog(AutoSyncScheduler.class).warn(result.errorMessage());
+            return true;
+        }
+        boolean showMarkers = Platform.getPreferencesService()
+            .getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null);
+        if (!showMarkers)
+        {
+            return true;
+        }
+        return syncMarkers(inputs.project(), () -> IssueTreeBuilder.toEntries(result.snapshot().issues(),
+            inputs.mappingProjectKey(), inputs.mappingPathPrefix()));
+    }
+
+    /**
+     * Replaces one project's issue markers in a {@link MarkerSyncJob} of its own and waits for that job.
+     *
+     * <p>The synchronization must not run in the calling thread while that thread executes a job holding a
+     * {@link ProjectAnalysisRule} - as the refresh job's callback does:
+     * {@code IssueMarkerSynchronizer#sync} begins the project's resource rule, which the analysis rule does
+     * not contain, so the job manager rejects it with an {@link IllegalArgumentException} and no marker is
+     * ever updated. Handing the work to a separate job scoped to the project - exactly what
+     * {@code SonarIssuesView#scheduleMarkerSync} does - keeps it outside the analysis rule.
+     *
+     * <p>Waiting for that job preserves {@link #runRefresh}'s "one whole cycle at a time" contract. It is
+     * safe from the auto-sync job, which holds no scheduling rule of its own, and from any caller whose rule
+     * does not conflict with the project's resource rule.
+     *
+     * @param project the project whose markers are replaced, not {@code null}
+     * @param entries supplies the entries to materialize, evaluated in the synchronization job, not
+     *     {@code null}
+     * @return {@code true} when the synchronization finished, {@code false} if the thread was interrupted
+     *     while waiting
+     */
+    static boolean syncMarkers(IProject project, Supplier<List<IssueEntry>> entries)
+    {
+        MarkerSyncJob job = new MarkerSyncJob(project, entries);
         job.schedule();
         try
         {
@@ -167,37 +240,6 @@ public final class AutoSyncScheduler
         {
             Thread.currentThread().interrupt();
             return false;
-        }
-    }
-
-    private static void onRefreshed(ProjectRefreshInputs inputs, RefreshResult result)
-    {
-        if (result.isError())
-        {
-            Platform.getLog(AutoSyncScheduler.class).warn(result.errorMessage());
-            return;
-        }
-        boolean showMarkers = Platform.getPreferencesService()
-            .getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null);
-        if (!showMarkers)
-        {
-            return;
-        }
-        try
-        {
-            List<IssueEntry> entries = IssueTreeBuilder.toEntries(result.snapshot().issues(),
-                inputs.mappingProjectKey(), inputs.mappingPathPrefix());
-            MarkerSyncResult syncResult = new IssueMarkerSynchronizer().sync(inputs.project(), entries);
-            if (syncResult.missingFile() > 0)
-            {
-                Platform.getLog(AutoSyncScheduler.class).warn(syncResult.missingFile()
-                    + " issue(s) resolved to a project file that does not exist even after a workspace " //$NON-NLS-1$
-                    + "refresh; they are not shown as Problems-view markers"); //$NON-NLS-1$
-            }
-        }
-        catch (CoreException | RuntimeException e)
-        {
-            Platform.getLog(AutoSyncScheduler.class).warn(e.getMessage(), e);
         }
     }
 
