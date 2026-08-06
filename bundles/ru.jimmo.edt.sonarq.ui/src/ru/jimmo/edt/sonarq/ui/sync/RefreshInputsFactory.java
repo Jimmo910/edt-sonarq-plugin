@@ -19,7 +19,7 @@ import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.preferences.IPreferencesService;
 
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
-import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
+import ru.jimmo.edt.sonarq.core.client.SonarHttpClients;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslConfigWriter;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslUpdateChannel;
 import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
@@ -92,8 +92,11 @@ public final class RefreshInputsFactory
             return Optional.empty();
         }
         SonarConnection resolved = connection.get();
+        // Shared per connection configuration: a client owns a JDK HttpClient (selector thread, connection
+        // pool) and a refresh runs on a timer, so building one per refresh would leak one per cycle.
         return Optional.of(new ProjectRefreshInputs(project, binding, resolved,
-            new ServerIssueProvider(new SonarHttpClient(resolved)), binding.projectKey(), binding.pathPrefix()));
+            new ServerIssueProvider(SonarHttpClients.shared(resolved)), binding.projectKey(),
+            binding.pathPrefix()));
     }
 
     /**

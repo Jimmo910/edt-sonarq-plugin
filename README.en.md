@@ -372,9 +372,10 @@ same content).
   (see [issue #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
 - The subsystem filter matches by subsystem name (as the BSL Language Server itself does), so
   same-named subsystems under different parents are filtered together.
-- The first time the BSL Language Server downloader class is touched, the EDT log may show
-  `SLF4J: No SLF4J providers were found.` and similar lines - the vendored `slf4j-api` ships
-  without a provider bundle; this is expected and not an error.
+- Diagnostics from the vendored BSL Language Server downloader (`io.github.1c-syntax:utils`) go to
+  the EDT error log: the bundle ships a minimal SLF4J binding of its own
+  (`ru.jimmo.edt.sonarq.core.logging`) that forwards ERROR/WARN/INFO to `Platform.getLog`.
+  DEBUG/TRACE are dropped, so the log stays readable.
 
 ## Feedback
 

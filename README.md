@@ -381,9 +381,10 @@ mvn clean verify
   [issue #3](https://github.com/Jimmo910/edt-sonarq-plugin/issues/3)).
 - Фильтр подсистем сопоставляется по имени подсистемы (так работает сам BSL Language Server),
   поэтому одноимённые подсистемы под разными родителями фильтруются вместе.
-- При первом обращении к загрузчику движка BSL Language Server в логе EDT может появиться
-  `SLF4J: No SLF4J providers were found.` и похожие строки — у вендоренного `slf4j-api` нет
-  бандла-провайдера; это ожидаемо и не является ошибкой.
+- Диагностика вендоренного загрузчика движка BSL Language Server (`io.github.1c-syntax:utils`)
+  пишется в журнал ошибок EDT: в бандле есть собственная минимальная привязка SLF4J
+  (`ru.jimmo.edt.sonarq.core.logging`), которая передаёт уровни ERROR/WARN/INFO в
+  `Platform.getLog`. Уровни DEBUG/TRACE отбрасываются, чтобы не засорять журнал.
 
 ## Обратная связь
 

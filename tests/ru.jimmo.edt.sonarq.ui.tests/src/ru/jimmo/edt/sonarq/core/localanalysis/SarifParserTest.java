@@ -177,8 +177,10 @@ public class SarifParserTest
     }
 
     @Test
-    public void missingLevelMapsToInfo()
+    public void missingLevelMapsToMajorLikeAWarning()
     {
+        // SARIF 2.1.0 defines "warning" as the default value of result.level, so an omitted level is a
+        // warning (MAJOR), not the lowest severity there is.
         String json = """
             {
               "runs": [
@@ -201,7 +203,61 @@ public class SarifParserTest
               ]
             }""";
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
-        assertEquals(SonarSeverity.INFO, report.issues().get(0).severity());
+        assertEquals(SonarSeverity.MAJOR, report.issues().get(0).severity());
+    }
+
+    @Test
+    public void bslDiagnosticTypesMapOntoSonarIssueTypes()
+    {
+        assertEquals(SonarIssueType.BUG, SarifParser.issueTypeOf("Error")); //$NON-NLS-1$
+        assertEquals(SonarIssueType.VULNERABILITY, SarifParser.issueTypeOf("Vulnerability")); //$NON-NLS-1$
+        assertEquals(SonarIssueType.VULNERABILITY, SarifParser.issueTypeOf("Security Hotspot")); //$NON-NLS-1$
+        assertEquals(SonarIssueType.CODE_SMELL, SarifParser.issueTypeOf("Code smell")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void unknownOrMissingBslDiagnosticTypeFallsBackToCodeSmell()
+    {
+        assertEquals(SonarIssueType.CODE_SMELL, SarifParser.issueTypeOf("")); //$NON-NLS-1$
+        assertEquals(SonarIssueType.CODE_SMELL, SarifParser.issueTypeOf(null));
+        assertEquals(SonarIssueType.CODE_SMELL, SarifParser.issueTypeOf("Something new")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void resultTypeComesFromTheBundledDiagnosticCatalog()
+    {
+        // The three rule keys below are bundled in resources/bsl-diagnostic-categories.json with the BSL
+        // Language Server types Error, Vulnerability and Code smell respectively; NoSuchDiagnosticEver is
+        // not in the catalog at all and must fall back to CODE_SMELL.
+        SarifReport report = SarifParser.parse(typedResultsJson(), PROJECT_KEY);
+        assertEquals(SonarIssueType.BUG, report.issues().get(0).type());
+        assertEquals(SonarIssueType.VULNERABILITY, report.issues().get(1).type());
+        assertEquals(SonarIssueType.CODE_SMELL, report.issues().get(2).type());
+        assertEquals(SonarIssueType.CODE_SMELL, report.issues().get(3).type());
+    }
+
+    private static String typedResultsJson()
+    {
+        String result = """
+            {
+              "ruleId": "%s",
+              "level": "warning",
+              "message": { "text": "m" },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": { "uri": "src/Module.bsl" },
+                    "region": { "startLine": 1 }
+                  }
+                }
+              ]
+            }""";
+        return "{ \"runs\": [ { \"results\": [" //$NON-NLS-1$
+            + result.formatted("UsingHardcodePath") + ',' //$NON-NLS-1$
+            + result.formatted("UsingHardcodeSecretInformation") + ',' //$NON-NLS-1$
+            + result.formatted("MethodSize") + ',' //$NON-NLS-1$
+            + result.formatted("NoSuchDiagnosticEver") //$NON-NLS-1$
+            + "] } ] }"; //$NON-NLS-1$
     }
 
     @Test

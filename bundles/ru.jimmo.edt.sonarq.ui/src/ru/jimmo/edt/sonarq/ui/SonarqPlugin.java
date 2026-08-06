@@ -9,6 +9,8 @@ package ru.jimmo.edt.sonarq.ui;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
 
+import ru.jimmo.edt.sonarq.core.client.SonarHttpClients;
+
 /**
  * The plug-in activator: holds the shared instance and the plug-in id.
  */
@@ -40,6 +42,9 @@ public class SonarqPlugin extends AbstractUIPlugin
     public void stop(BundleContext context) throws Exception
     {
         SonarqStartup.shutdown();
+        // Releases the shared server client's selector thread, so a dynamic update or uninstall of this
+        // bundle leaves no thread bound to its old class loader.
+        SonarHttpClients.closeAll();
         instance = null;
         super.stop(context);
     }

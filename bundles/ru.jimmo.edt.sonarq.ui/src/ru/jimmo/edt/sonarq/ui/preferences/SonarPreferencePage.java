@@ -52,8 +52,10 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
+import ru.jimmo.edt.sonarq.ui.SonarqStartup;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
+import ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler;
 
 /** Workspace-level SonarQube connection preferences. */
 public class SonarPreferencePage extends PreferencePage implements IWorkbenchPreferencePage
@@ -598,10 +600,12 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         Job job = Job.create(Messages.PreferencePage_TestConnection, monitor ->
         {
             String message;
-            try
+            // A one-shot probe of settings the user has not saved yet, so it gets a client of its own
+            // (rather than the shared one, which would be keyed to a half-typed URL) and closes it here
+            // instead of leaving its selector thread to the garbage collector.
+            try (SonarHttpClient client = new SonarHttpClient(connection))
             {
-                message = NLS.bind(Messages.PreferencePage_TestSuccess,
-                    new SonarHttpClient(connection).serverVersion());
+                message = NLS.bind(Messages.PreferencePage_TestSuccess, client.serverVersion());
             }
             catch (SonarServerException e)
             {
@@ -651,6 +655,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         try
         {
             node.flush();
+            applyAutoSyncIfUnwatched();
             SecureTokenStore tokenStore = new SecureTokenStore();
             tokenStore.saveToken(serverUrl, tokenText.getText().trim());
             tokenStore.saveCiSecret(ciUrl, ciSecretText.getText().trim());
@@ -661,5 +666,23 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
             return false;
         }
         return true;
+    }
+
+    /**
+     * Applies the just-saved auto-sync preferences to the background scheduler when nothing else will.
+     *
+     * <p>The scheduler is normally armed by {@link SonarqStartup#earlyStartup()} and re-armed by the
+     * preference listener it registers. A user who turns this plug-in's early start-up off (Preferences &gt;
+     * General &gt; Startup and Shutdown) gets neither, and the auto-sync check box on this page would then do
+     * nothing at all until EDT is restarted. Applying it here closes that hole; the
+     * {@link SonarqStartup#isWatchingPreferences()} guard keeps the normal case a single arming, since the
+     * listener has already reacted to the {@code node.put} calls above.
+     */
+    private static void applyAutoSyncIfUnwatched()
+    {
+        if (!SonarqStartup.isWatchingPreferences())
+        {
+            AutoSyncScheduler.applyPreferences();
+        }
     }
 }

@@ -7,10 +7,17 @@
 package ru.jimmo.edt.sonarq.ui.views;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.EnumSet;
 
+import org.eclipse.core.resources.IFolder;
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.junit.Test;
@@ -101,5 +108,57 @@ public class SonarIssuesViewTest
     {
         assertEquals(EnumSet.noneOf(SonarIssuesView.IssueColumn.class),
             SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_FILE));
+    }
+
+    /**
+     * A project with the conventional {@code src} folder is recognized as a 1C project, so the view prefers
+     * it over whatever project happens to sort first in the workspace.
+     */
+    @Test
+    public void projectWithSourceFolderIsRecognizedAsOneCProject() throws CoreException
+    {
+        IProject project = createProject("sonarq-view-src-project", true);
+        try
+        {
+            assertTrue(SonarIssuesView.isOneCProject(project));
+        }
+        finally
+        {
+            project.delete(true, true, new NullProgressMonitor());
+        }
+    }
+
+    /** A project with neither an EDT nature nor a {@code src} folder is not preferred. */
+    @Test
+    public void projectWithoutNatureOrSourceFolderIsNotAOneCProject() throws CoreException
+    {
+        IProject project = createProject("sonarq-view-plain-project", false);
+        try
+        {
+            assertFalse(SonarIssuesView.isOneCProject(project));
+        }
+        finally
+        {
+            project.delete(true, true, new NullProgressMonitor());
+        }
+    }
+
+    private static IProject createProject(String name, boolean withSourceFolder) throws CoreException
+    {
+        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(name);
+        if (!project.exists())
+        {
+            project.create(new NullProgressMonitor());
+        }
+        project.open(new NullProgressMonitor());
+        if (withSourceFolder)
+        {
+            IFolder folder = project.getFolder("src");
+            if (!folder.exists())
+            {
+                folder.create(true, true, new NullProgressMonitor());
+            }
+        }
+        return project;
     }
 }

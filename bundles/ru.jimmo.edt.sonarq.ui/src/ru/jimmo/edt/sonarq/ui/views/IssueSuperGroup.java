@@ -20,13 +20,7 @@ import java.util.List;
  */
 public record IssueSuperGroup(String label, List<IssueGroup> groups)
 {
-    /**
-     * Counts every issue under this severity, across all of its rule groups.
-     *
-     * @return the sum of the {@link IssueGroup#entries()} sizes of {@link #groups()}
-     */
-    public int totalEntries()
-    {
-        return groups.stream().mapToInt(group -> group.entries().size()).sum();
-    }
+    // The header count of such a node is not the raw number of issues it holds but the number the active
+    // filters leave visible, so it lives with the filter state (see IssueFilterState#countMatching) rather
+    // than here.
 }
