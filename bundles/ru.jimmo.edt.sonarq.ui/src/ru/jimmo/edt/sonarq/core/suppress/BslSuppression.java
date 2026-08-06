@@ -81,22 +81,29 @@ public final class BslSuppression
      * it.</li>
      * </ul>
      *
+     * <p>The return value reports which of the two happened, because a caller that keeps its own in-memory
+     * line numbers (see {@link SuppressionLineShift}) must only renumber them when the document really did
+     * grow by the two comment lines: shifting after a no-op desynchronizes the caller's model from the file
+     * and makes the next suppression wrap the wrong lines.
+     *
      * @param document the document to edit, not {@code null}
      * @param line1Based the 1-based line number of the flagged line
      * @param ruleKey the rule key, bare or {@code bsl:}-prefixed, not {@code null}
+     * @return {@code true} when the off/on comment pair was inserted, {@code false} when one of the two
+     *     guards above made this call a no-op and the document was left untouched
      * @throws BadLocationException when {@code line1Based} is out of the document's range
      */
-    public static void insert(IDocument document, int line1Based, String ruleKey) throws BadLocationException
+    public static boolean insert(IDocument document, int line1Based, String ruleKey) throws BadLocationException
     {
         int line0 = line1Based - 1;
         if (isBslSuppressionComment(trimmedLineOf(document, line0)))
         {
-            return;
+            return false;
         }
         String off = offComment(ruleKey);
         if (isAlreadySuppressed(document, line0, off))
         {
-            return;
+            return false;
         }
         String indentation = leadingWhitespaceOf(document, line0);
         String delimiter = lineDelimiterOf(document, line0);
@@ -108,6 +115,7 @@ public final class BslSuppression
         IRegion targetRegion = document.getLineInformation(line0 + 1);
         int insertOnAt = targetRegion.getOffset() + targetRegion.getLength();
         document.replace(insertOnAt, 0, delimiter + indentation + onComment(ruleKey));
+        return true;
     }
 
     /**

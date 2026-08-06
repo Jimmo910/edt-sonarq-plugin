@@ -7,6 +7,8 @@
 package ru.jimmo.edt.sonarq.core.suppress;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.eclipse.jface.text.Document;
 import org.eclipse.jface.text.IDocument;
@@ -64,12 +66,22 @@ public class BslSuppressionTest
     }
 
     @Test
+    public void insertReportsTheInsertionItPerformed() throws Exception
+    {
+        IDocument document = new Document("Процедура П()\n    А = 1;\nКонецПроцедуры\n");
+
+        assertTrue(BslSuppression.insert(document, 2, "MagicNumber"));
+    }
+
+    @Test
     public void insertIsANoOpWhenTheLineIsAlreadySuppressed() throws Exception
     {
         String already = "Процедура П()\n    // BSLLS:MagicNumber-off\n    А = 1;\nКонецПроцедуры\n";
         IDocument document = new Document(already);
 
-        BslSuppression.insert(document, 3, "MagicNumber");
+        // The return value is what tells the caller not to renumber its in-memory issues (see
+        // SuppressionDesyncRegressionTest): the document below is unchanged, so the model must be too.
+        assertFalse(BslSuppression.insert(document, 3, "MagicNumber"));
 
         assertEquals(already, document.get());
     }
@@ -80,7 +92,7 @@ public class BslSuppressionTest
         String withComment = "Процедура П()\n    // BSLLS:OtherRule-off\n    А = 1;\nКонецПроцедуры\n";
         IDocument document = new Document(withComment);
 
-        BslSuppression.insert(document, 2, "MagicNumber");
+        assertFalse(BslSuppression.insert(document, 2, "MagicNumber"));
 
         assertEquals(withComment, document.get());
     }
@@ -93,10 +105,10 @@ public class BslSuppressionTest
         // The first call wraps line 2; the second call, still targeting line 2, would otherwise wrap the
         // freshly inserted off-comment itself (an off/off/on/.../on mess) instead of being a no-op.
         IDocument document = new Document("Процедура П()\n    А = 1;\nКонецПроцедуры\n");
-        BslSuppression.insert(document, 2, "MagicNumber");
+        assertTrue(BslSuppression.insert(document, 2, "MagicNumber"));
         String afterFirstInsert = document.get();
 
-        BslSuppression.insert(document, 2, "OtherRule");
+        assertFalse(BslSuppression.insert(document, 2, "OtherRule"));
 
         assertEquals(afterFirstInsert, document.get());
     }
