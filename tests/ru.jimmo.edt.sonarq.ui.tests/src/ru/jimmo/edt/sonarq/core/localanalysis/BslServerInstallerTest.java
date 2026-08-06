@@ -8,6 +8,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -37,6 +39,8 @@ import org.eclipse.core.runtime.OperationCanceledException;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import com.github._1c_syntax.utils.downloader.DownloadProgressListener;
 
 import ru.jimmo.edt.sonarq.core.analysis.DownloadFunction;
 
@@ -659,6 +663,165 @@ public class BslServerInstallerTest
         // No exception means success; nothing else to assert.
     }
 
+    @Test
+    public void installedVersionComparesVersionsSemanticallyNotLexicographically() throws IOException
+    {
+        fakeInstall("1.0.4");
+        fakeInstall("1.0.10");
+
+        assertEquals("1.0.10 is newer than 1.0.4, even though it sorts below it as a string",
+            Optional.of("1.0.10"), BslServerInstaller.installedVersion(stateDir));
+    }
+
+    @Test
+    public void installedVersionPrefersAParseableVersionOverAnUnparseableDirectoryName() throws IOException
+    {
+        fakeInstall("nightly");
+        fakeInstall("1.0.10");
+
+        assertEquals(Optional.of("1.0.10"), BslServerInstaller.installedVersion(stateDir));
+    }
+
+    @Test
+    public void installedVersionFallsBackToLexicographicOrderForUnparseableNames() throws IOException
+    {
+        fakeInstall("nightly-a");
+        fakeInstall("nightly-b");
+
+        assertEquals(Optional.of("nightly-b"), BslServerInstaller.installedVersion(stateDir));
+    }
+
+    @Test
+    public void fixedInstallRemovesOtherVersionDirectories() throws IOException
+    {
+        // A version an earlier STABLE-channel run installed; switching the channel back to FIXED must not
+        // leave it behind, or installedVersion would report a version the analysis does not run (and the
+        // ~350 MB it occupies would leak).
+        Path superseded = fakeInstall("9.9.9");
+        byte[] archive = validZip();
+        DownloadFunction download = url -> new ByteArrayInputStream(archive);
+
+        Path executable =
+            BslServerInstaller.ensureServer(stateDir, download, BslUpdateChannel.FIXED, new NullProgressMonitor());
+
+        assertEquals(pinnedLauncher(), executable);
+        assertTrue(Files.exists(executable));
+        assertFalse("the superseded version directory must be removed", Files.exists(superseded));
+        assertFalse(Files.exists(stateDir.resolve("bsl-ls").resolve("9.9.9")));
+        assertEquals(Optional.of(BslServerInstaller.VERSION), BslServerInstaller.installedVersion(stateDir));
+    }
+
+    @Test
+    public void configureHeapIgnoresACfgLeftBehindInAStagingTree() throws IOException
+    {
+        // A staging tree from an interrupted install sorts before the version directories on most file
+        // systems, so an unfiltered walk would rewrite its cfg and leave the running engine at its old heap.
+        Path stagingCfg = stateDir.resolve("bsl-ls")
+            .resolve(".staging-" + BslServerInstaller.VERSION)
+            .resolve("app")
+            .resolve("bsl-language-server.cfg");
+        Files.createDirectories(stagingCfg.getParent());
+        Files.writeString(stagingCfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+        Path installedCfg = stateDir.resolve("bsl-ls")
+            .resolve(BslServerInstaller.VERSION)
+            .resolve("app")
+            .resolve("bsl-language-server.cfg");
+        Files.createDirectories(installedCfg.getParent());
+        Files.writeString(installedCfg, "[JavaOptions]\njava-options=-Xmx4g\n");
+
+        BslServerInstaller.configureHeap(stateDir, 8);
+
+        assertTrue("the installed version's cfg must be the one rewritten",
+            Files.readString(installedCfg, StandardCharsets.UTF_8).contains("java-options=-Xmx8g"));
+        assertFalse("the staging tree must be left untouched",
+            Files.readString(stagingCfg, StandardCharsets.UTF_8).contains("-Xmx8g"));
+    }
+
+    @Test
+    public void managedInstalledBinaryThatDoesNotExistFallsBackToTheFloor() throws IOException
+    {
+        byte[] archive = validZip();
+        AtomicInteger downloads = new AtomicInteger();
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            return new ByteArrayInputStream(archive);
+        };
+        // An upstream lookup reporting a launcher that is not on disk (a deleted install it still records)
+        // must not be handed out as the analysis executable.
+        Path phantom = stateDir.resolve("bsl-ls").resolve("7.7.7").resolve(launcherEntry());
+
+        Path result = BslServerInstaller.installWithFallback(() ->
+        {
+            throw new IOException("offline");
+        }, () -> Optional.of(phantom), stateDir.resolve("bsl-ls"), download, new NullProgressMonitor());
+
+        assertEquals(pinnedLauncher(), result);
+        assertTrue(Files.exists(result));
+        assertEquals(1, downloads.get());
+    }
+
+    @Test
+    public void cancellationOnTheSecondCheckAbortsInsideTheExtractionLoop() throws IOException
+    {
+        byte[] archive = validZip();
+        AtomicInteger downloads = new AtomicInteger();
+        DownloadFunction download = url ->
+        {
+            downloads.incrementAndGet();
+            return new ByteArrayInputStream(archive);
+        };
+        // The floor's own pre-check is the first isCanceled() call, so a monitor that only reports itself
+        // cancelled from the second call on can only be caught by the per-entry check inside the unpacking
+        // loop - the path the pre-checks otherwise hide.
+        CountingMonitor monitor = new CountingMonitor(2);
+
+        try
+        {
+            BslServerInstaller.installWithFallback(() ->
+            {
+                throw new IOException("offline");
+            }, Optional::empty, stateDir.resolve("bsl-ls"), download, monitor);
+            fail("expected OperationCanceledException from the extraction loop");
+        }
+        catch (OperationCanceledException e)
+        {
+            // expected
+        }
+        assertEquals("the abort must happen after the archive stream was opened, that is inside the loop", 1,
+            downloads.get());
+        assertFalse("a cancelled install must not leave a version directory behind",
+            Files.exists(stateDir.resolve("bsl-ls").resolve(BslServerInstaller.VERSION)));
+    }
+
+    @Test
+    public void progressListenerCancelsTheUpstreamDownloadWhenTheMonitorIsCancelled()
+    {
+        RecordingMonitor monitor = new RecordingMonitor();
+        DownloadProgressListener listener = BslServerInstaller.progressListener(monitor);
+
+        listener.onProgress(256L * 1024L, 170L * 1024L * 1024L);
+        listener.onProgress(512L * 1024L, 170L * 1024L * 1024L);
+        assertEquals("the download sub-task must be reported once, not per chunk", 1, monitor.subTasks.size());
+
+        monitor.setCanceled(true);
+        try
+        {
+            listener.onProgress(768L * 1024L, 170L * 1024L * 1024L);
+            fail("expected OperationCanceledException once the monitor is cancelled");
+        }
+        catch (OperationCanceledException e)
+        {
+            // expected: the upstream downloader turns it into an aborted download with the partial file gone
+        }
+    }
+
+    @Test
+    public void progressListenerWithoutAMonitorIsTheUpstreamNoOp()
+    {
+        assertSame(DownloadProgressListener.NONE, BslServerInstaller.progressListener(null));
+    }
+
     /**
      * Writes a launcher into the versioned layout, as either the upstream downloader or the pinned floor
      * would leave it.
@@ -673,5 +836,38 @@ public class BslServerInstallerTest
         Files.createDirectories(launcher.getParent());
         Files.writeString(launcher, LAUNCHER_BODY, StandardCharsets.UTF_8);
         return launcher;
+    }
+
+    /** A monitor that reports itself cancelled only from its {@code cancelAtCall}-th cancellation check on. */
+    private static final class CountingMonitor
+        extends NullProgressMonitor
+    {
+        private final int cancelAtCall;
+        private int calls;
+
+        CountingMonitor(int cancelAtCall)
+        {
+            this.cancelAtCall = cancelAtCall;
+        }
+
+        @Override
+        public boolean isCanceled()
+        {
+            calls++;
+            return calls >= cancelAtCall;
+        }
+    }
+
+    /** A monitor recording the sub-task names reported to it. */
+    private static final class RecordingMonitor
+        extends NullProgressMonitor
+    {
+        private final List<String> subTasks = new ArrayList<>();
+
+        @Override
+        public void subTask(String name)
+        {
+            subTasks.add(name);
+        }
     }
 }

@@ -425,21 +425,16 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
      * Refreshes {@link #engineStatusLabel} to reflect whether the managed BSL Language Server distribution
      * is currently installed under the plugin state directory (issue #4 point 1), showing the installed
      * version when it is known. Cheap: only scans the version directories under the state directory (see
-     * {@link BslServerInstaller#installedVersion}), never touches the network.
+     * {@link BslServerInstaller#installedVersion}), never touches the network - and scans them exactly once,
+     * since "installed" is precisely "a version was found" ({@code isInstalled} is that same scan).
      */
     private void refreshEngineStatus()
     {
         Path stateDir = Path.of(SonarqPlugin.getInstance().getStateLocation().toOSString());
-        boolean installed = BslServerInstaller.isInstalled(stateDir);
-        if (!installed)
-        {
-            engineStatusLabel.setText(Messages.PreferencePage_EngineNotInstalled);
-            return;
-        }
         Optional<String> version = BslServerInstaller.installedVersion(stateDir);
         engineStatusLabel.setText(version.isPresent()
             ? NLS.bind(Messages.SonarPrefs_BslEngine_InstalledVersion, version.get())
-            : Messages.PreferencePage_EngineInstalled);
+            : Messages.PreferencePage_EngineNotInstalled);
     }
 
     /**

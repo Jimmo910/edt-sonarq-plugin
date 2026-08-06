@@ -27,6 +27,7 @@ import java.util.zip.ZipInputStream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
+import org.semver4j.Semver;
 
 import com.github._1c_syntax.utils.downloader.BslLanguageServerDownloader;
 import com.github._1c_syntax.utils.downloader.BslLanguageServerReleaseChannel;
@@ -163,6 +164,9 @@ public final class BslServerInstaller
      * recorded in {@code SERVER-INFO} - it would miss a {@code FIXED}-channel install written by
      * {@link #ensureServer}. Scanning the version directories sees both. Network-free and lock-free.
      *
+     * <p>"Newest" is decided by semantic version, not by directory name: sorting the names as plain strings
+     * would rank {@code 1.0.4} above {@code 1.0.10} and report a superseded engine as the installed one.
+     *
      * @param stateDir the plugin state directory the server would be unpacked under, not {@code null}
      * @return the installed version (the newest one if several are present), or empty if none is installed
      */
@@ -178,7 +182,7 @@ public final class BslServerInstaller
             return children.filter(Files::isDirectory)
                 .map(child -> String.valueOf(child.getFileName()))
                 .filter(name -> !name.startsWith(HIDDEN_PREFIX))
-                .sorted(Comparator.reverseOrder())
+                .sorted(BslServerInstaller::compareVersionsNewestFirst)
                 .filter(version -> Files.exists(binaryPath(installDir, version, osClassifier())))
                 .findFirst();
         }
@@ -378,11 +382,46 @@ public final class BslServerInstaller
             // An update check must never break the analysis: fall through to the offline fallbacks below.
         }
         Optional<Path> installed = installedBinary.get();
-        if (installed.isPresent())
+        // The upstream lookup does filter by existence, but this method's contract - never return a path
+        // that does not exist - must hold locally, whatever an upstream version decides to report.
+        if (installed.isPresent() && Files.exists(installed.get()))
         {
             return installed.get();
         }
         return ensureFixedInstall(installDir, download, monitor);
+    }
+
+    /**
+     * Orders version directory names newest first, semantically.
+     *
+     * <p>Directory names are release versions such as {@code 1.0.10}, so they must be compared as semantic
+     * versions ({@code 1.0.10} is newer than {@code 1.0.4}, while lexicographically it sorts below it). A
+     * name that is not a semantic version at all - anything a user or a future upstream layout may drop next
+     * to the version directories - is ranked below every parseable one and, among its own kind, compared
+     * lexicographically, so the ordering stays total and never throws.
+     *
+     * @param left the first directory name, not {@code null}
+     * @param right the second directory name, not {@code null}
+     * @return a negative number if {@code left} is the newer version, positive if {@code right} is, zero if
+     *     they rank equal
+     */
+    private static int compareVersionsNewestFirst(String left, String right)
+    {
+        Semver leftVersion = Semver.parse(left);
+        Semver rightVersion = Semver.parse(right);
+        if (leftVersion != null && rightVersion != null)
+        {
+            return rightVersion.compareTo(leftVersion);
+        }
+        if (leftVersion != null)
+        {
+            return -1;
+        }
+        if (rightVersion != null)
+        {
+            return 1;
+        }
+        return right.compareTo(left);
     }
 
     /**
@@ -441,10 +480,13 @@ public final class BslServerInstaller
      * invoked once per 256 KB chunk, so it stays allocation-light and reports the download sub-task only
      * once, on the first chunk, rather than on every callback.
      *
+     * <p>Package-private so the headless test fragment can drive the listener directly and assert that a
+     * cancelled monitor really does raise {@link OperationCanceledException} out of it.
+     *
      * @param monitor the progress monitor checked for cancellation, or {@code null}
      * @return the listener to hand to the upstream downloader, never {@code null}
      */
-    private static DownloadProgressListener progressListener(IProgressMonitor monitor)
+    static DownloadProgressListener progressListener(IProgressMonitor monitor)
     {
         if (monitor == null)
         {
@@ -473,6 +515,14 @@ public final class BslServerInstaller
      * from its release-download URL through {@code download} and unpacked into
      * {@code installDir/<VERSION>/}.
      *
+     * <p>Reached both directly (the {@code FIXED} channel, whose caller already checked the monitor) and as
+     * the offline floor of {@link #installWithFallback}, where the monitor may have been cancelled during the
+     * failed managed attempt - hence the cancellation check of its own, before the ~170 MB connection is
+     * opened. A successful install also removes the other version directories, the way the upstream
+     * downloader does for its own channels: leaving a newer directory next to the pinned one would make
+     * {@link #installedVersion} report a version the analysis does not actually run, on top of wasting the
+     * ~350 MB it occupies.
+     *
      * @param installDir the {@code bsl-ls} directory to install under, not {@code null}
      * @param download the source of the archive bytes, not {@code null}
      * @param monitor the progress monitor checked for cancellation, or {@code null}
@@ -484,6 +534,10 @@ public final class BslServerInstaller
     private static Path ensureFixedInstall(Path installDir, DownloadFunction download, IProgressMonitor monitor)
         throws IOException
     {
+        if (monitor != null && monitor.isCanceled())
+        {
+            throw new OperationCanceledException();
+        }
         Path binary = binaryPath(installDir, VERSION, osClassifier());
         if (Files.exists(binary))
         {
@@ -500,7 +554,53 @@ public final class BslServerInstaller
         {
             throw new IOException("BSL Language Server launcher missing after unpacking: " + binary); //$NON-NLS-1$
         }
+        removeOtherVersions(installDir, VERSION);
         return binary;
+    }
+
+    /**
+     * Deletes every version directory under {@code installDir} except {@code keptVersion}, mirroring the
+     * cleanup the upstream downloader performs after it installs a new version.
+     *
+     * <p>Purely housekeeping, and therefore best-effort in full: the pinned launcher is already in place and
+     * usable by the time this runs, so a directory that cannot be enumerated or deleted (a file locked by a
+     * still-running analysis on Windows, for example) must only cost disk space, never fail the install.
+     * Hidden entries are left alone - {@code .staging-*} belongs to an install in flight, not to this
+     * cleanup.
+     *
+     * @param installDir the {@code bsl-ls} directory holding the version directories, not {@code null}
+     * @param keptVersion the version directory to keep, not {@code null}
+     */
+    private static void removeOtherVersions(Path installDir, String keptVersion)
+    {
+        try (Stream<Path> children = Files.list(installDir))
+        {
+            children.filter(Files::isDirectory)
+                .filter(child -> !String.valueOf(child.getFileName()).startsWith(HIDDEN_PREFIX))
+                .filter(child -> !keptVersion.equals(String.valueOf(child.getFileName())))
+                .forEach(BslServerInstaller::deleteQuietly);
+        }
+        catch (IOException | RuntimeException e)
+        {
+            // Best effort - see the method javadoc.
+        }
+    }
+
+    /**
+     * Deletes a directory tree, swallowing every failure.
+     *
+     * @param dir the directory to delete, not {@code null}
+     */
+    private static void deleteQuietly(Path dir)
+    {
+        try
+        {
+            deleteRecursively(dir);
+        }
+        catch (IOException | RuntimeException e)
+        {
+            // Best effort - see removeOtherVersions.
+        }
     }
 
     /**
@@ -569,6 +669,10 @@ public final class BslServerInstaller
      * Looks for a file named {@code bsl-language-server.cfg} anywhere under {@code installDir}, at
      * whatever depth the current jpackage layout nests it at (see {@link #configureHeap}).
      *
+     * <p>Hidden directories are skipped, so a {@code .staging-<VERSION>} tree left behind by an interrupted
+     * install cannot win the walk over a real installed version and swallow the heap rewrite - hidden
+     * entries sort before the version directories on most file systems, so it would win by default.
+     *
      * @param installDir the {@code bsl-ls} directory holding the unpacked distribution, not {@code null}
      * @return the found configuration file, or {@code null} if {@code installDir} does not exist or holds
      *     no such file
@@ -584,9 +688,30 @@ public final class BslServerInstaller
         {
             return walk.filter(Files::isRegularFile)
                 .filter(path -> CFG_FILE_NAME.equals(String.valueOf(path.getFileName())))
+                .filter(path -> !isUnderHiddenDirectory(installDir, path))
                 .findFirst()
                 .orElse(null);
         }
+    }
+
+    /**
+     * Tells whether any directory between {@code installDir} and {@code file} is a hidden one, by name.
+     *
+     * @param installDir the walk root the path is relative to, not {@code null}
+     * @param file a file found under {@code installDir}, not {@code null}
+     * @return {@code true} if one of the directories leading to {@code file} starts with a dot
+     */
+    private static boolean isUnderHiddenDirectory(Path installDir, Path file)
+    {
+        Path relative = installDir.relativize(file);
+        for (int i = 0; i < relative.getNameCount() - 1; i++)
+        {
+            if (String.valueOf(relative.getName(i)).startsWith(HIDDEN_PREFIX))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

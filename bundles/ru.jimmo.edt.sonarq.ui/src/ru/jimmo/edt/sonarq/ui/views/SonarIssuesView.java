@@ -659,9 +659,9 @@ public class SonarIssuesView extends ViewPart
      * before a local-analysis refresh job is scheduled, whenever the engine is not installed yet under the
      * plugin state directory - so the ~170 MB first-run download is visible immediately instead of silently
      * happening behind an unrelated-looking status line (issue #4 point 1). The check itself is cheap: it
-     * only stats a file and reads a marker (see {@link BslServerInstaller#isInstalled}), never touches the
-     * network. Whichever way the scheduled job ends, {@link #onRefreshFinished} overwrites this text once it
-     * completes.
+     * only lists the version directories under the state directory and stats a launcher in them (see
+     * {@link BslServerInstaller#isInstalled}), never touches the network. Whichever way the scheduled job
+     * ends, {@link #onRefreshFinished} overwrites this text once it completes.
      */
     private void showEngineDownloadHintIfNeeded()
     {

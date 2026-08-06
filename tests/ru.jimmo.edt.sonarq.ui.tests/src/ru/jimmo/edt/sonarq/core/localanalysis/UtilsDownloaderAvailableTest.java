@@ -30,7 +30,7 @@ public class UtilsDownloaderAvailableTest
     @Test
     public void downloaderClassLoadsNotJustResolves() throws Exception
     {
-        // Regression guard: before the EDT 2026.2 retarget (BREE JavaSE-21), loading this
+        // Regression guard: before the EDT 2026.2 retarget (BREE JavaSE-25), loading this
         // class on the plugin's JVM threw UnsupportedClassVersionError because utils was
         // compiled for Java 21 while EDT ran on 17. Class.forName here actually LOADS and
         // links the class (unlike a compile-time reference), so it catches that failure mode.
