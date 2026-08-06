@@ -146,6 +146,7 @@ public final class Messages extends NLS
     public static String RefreshJob_LocalName;
     public static String RefreshJob_Name;
     public static String RulePanel_Loading;
+    public static String SonarPrefs_BslEngine_InstalledVersion;
     public static String SonarPrefs_BslLsUpdateChannel_Fixed;
     public static String SonarPrefs_BslLsUpdateChannel_Label;
     public static String SonarPrefs_BslLsUpdateChannel_Prerelease;
