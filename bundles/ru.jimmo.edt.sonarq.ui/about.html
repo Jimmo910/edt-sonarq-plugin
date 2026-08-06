@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>About SonarQ in EDT</title>
+</head>
+<body>
+
+<h2>About This Content</h2>
+
+<p>The plug-in <em>SonarQ in EDT</em> (<code>ru.jimmo.edt.sonarq.ui</code>) is licensed under the
+<a href="https://www.eclipse.org/legal/epl-2.0/">Eclipse Public License 2.0</a> (EPL-2.0).</p>
+
+<h3>Third-Party Content</h3>
+
+<p>This plug-in redistributes the following third-party libraries as separate, unmodified JAR files
+under <code>lib/</code>, listed on the bundle's <code>Bundle-ClassPath</code>. Each remains under its
+own license; the licenses below apply to those JAR files and not to the plug-in's own code.</p>
+
+<table border="1" cellpadding="6" cellspacing="0">
+<tr><th>Library</th><th>Version</th><th>License</th><th>Source</th></tr>
+<tr>
+  <td>io.github.1c-syntax:utils<br>(BSL Language Server downloader)</td>
+  <td>0.10.1</td>
+  <td>GNU Lesser General Public License v3.0 or later<br>(<a href="licenses/LGPL-3.0.txt">LGPL-3.0</a>,
+      which incorporates the <a href="licenses/GPL-3.0.txt">GPL-3.0</a> by reference)</td>
+  <td><a href="https://github.com/1c-syntax/utils">github.com/1c-syntax/utils</a></td>
+</tr>
+<tr>
+  <td>org.semver4j:semver4j</td><td>6.0.0</td><td>MIT</td>
+  <td><a href="https://github.com/semver4j/semver4j">github.com/semver4j/semver4j</a></td>
+</tr>
+<tr>
+  <td>org.slf4j:slf4j-api</td><td>2.0.18</td><td>MIT</td>
+  <td><a href="https://www.slf4j.org/">slf4j.org</a></td>
+</tr>
+<tr>
+  <td>org.jspecify:jspecify</td><td>1.0.0</td><td>Apache License 2.0</td>
+  <td><a href="https://jspecify.dev/">jspecify.dev</a></td>
+</tr>
+</table>
+
+<h3>Note on the LGPL component (LGPL-3.0 section 4)</h3>
+
+<p>The <code>utils</code> library is used as an unmodified library and is shipped as a separate JAR file
+inside this bundle. Its source code is available from the project page linked above. A user may replace
+that JAR with a modified or different build of the same library by editing the bundle's
+<code>lib/</code> directory and its <code>Bundle-ClassPath</code> entry, and the plug-in will continue to
+function; no relinking of the plug-in's own code is required.</p>
+
+</body>
+</html>

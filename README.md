@@ -3,8 +3,8 @@
 [![CI](https://github.com/Jimmo910/edt-sonarq-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Jimmo910/edt-sonarq-plugin/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Jimmo910/edt-sonarq-plugin?sort=semver)](https://github.com/Jimmo910/edt-sonarq-plugin/releases)
 [![License: EPL 2.0](https://img.shields.io/badge/License-EPL_2.0-blue.svg)](LICENSE)
-[![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](#требования)
-[![1C:EDT 2026.1](https://img.shields.io/badge/1C%3AEDT-2026.1-brightgreen.svg)](#требования)
+[![Java 25](https://img.shields.io/badge/Java-25-orange.svg)](#требования)
+[![1C:EDT 2026.2](https://img.shields.io/badge/1C%3AEDT-2026.2-brightgreen.svg)](#требования)
 
 [English](README.en.md) | **Русский**
 
@@ -43,8 +43,9 @@ SonarQube через Web API и учитывает ветки там, где э�
 
 ## Требования
 
-- 1C:Enterprise Development Tools **2026.1** (target-платформа сборки).
-- Java 17 — та, на которой уже работает EDT (отдельно устанавливать не нужно).
+- 1C:Enterprise Development Tools **2026.2 и новее**. Более ранние версии не поддерживаются: начиная с 0.9.0 плагин
+  требует Java 25, а EDT 2026.1 и старше работают на Java 17. Для EDT 2026.1 используйте версию плагина **0.8.1**.
+- Java 25 — та, на которой уже работает EDT 2026.2 (идёт в её комплекте, отдельно устанавливать не нужно).
 - Для режима сервера — сервер SonarQube с уже проанализированным BSL-проектом (например,
   анализ на CI с плагином
   [sonar-bsl-plugin-community](https://github.com/1c-syntax/sonar-bsl-plugin-community)).
@@ -67,7 +68,7 @@ SonarQube через Web API и учитывает ветки там, где э�
 <каталог-EDT>/1cedtc.exe -nosplash -application org.eclipse.equinox.p2.director ^
   -repository file:/<путь-к-распакованному-репозиторию> ^
   -installIU ru.jimmo.edt.sonarq.feature.feature.group ^
-  -vm <путь-к-jdk17>/bin/javaw.exe
+  -vm <путь-к-jdk25>/bin/javaw.exe
 ```
 
 ## Как открыть окно
@@ -341,10 +342,10 @@ https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline?token=<trigger_
 
 ## Сборка из исходников
 
-Нужны **JDK 17** и **Maven 3.9.4 или новее** (проверяется сборкой; Maven wrapper не входит в комплект).
+Нужны **JDK 25** и **Maven 3.9.4 или новее** (проверяется сборкой; Maven wrapper не входит в комплект).
 
 ```powershell
-$env:JAVA_HOME = '<путь-к-jdk-17>'
+$env:JAVA_HOME = '<путь-к-jdk-25>'
 mvn clean verify
 ```
 

@@ -3,8 +3,8 @@
 [![CI](https://github.com/Jimmo910/edt-sonarq-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/Jimmo910/edt-sonarq-plugin/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Jimmo910/edt-sonarq-plugin?sort=semver)](https://github.com/Jimmo910/edt-sonarq-plugin/releases)
 [![License: EPL 2.0](https://img.shields.io/badge/License-EPL_2.0-blue.svg)](LICENSE)
-[![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](#requirements)
-[![1C:EDT 2026.1](https://img.shields.io/badge/1C%3AEDT-2026.1-brightgreen.svg)](#requirements)
+[![Java 25](https://img.shields.io/badge/Java-25-orange.svg)](#requirements)
+[![1C:EDT 2026.2](https://img.shields.io/badge/1C%3AEDT-2026.2-brightgreen.svg)](#requirements)
 
 **English** | [Русский](README.md)
 
@@ -42,8 +42,9 @@ against the project's sources, with no server involved.
 
 ## Requirements
 
-- 1C:Enterprise Development Tools **2026.1** (the build target platform).
-- Java 17 — the one EDT already runs on (no separate install needed).
+- 1C:Enterprise Development Tools **2026.2 or newer**. Earlier versions are not supported: since 0.9.0 the plugin
+  requires Java 25, while EDT 2026.1 and older run on Java 17. For EDT 2026.1 use plugin version **0.8.1**.
+- Java 25 — the one EDT 2026.2 already runs on (bundled with it, no separate install needed).
 - For server mode — a SonarQube server with an already-analyzed BSL project (for example,
   analyzed on CI with
   [sonar-bsl-plugin-community](https://github.com/1c-syntax/sonar-bsl-plugin-community)).
@@ -66,7 +67,7 @@ against the project's sources, with no server involved.
 <edt-install>/1cedtc.exe -nosplash -application org.eclipse.equinox.p2.director ^
   -repository file:/<path-to-extracted-repository> ^
   -installIU ru.jimmo.edt.sonarq.feature.feature.group ^
-  -vm <path-to-jdk17>/bin/javaw.exe
+  -vm <path-to-jdk25>/bin/javaw.exe
 ```
 
 ## Opening the view
@@ -332,10 +333,10 @@ markers from it. No SonarQube server and no Java are needed.
 
 ## Building from source
 
-Requires **JDK 17** and **Maven 3.9.4 or newer** (enforced by the build; there is no Maven wrapper).
+Requires **JDK 25** and **Maven 3.9.4 or newer** (enforced by the build; there is no Maven wrapper).
 
 ```powershell
-$env:JAVA_HOME = '<path-to-jdk-17>'
+$env:JAVA_HOME = '<path-to-jdk-25>'
 mvn clean verify
 ```
 
