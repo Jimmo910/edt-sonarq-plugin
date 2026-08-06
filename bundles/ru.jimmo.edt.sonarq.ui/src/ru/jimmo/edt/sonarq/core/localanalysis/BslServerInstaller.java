@@ -601,6 +601,11 @@ public final class BslServerInstaller
     /**
      * Deletes a directory tree, swallowing every failure.
      *
+     * <p>The one deliberately best-effort deletion in this class, and the only caller is
+     * {@link #removeOtherVersions}: a superseded version directory that cannot be removed costs disk space
+     * and nothing else. Every other deletion goes through {@link #deleteRecursively} directly, so its failure
+     * reaches the caller.
+     *
      * @param dir the directory to delete, not {@code null}
      */
     private static void deleteQuietly(Path dir)
@@ -624,10 +629,16 @@ public final class BslServerInstaller
      * a later call would mistake for a complete one - which is what the {@code .complete} marker used to
      * guard before the versioned layout replaced it.
      *
+     * <p>Both cleanups - the stale staging tree and the version directory being replaced - propagate their
+     * failures: an entry that cannot be deleted is reported by name, instead of letting the {@link
+     * Files#move} that follows fail with a {@code FileAlreadyExistsException} that names the directory rather
+     * than the file actually holding it.
+     *
      * @param installDir the {@code bsl-ls} directory to install under, not {@code null}
      * @param download the source of the archive bytes, not {@code null}
      * @param monitor the progress monitor checked for cancellation, or {@code null}
-     * @throws IOException if the archive cannot be read or an entry escapes the target directory
+     * @throws IOException if the archive cannot be read, an entry escapes the target directory, or a stale
+     *     staging or version directory cannot be deleted before the new tree is moved into place
      * @throws OperationCanceledException if the monitor is cancelled during unpacking
      */
     private static void extractDistribution(Path installDir, DownloadFunction download, IProgressMonitor monitor)
@@ -807,8 +818,17 @@ public final class BslServerInstaller
     /**
      * Recursively deletes a directory tree, tolerating a directory that does not exist.
      *
+     * <p>Every single deletion is done with {@link Files#deleteIfExists}, so an entry that cannot be removed
+     * raises an {@link IOException} naming it instead of being silently skipped: the caller must be able to
+     * tell "deleted" from "left behind". The earlier {@code File#delete()} discarded that boolean, which made
+     * {@link #deleteServer} report success while the engine was still installed - on Windows a running
+     * analysis holds {@code bsl-language-server.exe} open - and turned a failed pre-move cleanup in
+     * {@link #extractDistribution} into a cryptic {@code FileAlreadyExistsException} from the move that
+     * followed, naming the wrong file. {@code deleteIfExists} rather than {@code delete} because an entry
+     * that disappeared on its own between the walk and the deletion is not a failure to report.
+     *
      * @param dir the directory to delete, not {@code null}
-     * @throws IOException if the tree cannot be walked
+     * @throws IOException if the tree cannot be walked, or one of its entries cannot be deleted
      */
     private static void deleteRecursively(Path dir) throws IOException
     {
@@ -818,7 +838,10 @@ public final class BslServerInstaller
         }
         try (Stream<Path> walk = Files.walk(dir))
         {
-            walk.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            for (Path path : walk.sorted(Comparator.reverseOrder()).toList())
+            {
+                Files.deleteIfExists(path);
+            }
         }
     }
 

@@ -85,7 +85,6 @@ public final class LocalIssueProvider implements IIssueProvider
     private static final String SRC_DIR_NAME = "src"; //$NON-NLS-1$
     private static final String PROJECT_CONFIG_FILE_NAME = ".bsl-language-server.json"; //$NON-NLS-1$
     private static final String EMPTY_DESCRIPTION = ""; //$NON-NLS-1$
-    private static final int MAX_DIR_NAME_LENGTH = 80;
 
     private final String projectKey;
     private final Path projectRoot;
@@ -179,7 +178,7 @@ public final class LocalIssueProvider implements IIssueProvider
                 : BslServerInstaller.ensureServer(stateDir, TimeoutDownloads::open, channel, monitor);
             configureHeapBestEffort();
             Path srcDir = sourceDirectory();
-            Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(safeDirName(projectKey));
+            Path outputDir = stateDir.resolve(BSL_REPORT_DIR).resolve(SafeFileNames.segmentFor(projectKey));
             recreateOutputDir(outputDir);
             Path projectConfig = findProjectConfigFile(srcDir);
             Path effectiveConfigPath = projectConfig != null ? projectConfig : configPath;
@@ -328,30 +327,6 @@ public final class LocalIssueProvider implements IIssueProvider
     public boolean branchAnalysisSupported()
     {
         return false;
-    }
-
-    /**
-     * Turns a SonarQube project key into a safe single path segment for the report directory. Real Sonar
-     * keys routinely contain characters that are illegal or dangerous in a file name ({@code :}, {@code /},
-     * {@code ..}), and the report directory is recursively deleted before each run, so the raw key must
-     * never reach the filesystem. The key itself is still used verbatim for component-key mapping.
-     *
-     * @param key the project key, not {@code null}
-     * @return a file-name-safe segment, never {@code null} or a path-traversal token
-     */
-    private static String safeDirName(String key)
-    {
-        // Allow only letters, digits, underscore and hyphen. Dots are deliberately excluded so the name
-        // can never be "."/".." nor end in a dot (which Windows silently trims), and separators/colons
-        // become underscores - the result is always a single, contained path segment. A short hash suffix
-        // keeps the name unique and bounded even for long keys or collisions after sanitising, and a
-        // leading underscore keeps it clear of Windows reserved device names (CON, NUL, COM1, ...).
-        String cleaned = key.replaceAll("[^A-Za-z0-9_-]", "_"); //$NON-NLS-1$ //$NON-NLS-2$
-        if (cleaned.length() > MAX_DIR_NAME_LENGTH)
-        {
-            cleaned = cleaned.substring(0, MAX_DIR_NAME_LENGTH);
-        }
-        return '_' + cleaned + '_' + Integer.toHexString(key.hashCode());
     }
 
     /**

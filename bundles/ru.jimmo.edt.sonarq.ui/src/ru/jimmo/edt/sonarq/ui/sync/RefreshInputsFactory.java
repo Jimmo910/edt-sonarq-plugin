@@ -119,7 +119,7 @@ public final class RefreshInputsFactory
         String overridePath = service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_BSL_LS_PATH,
             "", null); //$NON-NLS-1$
         Path override = overridePath.isBlank() ? null : Path.of(overridePath.trim());
-        Path configPath = resolveConfigPath(stateDir, service, binding.subsystems());
+        Path configPath = resolveConfigPath(stateDir, projectKey, service, binding.subsystems());
         int maxHeapGb = resolveMaxHeapGb(service);
         BslUpdateChannel channel = resolveUpdateChannel(service);
         LocalIssueProvider provider = new LocalIssueProvider(projectKey, projectRoot, stateDir, override,
@@ -165,13 +165,15 @@ public final class RefreshInputsFactory
     /**
      * Resolves the generated checks configuration path from
      * {@link PreferenceConstants#PREF_DISABLED_BSL_DIAGNOSTICS} and {@code includeSubsystems}, writing it
-     * under the plugin state directory.
+     * under the plugin state directory, in a file named after {@code projectKey}: the subsystem filter it
+     * carries is per-project, so two projects must never share one file (see {@link BslConfigWriter#write}).
      *
      * <p>A failure to write the configuration file must never fail the refresh: it is logged and
      * {@code null} is returned, so the analysis simply runs with every diagnostic enabled and no subsystem
      * restriction instead.
      *
      * @param stateDir the plugin state directory to write the configuration file under, not {@code null}
+     * @param projectKey the effective project key the configuration is generated for, not {@code null}
      * @param service the preferences service to read the disabled-diagnostics preference from, not
      *     {@code null}
      * @param includeSubsystems the subsystem names to restrict analysis to, from the project binding, not
@@ -179,7 +181,7 @@ public final class RefreshInputsFactory
      * @return the generated configuration path, or {@code null} when neither diagnostics are disabled nor
      *     subsystems are restricted, or the configuration file could not be written
      */
-    private static Path resolveConfigPath(Path stateDir, IPreferencesService service,
+    private static Path resolveConfigPath(Path stateDir, String projectKey, IPreferencesService service,
         Collection<String> includeSubsystems)
     {
         String stored = service.getString(SonarqPlugin.PLUGIN_ID,
@@ -195,7 +197,7 @@ public final class RefreshInputsFactory
         }
         try
         {
-            return BslConfigWriter.write(stateDir, disabled, includeSubsystems);
+            return BslConfigWriter.write(stateDir, projectKey, disabled, includeSubsystems);
         }
         catch (IOException e)
         {
