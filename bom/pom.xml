@@ -50,7 +50,7 @@
   </ciManagement>
 
   <properties>
-    <tycho.version>4.0.13</tycho.version>
+    <tycho.version>5.0.3</tycho.version>
     <checkstyle.version>11.1.0</checkstyle.version>
     <jacoco.version>0.8.15</jacoco.version>
     <maven.checkstyle.version>3.6.0</maven.checkstyle.version>
@@ -59,9 +59,9 @@
     <maven.help.version>3.5.2</maven.help.version>
 
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>17</maven.compiler.source>
-    <maven.compiler.target>17</maven.compiler.target>
-    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.source>25</maven.compiler.source>
+    <maven.compiler.target>25</maven.compiler.target>
+    <maven.compiler.release>25</maven.compiler.release>
   </properties>
 
   <build>
@@ -72,7 +72,7 @@
           <artifactId>target-platform-configuration</artifactId>
           <version>${tycho.version}</version>
           <configuration>
-            <executionEnvironment>JavaSE-17</executionEnvironment>
+            <executionEnvironment>JavaSE-25</executionEnvironment>
             <target>
               <artifact>
                 <groupId>ru.jimmo.edt.sonarq</groupId>
@@ -93,6 +93,15 @@
                 <requirement>
                   <type>eclipse-plugin</type>
                   <id>org.apache.aries.spifly.dynamic.bundle</id>
+                  <versionRange>0.0.0</versionRange>
+                </requirement>
+                <!-- JFace 3.38 (EDT 2026.2 / Eclipse 4.38) declares Require-Capability
+                     eclipse.swt;filter:="(image.format=svg)"; the provider bundle is not pulled
+                     transitively by the sliced target, so the whole workbench stack fails to
+                     resolve without it. -->
+                <requirement>
+                  <type>eclipse-plugin</type>
+                  <id>org.eclipse.swt.svg</id>
                   <versionRange>0.0.0</versionRange>
                 </requirement>
               </extraRequirements>
@@ -200,7 +209,7 @@
             <configuration>
               <rules>
                 <requireJavaVersion>
-                  <version>[17,18)</version>
+                  <version>[25,26)</version>
                 </requireJavaVersion>
                 <requireMavenVersion>
                   <version>[3.9.4,)</version>
