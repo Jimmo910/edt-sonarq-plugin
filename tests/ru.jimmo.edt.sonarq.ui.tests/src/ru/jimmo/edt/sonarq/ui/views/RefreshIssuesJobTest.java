@@ -32,7 +32,6 @@ import ru.jimmo.edt.sonarq.core.localanalysis.LocalIssueProvider;
 import ru.jimmo.edt.sonarq.core.model.BranchInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.ui.Messages;
@@ -61,12 +60,6 @@ public class RefreshIssuesJobTest
             }
             lastQuery = query;
             return new IssueSnapshot(query, List.of(), 0, Instant.now());
-        }
-
-        @Override
-        public SonarRule describeRule(String ruleKey)
-        {
-            return new SonarRule(ruleKey, "", "");
         }
 
         @Override

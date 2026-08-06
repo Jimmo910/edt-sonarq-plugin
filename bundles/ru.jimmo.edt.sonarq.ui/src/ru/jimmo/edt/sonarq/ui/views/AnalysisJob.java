@@ -37,6 +37,7 @@ import ru.jimmo.edt.sonarq.core.analysis.ReportTaskParser;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerCommandBuilder;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerInstaller;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerLaunch;
+import ru.jimmo.edt.sonarq.core.analysis.SecretScrubber;
 import ru.jimmo.edt.sonarq.core.analysis.TimeoutDownloads;
 import ru.jimmo.edt.sonarq.core.analysis.Processes;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
@@ -73,7 +74,8 @@ public class AnalysisJob extends Job
     private static final long PUMP_JOIN_MILLIS = 2000L;
     private static final long POLL_INTERVAL_MILLIS = 3000L;
     private static final long POLL_STEP_MILLIS = 200L;
-    private static final long POLL_TOTAL_MILLIS = 10L * 60L * 1000L;
+    private static final long MILLIS_PER_MINUTE = 60L * 1000L;
+    private static final long POLL_TOTAL_MILLIS = 10L * MILLIS_PER_MINUTE;
 
     private final AnalysisRequest request;
     private final Runnable onSuccess;
@@ -111,8 +113,11 @@ public class AnalysisJob extends Job
         }
         catch (RuntimeException e)
         {
-            Platform.getLog(getClass()).error(e.getMessage(), e);
-            report(NLS.bind(Messages.IssuesView_Status_Error, String.valueOf(e)));
+            // The CI path contains its own runtime failures (see runCiTrigger), so nothing reaching this
+            // handler carries the CI trigger URL; the text is still scrubbed as defence in depth.
+            String safe = SecretScrubber.scrub(String.valueOf(e));
+            Platform.getLog(getClass()).error(safe, e);
+            report(NLS.bind(Messages.IssuesView_Status_Error, safe));
             return Status.OK_STATUS;
         }
     }
@@ -138,16 +143,30 @@ public class AnalysisJob extends Job
                 report(NLS.bind(Messages.Analysis_CiFailed, String.valueOf(status)));
             }
         }
-        catch (IOException | IllegalArgumentException e)
+        catch (IOException | RuntimeException e)
         {
-            report(NLS.bind(Messages.Analysis_CiFailed, detail(e)));
+            // RuntimeException is caught here, not by the generic handler in run(), precisely so a failure
+            // quoting the token-bearing URL (URI.create throws IllegalArgumentException with the whole URL
+            // in its message) never reaches Platform.getLog unscrubbed.
+            report(NLS.bind(Messages.Analysis_CiFailed, ciFailureDetail(e)));
         }
         catch (InterruptedException e)
         {
             Thread.currentThread().interrupt();
-            report(NLS.bind(Messages.Analysis_CiFailed, detail(e)));
+            report(NLS.bind(Messages.Analysis_CiFailed, ciFailureDetail(e)));
         }
         return Status.OK_STATUS;
+    }
+
+    /**
+     * Describes a CI trigger failure in a single line with every credential redacted.
+     *
+     * @param e the failure, not {@code null}
+     * @return the scrubbed description, never {@code null}
+     */
+    private String ciFailureDetail(Throwable e)
+    {
+        return SecretScrubber.scrub(detail(e), request.ciSecret());
     }
 
     /**
@@ -298,6 +317,9 @@ public class AnalysisJob extends Job
     /**
      * Polls the Compute Engine task produced by the scanner until it reaches a terminal state.
      *
+     * <p>Polling is bounded by {@link #POLL_TOTAL_MILLIS}; exhausting that budget is reported as a timeout
+     * rather than passing silently, so the status line never keeps the "server is processing" text forever.
+     *
      * @param workDir the scanner working directory holding {@code report-task.txt}, not {@code null}
      * @param monitor the progress monitor, not {@code null}
      * @return the job status
@@ -338,6 +360,9 @@ public class AnalysisJob extends Job
                 return Status.CANCEL_STATUS;
             }
         }
+        // Falling out of the loop means the budget ran out while the task was still queued or running.
+        // Say so: otherwise the status line keeps the "server is processing the report" text forever.
+        report(NLS.bind(Messages.Analysis_ServerTimeout, Long.valueOf(POLL_TOTAL_MILLIS / MILLIS_PER_MINUTE)));
         return Status.OK_STATUS;
     }
 

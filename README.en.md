@@ -176,6 +176,10 @@ https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline?token=<trigger_
 > **Warning.** GitLab expects the trigger token as a URL query parameter, so it goes right
 > into the URL template — and is therefore stored in **plain (non-encrypted)** preferences.
 > Prefer a low-privilege trigger token.
+>
+> To keep the token from spreading beyond the preferences, CI trigger error messages (status
+> line, tooltip, **Details** dialog, EDT log) have the URL query string stripped: only the
+> scheme, host and path remain.
 
 ### 5. Branches
 
@@ -329,11 +333,14 @@ be undone; otherwise it is written straight to disk.
 ## How it works
 
 **Server mode.** The plugin acts as a SonarQube Web API reader: it loads issues by project
-key and branch (`/api/issues/search`, paginated), rule descriptions (`/api/rules/show`), and
-detects the server edition to know whether branches are supported. On top of that, the **Run
-Branch Analysis** button can launch an analysis itself — with a local scanner (auto-downloaded
-or at a given path) or via a CI trigger — and wait for the server to process the report,
-after which the view refreshes.
+key and branch (`/api/issues/search`, paginated), the branch list
+(`/api/project_branches/list`), and detects the server edition (`/api/navigation/global`) to
+know whether branches are supported. Rule descriptions are not fetched from the server: their
+text comes from the BSL Language Server diagnostics catalog and is shown on the
+[Choosing which checks run](#choosing-which-checks-run) settings page - identically in both
+modes. On top of that, the **Run Branch Analysis** button can launch an analysis itself — with
+a local scanner (auto-downloaded or at a given path) or via a CI trigger — and wait for the
+server to process the report, after which the view refreshes.
 
 **Local mode.** The plugin runs the BSL Language Server native build in `--analyze` mode over
 the project's sources, gets a **SARIF** report, and builds the same issue tree, filters and
@@ -376,3 +383,12 @@ Questions, bugs and suggestions — via the **Issues** tab of the project's GitH
 ## License
 
 Licensed under the [Eclipse Public License 2.0](LICENSE).
+
+The plugin bundles third-party libraries under their own licenses:
+`io.github.1c-syntax:utils` (**LGPL-3.0-or-later**), `org.semver4j:semver4j` (MIT),
+`org.slf4j:slf4j-api` (MIT) and `org.jspecify:jspecify` (Apache-2.0). They ship as separate,
+unmodified JAR files under the bundle's `lib/` directory; the full list with versions, source
+links and the LGPL-3.0 section 4 note is in
+[about.html](bundles/ru.jimmo.edt.sonarq.ui/about.html), and the license texts are in
+[licenses/](bundles/ru.jimmo.edt.sonarq.ui/licenses/). The project's own code stays under
+EPL-2.0.

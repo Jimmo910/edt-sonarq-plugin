@@ -9,8 +9,6 @@ package ru.jimmo.edt.sonarq.core.provider;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
@@ -22,16 +20,14 @@ import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 
-/** Fetches issues from a SonarQube server, page by page, with a session-scoped rule cache. */
+/** Fetches issues from a SonarQube server, page by page. */
 public final class ServerIssueProvider implements IIssueProvider
 {
     /** SonarQube caps paged issue search results at this count. */
     public static final int MAX_ISSUES = 10_000;
 
     private final ISonarServerClient client;
-    private final Map<String, SonarRule> ruleCache = new ConcurrentHashMap<>();
     private volatile Boolean branchAnalysisSupported;
 
     /**
@@ -68,19 +64,6 @@ public final class ServerIssueProvider implements IIssueProvider
             }
         }
         return new IssueSnapshot(query, List.copyOf(collected), total, Instant.now());
-    }
-
-    @Override
-    public SonarRule describeRule(String ruleKey) throws SonarServerException
-    {
-        SonarRule cached = ruleCache.get(ruleKey);
-        if (cached != null)
-        {
-            return cached;
-        }
-        SonarRule rule = client.showRule(ruleKey);
-        ruleCache.put(ruleKey, rule);
-        return rule;
     }
 
     @Override

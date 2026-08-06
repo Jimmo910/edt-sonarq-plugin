@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -24,6 +24,25 @@ jobs:
 
       - name: Build the p2 update site
         run: mvn --batch-mode --no-transfer-progress clean verify
+
+      # The version is hand-maintained in ~17 files (all pom.xml, MANIFEST.MF, both feature.xml).
+      # Tagging before bumping them would publish a zip named for the tag but holding the previous
+      # build, so fail loudly here instead of shipping a mislabelled asset.
+      - name: Verify the tag matches the built version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          feature=$(ls repositories/ru.jimmo.edt.sonarq.repository/target/repository/features/ru.jimmo.edt.sonarq.feature_*.jar)
+          built_version=$(basename "$feature" .jar)
+          built_version="${built_version#ru.jimmo.edt.sonarq.feature_}"
+          # Tycho appends a build qualifier as a fourth segment; compare only major.minor.micro.
+          built_version=$(echo "$built_version" | cut -d. -f1-3)
+          echo "tag=$tag_version built=$built_version"
+          if [ "$tag_version" != "$built_version" ]; then
+            echo "::error::Tag v$tag_version does not match the built version $built_version; bump the version in all files before tagging"
+            exit 1
+          fi
 
       - name: Stage the update-site archive
         run: |

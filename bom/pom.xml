@@ -13,6 +13,20 @@
   <description>SonarQube issues viewer for 1C:Enterprise (BSL) code inside 1C:EDT.</description>
   <url>https://github.com/Jimmo910/edt-sonarq-plugin</url>
 
+  <!--
+    The project's own code is licensed under EPL-2.0, declared below.
+
+    The ru.jimmo.edt.sonarq.ui bundle additionally redistributes third-party JAR files, unmodified,
+    on its Bundle-ClassPath (bundles/ru.jimmo.edt.sonarq.ui/lib/). Those keep their own licenses and
+    are NOT covered by the declaration below:
+      io.github.1c-syntax:utils  0.10.1  LGPL-3.0-or-later
+      org.semver4j:semver4j      6.0.0   MIT
+      org.slf4j:slf4j-api        2.0.18  MIT
+      org.jspecify:jspecify      1.0.0   Apache-2.0
+    Full disclosure, source links and the LGPL-3.0 section 4 note:
+    bundles/ru.jimmo.edt.sonarq.ui/about.html; license texts in
+    bundles/ru.jimmo.edt.sonarq.ui/licenses/.
+  -->
   <licenses>
     <license>
       <name>Eclipse Public License 2.0</name>

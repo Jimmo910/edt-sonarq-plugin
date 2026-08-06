@@ -23,7 +23,6 @@ import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 
 /** Parses SonarQube Web API JSON payloads into model objects. */
@@ -56,24 +55,6 @@ public final class SonarJsonParser
             }
         }
         return new IssuesPage(issues, total, pageIndex, pageSize);
-    }
-
-    /**
-     * Parses {@code /api/rules/show} response.
-     *
-     * @param json the response body, not {@code null}
-     * @return the parsed rule, never {@code null}
-     */
-    public static SonarRule parseRule(String json)
-    {
-        JsonObject rule = JsonParser.parseString(json).getAsJsonObject().getAsJsonObject("rule"); //$NON-NLS-1$
-        if (rule == null)
-        {
-            return new SonarRule("", "", ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        }
-        String key = asString(rule, "key"); //$NON-NLS-1$
-        String name = asString(rule, "name"); //$NON-NLS-1$
-        return new SonarRule(key, name, asString(rule, "htmlDesc")); //$NON-NLS-1$
     }
 
     /**

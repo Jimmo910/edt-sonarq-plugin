@@ -32,7 +32,6 @@ import ru.jimmo.edt.sonarq.core.client.SonarServerException;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.scope.ChangedLines;
 import ru.jimmo.edt.sonarq.ui.Messages;
 
@@ -291,7 +290,7 @@ public class LocalIssueProviderTest
     }
 
     @Test
-    public void fetchIssuesReturnsProjectRelativeComponentKeysAndCachesRules() throws Exception
+    public void fetchIssuesReturnsProjectRelativeComponentKeys() throws Exception
     {
         FakeRunner runner = new FakeRunner();
         runner.sarifJson = sarifFixture();
@@ -306,47 +305,6 @@ public class LocalIssueProviderTest
         SonarIssue issue = snapshot.issues().get(0);
         assertEquals(PROJECT_KEY + ":src/CommonModules/X/Module.bsl", issue.componentKey());
         assertEquals(42, issue.line());
-
-        SonarRule rule = provider.describeRule("MethodSize");
-        assertEquals("Method size", rule.name());
-        assertTrue(rule.htmlDescription().contains("Methods should not be too long."));
-    }
-
-    /**
-     * Phase-1 verification for the issue #4 follow-up (AndreiRch: the rule description pane showed nothing
-     * on Linux/GTK). Before assuming the pane's HTML/plain-text rendering is at fault, this confirms the
-     * description CONTENT reaching {@link LocalIssueProvider#describeRule(String)} is genuinely non-empty
-     * for a typical local-analysis rule - i.e. the bug is isolated to rendering (see
-     * {@code RuleHtmlTest}), not to empty or missing data from the local analyzer.
-     */
-    @Test
-    public void describeRuleAfterFetchReturnsNonEmptyHtmlDescription() throws Exception
-    {
-        FakeRunner runner = new FakeRunner();
-        runner.sarifJson = sarifFixture();
-        LocalIssueProvider provider =
-            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4,
-                BslUpdateChannel.STABLE, runner);
-
-        provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
-        SonarRule rule = provider.describeRule("MethodSize");
-
-        assertFalse("rule description content must not be empty - a blank pane must be a rendering bug, "
-            + "not a data bug", rule.htmlDescription().isBlank());
-        assertTrue(rule.htmlDescription().contains("too long"));
-    }
-
-    @Test
-    public void describeRuleBeforeAnyFetchReturnsEmptyRule() throws Exception
-    {
-        LocalIssueProvider provider = new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "",
-            4, BslUpdateChannel.STABLE, new FakeRunner());
-
-        SonarRule rule = provider.describeRule("bsl:Unknown");
-
-        assertEquals("bsl:Unknown", rule.key());
-        assertEquals("bsl:Unknown", rule.name());
-        assertEquals("", rule.htmlDescription());
     }
 
     @Test

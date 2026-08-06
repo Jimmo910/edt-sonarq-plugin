@@ -23,7 +23,6 @@ import ru.jimmo.edt.sonarq.core.model.CeTask;
 import ru.jimmo.edt.sonarq.core.model.ComponentInfo;
 import ru.jimmo.edt.sonarq.core.model.IssueQuery;
 import ru.jimmo.edt.sonarq.core.model.IssuesPage;
-import ru.jimmo.edt.sonarq.core.model.SonarRule;
 
 /**
  * {@link ISonarServerClient} implementation on top of {@link java.net.http.HttpClient}.
@@ -104,12 +103,6 @@ public final class SonarHttpClient implements ISonarServerClient
             url.append("&branch=").append(encode(query.branch())); //$NON-NLS-1$
         }
         return SonarJsonParser.parseIssuesPage(get(url.toString()));
-    }
-
-    @Override
-    public SonarRule showRule(String ruleKey) throws SonarServerException
-    {
-        return SonarJsonParser.parseRule(get("/api/rules/show?key=" + encode(ruleKey))); //$NON-NLS-1$
     }
 
     @Override
