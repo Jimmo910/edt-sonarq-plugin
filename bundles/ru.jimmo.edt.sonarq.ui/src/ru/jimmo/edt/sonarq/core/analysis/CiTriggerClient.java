@@ -23,8 +23,15 @@ import java.time.Duration;
  * {@code https://gitlab.example.com/api/v4/projects/123/trigger/pipeline?token=SECRET&ref={branch}}.
  *
  * <p>Instances are safe for concurrent use from multiple threads.
+ *
+ * <p>An instance owns a JDK {@link HttpClient}, which owns a selector thread and a connection pool, so it
+ * must be released through {@link #close()} rather than dropped on the floor for the garbage collector to
+ * find - one CI trigger click used to leak one selector thread (review minor M2). The client is built per
+ * trigger rather than shared, unlike the server client of {@code SonarHttpClients}: a trigger is a single
+ * one-shot request against a URL the user may edit between clicks, so there is nothing to keep alive
+ * afterwards.
  */
-public final class CiTriggerClient
+public final class CiTriggerClient implements ICiTrigger
 {
     private static final String BRANCH_PLACEHOLDER = "{branch}"; //$NON-NLS-1$
     private static final String AUTHORIZATION_HEADER = "Authorization"; //$NON-NLS-1$
@@ -62,6 +69,7 @@ public final class CiTriggerClient
      * @throws IOException if the request fails
      * @throws InterruptedException if the current thread is interrupted while waiting for the response
      */
+    @Override
     public int trigger(String urlTemplate, String branch, String secretHeader)
         throws IOException, InterruptedException
     {
@@ -75,5 +83,19 @@ public final class CiTriggerClient
         }
         HttpResponse<Void> response = http.send(requestBuilder.build(), HttpResponse.BodyHandlers.discarding());
         return response.statusCode();
+    }
+
+    /**
+     * Releases the underlying {@link HttpClient} and its selector thread.
+     *
+     * <p>Uses {@link HttpClient#shutdownNow()} rather than {@link HttpClient#close()}, exactly as
+     * {@code SonarHttpClient#close} does: {@code close()} blocks until every in-flight exchange finishes,
+     * which would let a hung CI server stall the analysis job that is disposing the client. Idempotent; the
+     * instance must not be used afterwards.
+     */
+    @Override
+    public void close()
+    {
+        http.shutdownNow();
     }
 }

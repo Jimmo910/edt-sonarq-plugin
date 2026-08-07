@@ -21,14 +21,36 @@ import ru.jimmo.edt.sonarq.ui.sync.AutoSyncScheduler;
 /**
  * Wires the background auto-sync to the workbench life cycle: it primes the scheduler on early start-up
  * and keeps it in sync with later preference changes.
+ *
+ * <p>The {@link #listener} field is static and every access to it - installation, the watch-state query and
+ * teardown - is guarded by the same monitor, the class one. {@link #earlyStartup()} used to be an
+ * <em>instance</em>-synchronized method writing that static field while {@link #isWatchingPreferences()} and
+ * {@link #shutdown()} synchronized on the class: two different locks over one piece of state, which happens
+ * to be harmless only because the workbench calls early start-up once (review minor M4).
  */
 public final class SonarqStartup implements IStartup
 {
     private static IPreferenceChangeListener listener;
 
     @Override
-    public synchronized void earlyStartup()
+    public void earlyStartup()
     {
+        install();
+    }
+
+    /**
+     * Arms the auto-sync scheduler and registers the preference listener, unless one is already registered.
+     *
+     * <p>Static and synchronized on the class, like every other access to {@link #listener}. Idempotent: a
+     * second call while a listener is live would otherwise register a duplicate that {@link #shutdown()}
+     * could never remove.
+     */
+    private static synchronized void install()
+    {
+        if (listener != null)
+        {
+            return;
+        }
         AutoSyncScheduler.applyPreferences();
         listener = SonarqStartup::onPreferenceChange;
         InstanceScope.INSTANCE.getNode(SonarqPlugin.PLUGIN_ID).addPreferenceChangeListener(listener);

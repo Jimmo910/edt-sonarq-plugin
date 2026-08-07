@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.core.analysis;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -100,5 +101,42 @@ public class CiTriggerClientTest
         String template = baseUrl + "/trigger/pipeline?ref={branch}";
         int status = new CiTriggerClient(10).trigger(template, "main", null);
         assertEquals(201, status);
+    }
+
+    /**
+     * Review minor M2: the client owns a JDK {@code HttpClient} - a selector thread and a connection pool -
+     * which used to be left to the garbage collector after every CI trigger. Closing must really release the
+     * transport, not just flip a flag, so a request attempted afterwards has to fail rather than succeed
+     * against the still-running server.
+     */
+    @Test
+    public void closeReleasesTheTransport() throws Exception
+    {
+        respond(200);
+        String template = baseUrl + "/trigger/pipeline?ref={branch}";
+        CiTriggerClient client = new CiTriggerClient(10);
+        assertEquals(200, client.trigger(template, "main", null));
+
+        client.close();
+
+        try
+        {
+            int status = client.trigger(template, "main", null);
+            fail("a closed client must not be able to send: got HTTP " + status);
+        }
+        catch (IOException | RuntimeException e)
+        {
+            // Expected: the JDK rejects work submitted to a shut-down client. Which of the two it raises is
+            // an implementation detail, so both are accepted here.
+        }
+    }
+
+    /** Closing twice (an outer try-with-resources over an already closed client) must stay harmless. */
+    @Test
+    public void closeIsIdempotent()
+    {
+        CiTriggerClient client = new CiTriggerClient(10);
+        client.close();
+        client.close();
     }
 }

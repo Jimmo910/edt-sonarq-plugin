@@ -12,9 +12,9 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.jobs.Job;
@@ -45,7 +45,7 @@ import org.eclipse.ui.IWorkbenchPreferencePage;
 import org.osgi.service.prefs.BackingStoreException;
 
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchMode;
-import ru.jimmo.edt.sonarq.core.analysis.Processes;
+import ru.jimmo.edt.sonarq.core.analysis.ProcessOutput;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
@@ -76,6 +76,9 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     // and this array maps that same index back to the stored preference value.
     private static final String[] UPDATE_CHANNEL_VALUES = { PreferenceConstants.UPDATE_CHANNEL_FIXED,
         PreferenceConstants.UPDATE_CHANNEL_STABLE, PreferenceConstants.UPDATE_CHANNEL_PRERELEASE };
+
+    /** How long {@link #probeBslExecutable} waits for the {@code --version} run to finish. */
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
 
     private Combo modeCombo;
 
@@ -506,7 +509,13 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     /**
      * Runs the given file with {@code --version} and reports whether the output looks like BSL Language
-     * Server. The wait is bounded; output is read only after the process exits (version output is tiny).
+     * Server.
+     *
+     * <p>The wait is bounded, and the output is drained <em>while</em> the process runs (see
+     * {@link ProcessOutput}): reading it only after the exit deadlocked against any executable printing more
+     * than one OS pipe buffer on {@code --version} - a JVM launcher with a verbose {@code _JAVA_OPTIONS} or
+     * GC logging does exactly that - and the deadlock was then reported to the user as a timeout (review
+     * minor M6).
      *
      * @param path the executable path chosen by the user, not {@code null}
      * @return the localized result message, never {@code null}
@@ -516,12 +525,13 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         try
         {
             Process process = new ProcessBuilder(path, "--version").redirectErrorStream(true).start(); //$NON-NLS-1$
-            if (!process.waitFor(30, TimeUnit.SECONDS))
+            Optional<String> captured =
+                ProcessOutput.awaitMergedOutput(process, PROBE_TIMEOUT, Charset.defaultCharset());
+            if (captured.isEmpty())
             {
-                Processes.terminate(process);
                 return NLS.bind(Messages.PreferencePage_BslVerifyFail, "timeout"); //$NON-NLS-1$
             }
-            String output = new String(process.getInputStream().readAllBytes(), Charset.defaultCharset());
+            String output = captured.get();
             // The native launcher prints JVM warnings first; prefer the "version: ..." line for display.
             String display = output.lines().map(String::trim)
                 .filter(line -> line.toLowerCase(Locale.ROOT).startsWith("version")) //$NON-NLS-1$

@@ -43,4 +43,22 @@ public class SonarqStartupTest
         SonarqStartup.shutdown();
         assertFalse(SonarqStartup.isWatchingPreferences());
     }
+
+    /**
+     * Review minor M4 left the watch state observable exactly as before - it is a locking-consistency
+     * refactor - so this only pins down that a second early start-up (the test suite itself does that, and
+     * so does a plug-in restarted in a running workbench) is a no-op rather than something that breaks the
+     * watch state or leaves teardown with nothing to remove.
+     */
+    @Test
+    public void repeatedEarlyStartupKeepsWatchingAndStaysRemovable()
+    {
+        new SonarqStartup().earlyStartup();
+        new SonarqStartup().earlyStartup();
+        assertTrue(SonarqStartup.isWatchingPreferences());
+
+        SonarqStartup.shutdown();
+
+        assertFalse(SonarqStartup.isWatchingPreferences());
+    }
 }

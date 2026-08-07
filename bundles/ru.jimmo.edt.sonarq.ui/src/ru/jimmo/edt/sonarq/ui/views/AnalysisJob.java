@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -33,6 +34,7 @@ import org.eclipse.ui.console.MessageConsoleStream;
 
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchMode;
 import ru.jimmo.edt.sonarq.core.analysis.CiTriggerClient;
+import ru.jimmo.edt.sonarq.core.analysis.ICiTrigger;
 import ru.jimmo.edt.sonarq.core.analysis.ReportTaskParser;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerCommandBuilder;
 import ru.jimmo.edt.sonarq.core.analysis.ScannerInstaller;
@@ -72,14 +74,17 @@ public class AnalysisJob extends Job
     private static final int MAX_GIT_WALK = 10;
     private static final long PROCESS_POLL_MILLIS = 500L;
     private static final long PUMP_JOIN_MILLIS = 2000L;
-    private static final long POLL_INTERVAL_MILLIS = 3000L;
     private static final long POLL_STEP_MILLIS = 200L;
     private static final long MILLIS_PER_MINUTE = 60L * 1000L;
-    private static final long POLL_TOTAL_MILLIS = 10L * MILLIS_PER_MINUTE;
+
+    /** The Compute Engine polling budget used in production: ten minutes, probed every three seconds. */
+    private static final PollingBudget DEFAULT_POLLING = new PollingBudget(10L * MILLIS_PER_MINUTE, 3000L);
 
     private final AnalysisRequest request;
     private final Runnable onSuccess;
     private final Consumer<String> statusReporter;
+    private final IntFunction<ICiTrigger> ciTriggerFactory;
+    private final PollingBudget polling;
 
     /**
      * Creates the job.
@@ -90,10 +95,31 @@ public class AnalysisJob extends Job
      */
     public AnalysisJob(AnalysisRequest request, Runnable onSuccess, Consumer<String> statusReporter)
     {
+        this(request, onSuccess, statusReporter, CiTriggerClient::new, DEFAULT_POLLING);
+    }
+
+    /**
+     * Creates the job with the CI transport and the Compute Engine polling budget supplied from outside.
+     *
+     * <p>Package-private: it exists so the headless test fragment can drive the CI trigger path against a
+     * fake transport and exhaust the polling budget in milliseconds instead of ten minutes. Production code
+     * uses the three-argument constructor.
+     *
+     * @param request the launch inputs, not {@code null}
+     * @param onSuccess invoked in the job thread only on a successful scanner-path run, not {@code null}
+     * @param statusReporter receives user-facing status text; must be thread-safe, not {@code null}
+     * @param ciTriggerFactory builds the CI transport from the connection timeout, not {@code null}
+     * @param polling the Compute Engine polling budget, not {@code null}
+     */
+    AnalysisJob(AnalysisRequest request, Runnable onSuccess, Consumer<String> statusReporter,
+        IntFunction<ICiTrigger> ciTriggerFactory, PollingBudget polling)
+    {
         super(Messages.AnalysisJob_Name);
         this.request = request;
         this.onSuccess = onSuccess;
         this.statusReporter = statusReporter;
+        this.ciTriggerFactory = ciTriggerFactory;
+        this.polling = polling;
         setUser(true);
         // Serialize with the refresh job of the same project so a replacement run waits for the previous
         // one to release instead of racing over the shared analyzer install and scannerwork directories.
@@ -125,15 +151,17 @@ public class AnalysisJob extends Job
     /**
      * Triggers the configured CI pipeline; always returns OK, reporting the outcome via the status line.
      *
+     * <p>The transport is closed on every path (try-with-resources): it owns a selector thread, and one
+     * click on "Analyze" used to leak one (review minor M2).
+     *
      * @return {@link Status#OK_STATUS}
      */
-    private IStatus runCiTrigger()
+    IStatus runCiTrigger()
     {
         String branch = request.requestedBranch() != null ? request.requestedBranch() : ""; //$NON-NLS-1$
-        try
+        try (ICiTrigger trigger = ciTriggerFactory.apply(request.connection().timeoutSeconds()))
         {
-            int status = new CiTriggerClient(request.connection().timeoutSeconds())
-                .trigger(request.config().ciUrl(), branch, request.ciSecret());
+            int status = trigger.trigger(request.config().ciUrl(), branch, request.ciSecret());
             if (status >= HTTP_OK_MIN && status < HTTP_OK_MAX)
             {
                 report(NLS.bind(Messages.Analysis_CiTriggered, Integer.valueOf(status)));
@@ -317,14 +345,17 @@ public class AnalysisJob extends Job
     /**
      * Polls the Compute Engine task produced by the scanner until it reaches a terminal state.
      *
-     * <p>Polling is bounded by {@link #POLL_TOTAL_MILLIS}; exhausting that budget is reported as a timeout
+     * <p>Polling is bounded by the {@link PollingBudget}; exhausting that budget is reported as a timeout
      * rather than passing silently, so the status line never keeps the "server is processing" text forever.
+     *
+     * <p>Package-private so the headless test fragment can drive the whole poll loop - report-task parsing,
+     * terminal outcomes, cancellation and the timeout - against a fake server client.
      *
      * @param workDir the scanner working directory holding {@code report-task.txt}, not {@code null}
      * @param monitor the progress monitor, not {@code null}
      * @return the job status
      */
-    private IStatus awaitServerProcessing(Path workDir, IProgressMonitor monitor)
+    IStatus awaitServerProcessing(Path workDir, IProgressMonitor monitor)
     {
         Optional<String> taskId = ReportTaskParser.ceTaskId(workDir);
         if (taskId.isEmpty())
@@ -334,7 +365,7 @@ public class AnalysisJob extends Job
             return Status.OK_STATUS;
         }
         report(Messages.Analysis_ServerProcessing);
-        long deadline = System.currentTimeMillis() + POLL_TOTAL_MILLIS;
+        long deadline = System.currentTimeMillis() + polling.totalMillis();
         while (System.currentTimeMillis() < deadline)
         {
             if (monitor.isCanceled())
@@ -355,14 +386,14 @@ public class AnalysisJob extends Job
             {
                 return finish(task);
             }
-            if (!sleepCancelable(POLL_INTERVAL_MILLIS, monitor))
+            if (!sleepCancelable(polling.intervalMillis(), monitor))
             {
                 return Status.CANCEL_STATUS;
             }
         }
         // Falling out of the loop means the budget ran out while the task was still queued or running.
         // Say so: otherwise the status line keeps the "server is processing the report" text forever.
-        report(NLS.bind(Messages.Analysis_ServerTimeout, Long.valueOf(POLL_TOTAL_MILLIS / MILLIS_PER_MINUTE)));
+        report(NLS.bind(Messages.Analysis_ServerTimeout, Long.valueOf(polling.totalMillis() / MILLIS_PER_MINUTE)));
         return Status.OK_STATUS;
     }
 
@@ -394,9 +425,11 @@ public class AnalysisJob extends Job
      * With a prefix, the base directory is the enclosing git repository root and the sources become
      * {@code <prefix>/src}; if no repository is found the project location is used without the prefix.
      *
+     * <p>Package-private for the headless test fragment.
+     *
      * @return the resolved base directory and sources, never {@code null}
      */
-    private SourceRoot resolveSourceRoot()
+    SourceRoot resolveSourceRoot()
     {
         Path projectDir = request.project().getLocation().toFile().toPath();
         ProjectBinding binding = request.binding();
@@ -416,10 +449,12 @@ public class AnalysisJob extends Job
     /**
      * Walks up from the given directory looking for a {@code .git} entry (directory or worktree file).
      *
+     * <p>Package-private for the headless test fragment.
+     *
      * @param start the directory to start from, not {@code null}
      * @return the repository root, or {@code null} if none is found within {@link #MAX_GIT_WALK} levels
      */
-    private static Path findRepositoryRoot(File start)
+    static Path findRepositoryRoot(File start)
     {
         File current = start;
         for (int depth = 0; depth < MAX_GIT_WALK && current != null; depth++)
@@ -538,7 +573,18 @@ public class AnalysisJob extends Job
      * @param baseDir the directory to run the scanner in, not {@code null}
      * @param sources the {@code sonar.sources} path relative to {@code baseDir}, not {@code null}
      */
-    private record SourceRoot(Path baseDir, String sources)
+    record SourceRoot(Path baseDir, String sources)
+    {
+    }
+
+    /**
+     * How long the Compute Engine task produced by a scanner run is polled for, and how long to wait
+     * between two polls.
+     *
+     * @param totalMillis the total polling budget in milliseconds, positive
+     * @param intervalMillis the wait between two polls in milliseconds, positive
+     */
+    record PollingBudget(long totalMillis, long intervalMillis)
     {
     }
 }
