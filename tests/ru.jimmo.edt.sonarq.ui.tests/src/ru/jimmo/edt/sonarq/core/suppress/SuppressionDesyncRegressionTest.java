@@ -129,8 +129,7 @@ public class SuppressionDesyncRegressionTest
         {
             return new Applied(false, issues);
         }
-        return new Applied(true,
-            SuppressionLineShift.applyAfterSuppress(issues, target.key(), target.componentKey(), target.line()));
+        return new Applied(true, SuppressionLineShift.applyAfterSuppress(issues, target));
     }
 
     /**

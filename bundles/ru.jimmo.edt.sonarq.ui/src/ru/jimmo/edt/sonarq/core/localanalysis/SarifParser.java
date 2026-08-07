@@ -9,10 +9,12 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -170,16 +172,17 @@ public final class SarifParser
         JsonArray results = run.getAsJsonArray("results"); //$NON-NLS-1$
         if (results != null)
         {
+            Set<String> usedKeys = new HashSet<>();
             for (JsonElement element : results)
             {
-                issues.add(parseResult(element.getAsJsonObject(), projectKey, uriBasePrefix, categories));
+                issues.add(parseResult(element.getAsJsonObject(), projectKey, uriBasePrefix, categories, usedKeys));
             }
         }
         return issues;
     }
 
     private static SonarIssue parseResult(JsonObject result, String projectKey, String uriBasePrefix,
-        DiagnosticCategories categories)
+        DiagnosticCategories categories, Set<String> usedKeys)
     {
         String ruleId = asString(result, "ruleId"); //$NON-NLS-1$
         String message = asMessage(result);
@@ -189,8 +192,42 @@ public final class SarifParser
         String uri = normalizeUri(locationUri(physicalLocation), uriBasePrefix);
         int line = locationLine(physicalLocation);
         String componentKey = projectKey + ":" + uri; //$NON-NLS-1$
-        String key = ruleId + ":" + uri + ":" + line; //$NON-NLS-1$ //$NON-NLS-2$
+        String key = uniqueKey(ruleId + ":" + uri + ":" + line //$NON-NLS-1$ //$NON-NLS-2$
+            + ":" + locationColumn(physicalLocation), usedKeys); //$NON-NLS-1$
         return new SonarIssue(key, ruleId, severity, type, componentKey, message, line);
+    }
+
+    /**
+     * Makes an issue key unique within one report.
+     *
+     * <p>A local-analysis key is synthesized from the finding's own coordinates - there is no server-side
+     * issue id to use - and the rule, file and line alone do not identify a finding: one line routinely
+     * carries several results of the same rule (e.g. {@code MissingSpace} around each of two operators).
+     * Duplicate keys break everything that treats a key as an identity: the Problems-view quick fix hands
+     * its marker's key to the issue view, which then renumbers whichever of the colliding issues it finds
+     * first, and the suppression bookkeeping cannot tell them apart. The column disambiguates all realistic
+     * collisions; the counter suffix is the belt-and-braces guarantee for a report that still repeats a
+     * position, so uniqueness is a property of this method rather than an assumption about the analyzer.
+     *
+     * @param candidate the key built from the finding's coordinates, not {@code null}
+     * @param usedKeys the keys already handed out for this report, mutated by this call, not {@code null}
+     * @return {@code candidate} when it is still free, otherwise {@code candidate} with a {@code #<n>}
+     *     occurrence suffix
+     */
+    private static String uniqueKey(String candidate, Set<String> usedKeys)
+    {
+        if (usedKeys.add(candidate))
+        {
+            return candidate;
+        }
+        int occurrence = 2;
+        String key = candidate + "#" + occurrence; //$NON-NLS-1$
+        while (!usedKeys.add(key))
+        {
+            occurrence++;
+            key = candidate + "#" + occurrence; //$NON-NLS-1$
+        }
+        return key;
     }
 
     /**
@@ -259,6 +296,23 @@ public final class SarifParser
         }
         JsonObject region = physicalLocation.getAsJsonObject("region"); //$NON-NLS-1$
         return region != null ? asInt(region, "startLine", 0) : 0; //$NON-NLS-1$
+    }
+
+    /**
+     * The 1-based start column of a result's region - only ever used to tell two findings of the same rule
+     * on the same line apart (see {@link #uniqueKey}), never shown or navigated to.
+     *
+     * @param physicalLocation the result's physical location, may be {@code null}
+     * @return the region's {@code startColumn}, or {@code 0} when there is no region or no column
+     */
+    private static int locationColumn(JsonObject physicalLocation)
+    {
+        if (physicalLocation == null)
+        {
+            return 0;
+        }
+        JsonObject region = physicalLocation.getAsJsonObject("region"); //$NON-NLS-1$
+        return region != null ? asInt(region, "startColumn", 0) : 0; //$NON-NLS-1$
     }
 
     /**

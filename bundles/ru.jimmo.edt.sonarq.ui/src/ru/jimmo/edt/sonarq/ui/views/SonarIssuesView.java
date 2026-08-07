@@ -122,7 +122,7 @@ public class SonarIssuesView extends ViewPart
     private String sessionBranch;
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
-    private long refreshGeneration;
+    private final RefreshGeneration refreshGeneration = new RefreshGeneration();
     private int missingFileMarkerCount;
     private Job inFlightJob;
     private TreeColumn severityColumn;
@@ -647,6 +647,16 @@ public class SonarIssuesView extends ViewPart
      * so this method never needs a fresh server or local-analysis round-trip to stay correct (issue #7
      * follow-up). Only ever called once an insertion is known to have happened.
      *
+     * <p>The edit also retires the current {@link RefreshGeneration}. A refresh may well be in flight - in
+     * local-analysis mode a large configuration takes minutes - and its results were computed from the
+     * sources as they were before these two comment lines existed. Letting such a result through would
+     * replace the snapshot just shifted here with pre-edit line numbers, and re-sync pre-edit markers on top
+     * of an already-edited file: the very desynchronization this method exists to prevent, only reintroduced
+     * from behind. {@link #scheduleMarkerSync} reads the generation after the bump, so the marker sync
+     * started right below is still applied; the dropped refresh leaves the status line without its
+     * completion callback, so it is refreshed here instead (unless an error message is on screen, which
+     * outranks a plain issue count).
+     *
      * @param issue the issue that was just suppressed, not {@code null}
      */
     private void applySuppressionLineShift(SonarIssue issue)
@@ -655,17 +665,20 @@ public class SonarIssuesView extends ViewPart
         {
             return;
         }
-        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), issue.key(),
-            issue.componentKey(), issue.line());
+        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), issue);
         snapshot = new IssueSnapshot(snapshot.query(), adjusted, adjusted.size(), snapshot.loadedAt());
+        refreshGeneration.invalidate();
         rebuildTree();
         scheduleMarkerSync();
+        if (lastErrorMessage == null)
+        {
+            updateStatusAndBanner();
+        }
     }
 
     private void refreshIssues()
     {
-        refreshGeneration++;
-        long generation = refreshGeneration;
+        long generation = refreshGeneration.start();
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null)
         {
@@ -921,7 +934,7 @@ public class SonarIssuesView extends ViewPart
             {
                 return;
             }
-            if (generation != refreshGeneration)
+            if (!refreshGeneration.isCurrent(generation))
             {
                 return;
             }
@@ -1021,7 +1034,7 @@ public class SonarIssuesView extends ViewPart
         IssueSnapshot markerSnapshot = snapshot;
         String projectKey = boundProjectKey;
         String pathPrefix = boundPathPrefix;
-        long generation = refreshGeneration;
+        long generation = refreshGeneration.current();
         new MarkerSyncJob(project,
             () -> IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix),
             result -> Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result)))
@@ -1037,7 +1050,7 @@ public class SonarIssuesView extends ViewPart
      */
     private void applyMarkerSyncResult(long generation, MarkerSyncResult result)
     {
-        if (viewer.getControl().isDisposed() || generation != refreshGeneration)
+        if (viewer.getControl().isDisposed() || !refreshGeneration.isCurrent(generation))
         {
             return;
         }

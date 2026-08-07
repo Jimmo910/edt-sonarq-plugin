@@ -92,7 +92,7 @@ public class SarifParserTest
         assertEquals("Too long", first.message()); //$NON-NLS-1$
         assertEquals(42, first.line());
         assertEquals("TestConfiguration:src/CommonModules/X/Module.bsl", first.componentKey()); //$NON-NLS-1$
-        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:42", first.key()); //$NON-NLS-1$
+        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:42:0", first.key()); //$NON-NLS-1$
 
         SonarIssue second = report.issues().get(1);
         assertEquals(SonarSeverity.MINOR, second.severity());
@@ -133,7 +133,74 @@ public class SarifParserTest
             }""";
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
         assertEquals(0, report.issues().get(0).line());
-        assertEquals("MethodSize:src/Module.bsl:0", report.issues().get(0).key()); //$NON-NLS-1$
+        assertEquals("MethodSize:src/Module.bsl:0:0", report.issues().get(0).key()); //$NON-NLS-1$
+    }
+
+    /**
+     * A local-analysis key is synthesized, and one line routinely carries several findings of the same rule
+     * (two operators missing a space, say). While the key was only rule, file and line, those findings
+     * shared one key - and both the Problems-view quick fix (which hands its marker's key to the issue view)
+     * and the suppression bookkeeping treat a key as an identity.
+     */
+    @Test
+    public void twoFindingsOfOneRuleOnOneLineGetDistinctKeys()
+    {
+        String json = twoResultsOnLine10("""
+            "region": { "startLine": 10, "startColumn": 5 }""", """
+            "region": { "startLine": 10, "startColumn": 20 }""");
+
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY);
+
+        assertEquals(2, report.issues().size());
+        SonarIssue first = report.issues().get(0);
+        SonarIssue second = report.issues().get(1);
+        assertEquals(10, first.line());
+        assertEquals(10, second.line());
+        assertEquals("MissingSpace:src/Module.bsl:10:5", first.key()); //$NON-NLS-1$
+        assertEquals("MissingSpace:src/Module.bsl:10:20", second.key()); //$NON-NLS-1$
+    }
+
+    /** Even a report that repeats a position outright must not hand out one key twice. */
+    @Test
+    public void findingsAtTheVerySamePositionStillGetDistinctKeys()
+    {
+        String json = twoResultsOnLine10("""
+            "region": { "startLine": 10 }""", """
+            "region": { "startLine": 10 }""");
+
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY);
+
+        assertEquals(2, report.issues().size());
+        assertEquals("MissingSpace:src/Module.bsl:10:0", report.issues().get(0).key()); //$NON-NLS-1$
+        assertEquals("MissingSpace:src/Module.bsl:10:0#2", report.issues().get(1).key()); //$NON-NLS-1$
+    }
+
+    /**
+     * Builds a report of two {@code MissingSpace} results in one module, differing only in their region.
+     *
+     * @param firstRegion the first result's {@code region} member
+     * @param secondRegion the second result's {@code region} member
+     * @return the SARIF report as JSON
+     */
+    private static String twoResultsOnLine10(String firstRegion, String secondRegion)
+    {
+        String result = """
+            {
+              "ruleId": "MissingSpace",
+              "level": "note",
+              "message": { "text": "Missing space" },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": { "uri": "src/Module.bsl" },
+                    %s
+                  }
+                }
+              ]
+            }""";
+        return "{ \"runs\": [ { \"results\": [ " //$NON-NLS-1$
+            + String.format(result, firstRegion) + ", " //$NON-NLS-1$
+            + String.format(result, secondRegion) + " ] } ] }"; //$NON-NLS-1$
     }
 
     @Test
@@ -288,7 +355,7 @@ public class SarifParserTest
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
         SonarIssue issue = report.issues().get(0);
         assertEquals("TestConfiguration:src/CommonModules/X/Module.bsl", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:5", issue.key()); //$NON-NLS-1$
+        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:5:0", issue.key()); //$NON-NLS-1$
     }
 
     @Test
@@ -472,7 +539,7 @@ public class SarifParserTest
         SarifReport report = SarifParser.parse(json, PROJECT_KEY, "/home/user/proj"); //$NON-NLS-1$
         SonarIssue issue = report.issues().get(0);
         assertEquals("TestConfiguration:src/M.bsl", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MagicNumber:src/M.bsl:3", issue.key()); //$NON-NLS-1$
+        assertEquals("MagicNumber:src/M.bsl:3:0", issue.key()); //$NON-NLS-1$
     }
 
     @Test
@@ -506,7 +573,7 @@ public class SarifParserTest
         SarifReport report = SarifParser.parse(json, PROJECT_KEY, "E:/proj/TestConfiguration"); //$NON-NLS-1$
         SonarIssue issue = report.issues().get(0);
         assertEquals("TestConfiguration:src/CommonModules/Calc/Module.bsl", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MagicNumber:src/CommonModules/Calc/Module.bsl:6", issue.key()); //$NON-NLS-1$
+        assertEquals("MagicNumber:src/CommonModules/Calc/Module.bsl:6:0", issue.key()); //$NON-NLS-1$
     }
 
     @Test
@@ -714,7 +781,7 @@ public class SarifParserTest
         SonarIssue issue = report.issues().get(0);
         assertEquals(0, issue.line());
         assertEquals("TestConfiguration:", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MethodSize::0", issue.key()); //$NON-NLS-1$
+        assertEquals("MethodSize::0:0", issue.key()); //$NON-NLS-1$
     }
 
     private static SonarSeverity parseSingleResultSeverity(String level)
