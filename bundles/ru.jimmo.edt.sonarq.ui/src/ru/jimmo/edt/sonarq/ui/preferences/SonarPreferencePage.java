@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -24,6 +25,7 @@ import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.equinox.security.storage.StorageException;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.preference.PreferencePage;
+import org.eclipse.jface.window.Window;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.FocusListener;
@@ -182,6 +184,15 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
                 tokenEdited = true;
             }
         });
+
+        // Deliberately not driven by #updateModeEnablement: cleaning up credentials left in the
+        // installation-wide secure storage is not specific to the mode this workspace happens to use now.
+        Button storedSecretsButton = new Button(composite, SWT.PUSH);
+        storedSecretsButton.setText(Messages.StoredSecrets_Button);
+        storedSecretsButton.addSelectionListener(SelectionListener.widgetSelectedAdapter(e -> openStoredSecrets()));
+        Label storedSecretsHint = new Label(composite, SWT.WRAP);
+        storedSecretsHint.setText(Messages.StoredSecrets_ButtonHint);
+        storedSecretsHint.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 
         new Label(composite, SWT.NONE).setText(Messages.PreferencePage_TimeoutSeconds);
         timeoutSpinner = new Spinner(composite, SWT.BORDER);
@@ -400,6 +411,35 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         if (shouldReloadSecret(ciSecretLoadedForUrl, url, ciSecretEdited))
         {
             setCiSecretText(new SecureTokenStore().loadCiSecret(url), url);
+        }
+    }
+
+    /**
+     * Opens the stored-secrets dialog, the explicit cleanup path for credentials this EDT installation has
+     * accumulated in its secure storage (see {@link SecureTokenStore} for the removal rule, and
+     * {@link StoredSecretsDialog} for why the cleanup can only be an explicit, per-entry choice).
+     *
+     * <p>When something was actually removed, the secret fields are refilled from the storage: the user may
+     * have removed the very entry a field is showing, and pressing OK afterwards would otherwise write it
+     * straight back. A secret typed by hand is never refilled over, exactly as in
+     * {@link #shouldReloadSecret} (review minor M1).
+     */
+    private void openStoredSecrets()
+    {
+        String serverUrl = urlText.getText().trim();
+        String ciUrl = ciUrlText.getText().trim();
+        SecureTokenStore store = new SecureTokenStore();
+        StoredSecretsDialog dialog = new StoredSecretsDialog(getShell(), store, List.of(serverUrl, ciUrl));
+        if (dialog.open() == Window.OK && dialog.removedAny())
+        {
+            if (!tokenEdited)
+            {
+                setTokenText(store.loadToken(serverUrl), serverUrl);
+            }
+            if (!ciSecretEdited)
+            {
+                setCiSecretText(store.loadCiSecret(ciUrl), ciUrl);
+            }
         }
     }
 

@@ -23,11 +23,13 @@ import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
+import org.eclipse.osgi.util.NLS;
 
 import ru.jimmo.edt.sonarq.core.analysis.Processes;
 // Layering compromise, as in LocalIssueProvider: this "core" package has no NLS facility of its own, but the
-// out-of-memory hint below is shown to the user on the view's status line, so it borrows the UI bundle's
-// Messages rather than putting hardcoded English (naming an English settings path, at that) on a Russian EDT.
+// whole analysis-failure message below (its out-of-memory hint, its exit-code headline and the pointer to the
+// full log) is shown to the user on the view's status line and in the details dialog, so it borrows the UI
+// bundle's Messages rather than putting hardcoded English on a Russian EDT.
 import ru.jimmo.edt.sonarq.ui.Messages;
 
 /**
@@ -161,15 +163,36 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         int exit = process.exitValue();
         if (exit != 0)
         {
-            String hint = logContainsOutOfMemory(logFile)
-                ? Messages.LocalAnalysis_OutOfMemory + System.lineSeparator()
-                : EMPTY;
-            throw new IOException(hint + "The BSL Language Server exited with code " + exit //$NON-NLS-1$
-                + " while analyzing the sources (this usually means it failed to parse a module)." //$NON-NLS-1$
-                + System.lineSeparator() + "Full log: " + logFile.toAbsolutePath() //$NON-NLS-1$
-                + System.lineSeparator() + tailLog(logFile));
+            throw new IOException(failureMessage(exit, logFile, logContainsOutOfMemory(logFile)));
         }
         return outputDir.resolve(SARIF_FILE_NAME);
+    }
+
+    /**
+     * Composes the user-facing message of the {@link IOException} raised on a non-zero exit.
+     *
+     * <p>Every word of it comes from the localized {@link Messages} bundle: this is the headline the user
+     * actually reads on the view's status line (and in the details dialog) on every failed local analysis,
+     * out-of-memory or not, so leaving any of it as an English literal would show English text on a Russian
+     * EDT. Only the actionable parts are interpolated: the exit code, the <em>absolute</em> path of the full
+     * log, and the tail of that log - BSL LS never names the module that failed to parse, so pointing at the
+     * log is the best that can be done.
+     *
+     * <p>Package-private so the headless test fragment can assert that the composition is exactly this and
+     * carries no hardcoded wording of its own.
+     *
+     * @param exit the process exit code
+     * @param logFile the merged output log file, not {@code null}
+     * @param outOfMemory {@code true} when the log mentions an {@code OutOfMemoryError}, which prepends the
+     *     actionable heap hint
+     * @return the failure message, never {@code null}
+     */
+    static String failureMessage(int exit, Path logFile, boolean outOfMemory)
+    {
+        String hint = outOfMemory ? Messages.LocalAnalysis_OutOfMemory + System.lineSeparator() : EMPTY;
+        return hint + NLS.bind(Messages.LocalAnalysis_ExitCode, Integer.valueOf(exit)) + System.lineSeparator()
+            + NLS.bind(Messages.LocalAnalysis_FullLog, logFile.toAbsolutePath()) + System.lineSeparator()
+            + tailLog(logFile);
     }
 
     /**

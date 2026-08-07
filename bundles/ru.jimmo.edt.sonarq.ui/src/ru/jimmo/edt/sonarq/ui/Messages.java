@@ -86,6 +86,8 @@ public final class Messages extends NLS
     public static String IssuesView_SuppressAction;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
+    public static String LocalAnalysis_ExitCode;
+    public static String LocalAnalysis_FullLog;
     public static String LocalAnalysis_OutOfMemory;
     public static String LocalProgress_Analyzing;
     public static String LocalProgress_PrepareEngine;
@@ -155,6 +157,19 @@ public final class Messages extends NLS
     public static String SonarPrefs_BslLsUpdateChannel_Label;
     public static String SonarPrefs_BslLsUpdateChannel_Prerelease;
     public static String SonarPrefs_BslLsUpdateChannel_Stable;
+    public static String StoredSecrets_Button;
+    public static String StoredSecrets_ButtonHint;
+    public static String StoredSecrets_ConfirmBody;
+    public static String StoredSecrets_ConfirmTitle;
+    public static String StoredSecrets_Description;
+    public static String StoredSecrets_Empty;
+    public static String StoredSecrets_InUse;
+    public static String StoredSecrets_Kind_CiSecret;
+    public static String StoredSecrets_Kind_Token;
+    public static String StoredSecrets_Remove;
+    public static String StoredSecrets_RemoveFailed;
+    public static String StoredSecrets_Title;
+    public static String StoredSecrets_UnknownUrl;
     public static String Suppress_ResolutionLabel;
 
     static
