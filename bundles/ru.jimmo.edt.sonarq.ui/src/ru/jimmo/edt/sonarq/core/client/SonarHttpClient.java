@@ -50,8 +50,32 @@ public final class SonarHttpClient implements ISonarServerClient, AutoCloseable
     public SonarHttpClient(SonarConnection connection)
     {
         this.connection = connection;
-        this.http = HttpClient.newBuilder()
+        this.http = newHttpClient(connection);
+    }
+
+    /**
+     * Builds the underlying {@link HttpClient} for a connection.
+     *
+     * <p>Normal redirects are followed ({@link HttpClient.Redirect#NORMAL}): a SonarQube instance published
+     * behind an {@code http} to {@code https} redirect - or at a URL the server itself normalizes, e.g. a
+     * context path with or without its trailing element - answers the first request with a 3xx whose body is
+     * an HTML redirect page, not JSON. With the JDK default ({@link HttpClient.Redirect#NEVER}) that body
+     * reached {@link SonarJsonParser} and the user was shown a Gson syntax error instead of the issues, with
+     * nothing pointing at the URL as the cause. {@code NORMAL} rather than {@code ALWAYS} deliberately: it
+     * refuses to downgrade an {@code https} URL to plain {@code http}, so a redirect can never silently move
+     * the request - and its {@code Authorization: Bearer <token>} header - onto an unencrypted connection.
+     *
+     * <p>Package-private so the headless test fragment can assert the policy without reaching into the
+     * instance field.
+     *
+     * @param connection the connection settings, not {@code null}
+     * @return the configured client, never {@code null}
+     */
+    static HttpClient newHttpClient(SonarConnection connection)
+    {
+        return HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(connection.timeoutSeconds()))
+            .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
     }
 

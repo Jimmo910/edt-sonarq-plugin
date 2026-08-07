@@ -6,8 +6,6 @@
 
 package ru.jimmo.edt.sonarq.ui.markers;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +20,7 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
+import ru.jimmo.edt.sonarq.ui.resources.WorkspaceFiles;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /**
@@ -39,7 +38,9 @@ public final class IssueMarkerSynchronizer
      *
      * <p>A file that already exists on disk (e.g. written by a local analysis run) but was not yet picked up
      * by the workspace is still recognized instead of being wrongly reported as missing (issue #6) - but only
-     * the entries that actually need it are refreshed, one path at a time (see {@link #refreshMissing}).
+     * the entries that actually need it are refreshed, one path at a time (see
+     * {@link WorkspaceFiles#existsAfterRefresh}, which the editor navigation and the quick-suppress action
+     * share, so they keep working when this synchronization is switched off entirely).
      * A full-depth {@link IProject#refreshLocal} of the project used to run first, unconditionally: on the
      * large 1C configurations this plugin targets that is seconds of I/O while holding the project scheduling
      * rule, blocking builds, edits and saves - on every manual refresh, after every suppression and on every
@@ -103,13 +104,9 @@ public final class IssueMarkerSynchronizer
             return MarkerOutcome.SKIPPED_UNMAPPED;
         }
         IFile file = project.getFile(relativePath);
-        if (!file.exists())
+        if (!WorkspaceFiles.existsAfterRefresh(file))
         {
-            refreshMissing(file);
-            if (!file.exists())
-            {
-                return MarkerOutcome.MISSING_FILE;
-            }
+            return MarkerOutcome.MISSING_FILE;
         }
         SonarIssue issue = entry.issue();
         Map<String, Object> attributes = new HashMap<>();
@@ -125,42 +122,6 @@ public final class IssueMarkerSynchronizer
         IMarker marker = file.createMarker(IssueMarkers.MARKER_TYPE);
         marker.setAttributes(attributes);
         return MarkerOutcome.CREATED;
-    }
-
-    /**
-     * Brings a single file that is not in the resource tree into it, if it does exist on disk.
-     *
-     * <p>Walks up from {@code file} to the deepest ancestor the workspace already knows, then refreshes the
-     * missing handles back down, each with {@link IResource#DEPTH_ZERO}: creating a resource requires its
-     * parent to already be in the tree, and a file written behind the workspace's back may sit in a folder
-     * the workspace does not know either. Each step only stats one path, so nothing here scales with the
-     * size of the project - unlike the full-depth project refresh this replaced.
-     *
-     * <p>Stops as soon as a refreshed handle still does not exist: that path is genuinely absent from disk
-     * too, so the entry is a real {@link MarkerSyncResult#missingFile()}, not a stale resource tree.
-     *
-     * @param file the file handle that is not in the resource tree, not {@code null}
-     * @throws CoreException if a refresh fails
-     */
-    private static void refreshMissing(IFile file) throws CoreException
-    {
-        Deque<IResource> missing = new ArrayDeque<>();
-        IResource resource = file;
-        while (resource != null && resource.getType() != IResource.PROJECT && !resource.exists())
-        {
-            missing.addFirst(resource);
-            resource = resource.getParent();
-        }
-        for (IResource handle : missing)
-        {
-            // No monitor: each of these refreshes is a single stat of one path, and the runnable's monitor
-            // belongs to the enclosing workspace operation.
-            handle.refreshLocal(IResource.DEPTH_ZERO, null);
-            if (!handle.exists())
-            {
-                return;
-            }
-        }
     }
 
     /** The outcome of a single {@link #createMarker} call. */

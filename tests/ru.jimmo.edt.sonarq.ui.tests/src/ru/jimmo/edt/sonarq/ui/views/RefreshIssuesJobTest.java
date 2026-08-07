@@ -157,6 +157,24 @@ public class RefreshIssuesJobTest
         assertTrue(result.errorMessage().contains("kaboom"));
     }
 
+    /**
+     * Regression test for review minor M9: the raw {@code String.valueOf(exception)} - a Java class name and
+     * its message - used to become the view's status line, which tells the user nothing they can act on. The
+     * headline (the message's first line, see {@code SonarIssuesView#headlineOf}) must now be the localized
+     * sentence, with the technical text kept on the following line for the tooltip and the Details dialog.
+     */
+    @Test
+    public void unexpectedRuntimeErrorHeadlineIsLocalizedNotAJavaClassName()
+    {
+        String message = RefreshIssuesJob.toUserMessage(new IllegalStateException("kaboom"));
+        String headline = message.lines().findFirst().orElse("");
+
+        assertEquals(Messages.IssuesView_Status_UnexpectedError, headline);
+        assertFalse("the headline must not be the exception's class name", headline.contains("IllegalState"));
+        assertTrue("the technical detail must be kept for the log and the Details dialog",
+            message.contains("java.lang.IllegalStateException: kaboom"));
+    }
+
     @Test
     public void communityServerQueriesWithoutBranch() throws Exception
     {
