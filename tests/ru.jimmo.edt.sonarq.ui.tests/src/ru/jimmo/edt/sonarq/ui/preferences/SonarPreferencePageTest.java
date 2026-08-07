@@ -29,4 +29,30 @@ public class SonarPreferencePageTest
         assertFalse(SonarPreferencePage.heapSpinnerEnabled(false, false));
         assertFalse(SonarPreferencePage.heapSpinnerEnabled(false, true));
     }
+
+    /**
+     * Regression test for review minor M1: the URL field's focus-lost handler refilled the token field from
+     * the secure store unconditionally. Typing a token and then clicking into the URL field before pressing
+     * OK therefore replaced the typed token (usually with the empty string stored for that URL) and saved
+     * that instead - a silent credential loss. A token the user typed must survive until the user changes it.
+     */
+    @Test
+    public void typedSecretIsNeverOverwrittenByTheStoredOne()
+    {
+        assertFalse("a typed token must survive a URL edit",
+            SonarPreferencePage.shouldReloadSecret("https://old", "https://new", true));
+        assertFalse("a typed token must survive a focus-lost with the URL unchanged",
+            SonarPreferencePage.shouldReloadSecret("https://old", "https://old", true));
+    }
+
+    /**
+     * The refill itself must still happen when it is safe, otherwise a token belonging to the previous server
+     * would be sent to - and saved for - a different one.
+     */
+    @Test
+    public void untouchedSecretIsReloadedOnlyWhenTheUrlActuallyChanged()
+    {
+        assertTrue(SonarPreferencePage.shouldReloadSecret("https://old", "https://new", false));
+        assertFalse(SonarPreferencePage.shouldReloadSecret("https://old", "https://old", false));
+    }
 }

@@ -9,7 +9,9 @@ package ru.jimmo.edt.sonarq.ui.views;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -38,6 +40,7 @@ import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.IStructuredSelection;
+import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.TreeViewerColumn;
 import org.eclipse.osgi.util.NLS;
@@ -76,6 +79,7 @@ import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
+import ru.jimmo.edt.sonarq.ui.resources.WorkspaceFiles;
 import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
@@ -122,8 +126,10 @@ public class SonarIssuesView extends ViewPart
     private String sessionBranch;
     private String boundProjectKey = ""; //$NON-NLS-1$
     private String boundPathPrefix = ""; //$NON-NLS-1$
-    private long refreshGeneration;
+    private final RefreshGeneration refreshGeneration = new RefreshGeneration();
     private int missingFileMarkerCount;
+    /** Whether the snapshot on screen came from a local analysis; see {@link #truncationMessage}. */
+    private boolean lastRefreshWasLocal;
     private Job inFlightJob;
     private TreeColumn severityColumn;
     private TreeColumn ruleColumn;
@@ -159,9 +165,11 @@ public class SonarIssuesView extends ViewPart
             Object element = ((IStructuredSelection)event.getSelection()).getFirstElement();
             if (element instanceof IssueEntry entry)
             {
-                if (selectedProject != null)
+                if (selectedProject != null
+                    && IssueNavigation.open(getSite().getPage(), selectedProject, entry)
+                        == IssueNavigation.OpenOutcome.FILE_UNAVAILABLE)
                 {
-                    IssueNavigation.open(getSite().getPage(), selectedProject, entry);
+                    applyFileUnavailableStatus(entry);
                 }
             }
             else if (element instanceof IssueSuperGroup superGroup)
@@ -517,15 +525,154 @@ public class SonarIssuesView extends ViewPart
         rebuildTree();
     }
 
+    /**
+     * Rebuilds the tree from the current snapshot, keeping the user's expanded nodes and selection.
+     *
+     * <p>{@link TreeViewer#setInput} resets both, and this runs on every refresh - including the unattended
+     * background auto-sync ones, while the user is reading the tree - and on the in-place update after a
+     * single quick-suppress. Both used to collapse everything (review minor M8).
+     *
+     * <p>Restoration is keyed on {@link #elementKey}, not on the elements themselves: the tree nodes are
+     * records, so their equality is structural, and both paths that rebuild the tree change that structure.
+     * A suppression renumbers the issues below it in the file, and a refresh brings fresh issues altogether,
+     * so the rebuilt nodes are not {@code equals} to the captured ones even where they represent the same
+     * file, rule or issue - JFace's own element-identity restoration would drop exactly the nodes the user is
+     * looking at.
+     */
     private void rebuildTree()
     {
         applyColumnVisibility();
+        Set<String> expandedKeys = elementKeys(viewer.getExpandedElements());
+        Set<String> selectedKeys = elementKeys(viewer.getStructuredSelection().toArray());
         if (snapshot == null)
         {
             viewer.setInput(List.of());
             return;
         }
-        viewer.setInput(IssueTreeBuilder.build(snapshot.issues(), boundProjectKey, boundPathPrefix, grouping));
+        List<Object> roots = IssueTreeBuilder.build(snapshot.issues(), boundProjectKey, boundPathPrefix, grouping);
+        viewer.setInput(roots);
+        viewer.setExpandedElements(elementsForKeys(roots, expandedKeys, false).toArray());
+        List<Object> selection = elementsForKeys(roots, selectedKeys, true);
+        if (!selection.isEmpty())
+        {
+            viewer.setSelection(new StructuredSelection(selection), true);
+        }
+    }
+
+    /**
+     * Maps tree elements to their {@link #elementKey} identities.
+     *
+     * @param elements the elements, not {@code null}
+     * @return their keys, never {@code null}
+     */
+    private static Set<String> elementKeys(Object[] elements)
+    {
+        Set<String> keys = new HashSet<>();
+        for (Object element : elements)
+        {
+            keys.add(elementKey(element));
+        }
+        return keys;
+    }
+
+    /**
+     * Computes the stable identity of an issue-tree node, used to carry expansion and selection across a
+     * rebuild (see {@link #rebuildTree}).
+     *
+     * <p>Stable means: unchanged by anything a rebuild does to the node's contents. A group is therefore
+     * keyed on its label alone - the file path, rule key or severity name it groups by - and not on the
+     * issues it holds, whose count and line numbers change on every refresh. An issue is keyed on its
+     * {@link SonarIssue#key()}, which local analysis derives from rule and location and a server assigns; its
+     * line number is deliberately not part of the key, since a quick-suppress shifts it.
+     *
+     * <p>The type prefix keeps the three node kinds apart, so a file named like a rule cannot inherit the
+     * other's expansion state. Two same-labelled groups under different parents (the by-severity tree nests
+     * rule groups under each severity, and one rule can report issues at more than one severity) do share a
+     * key and are therefore expanded together - harmless, and the alternative, keying on the parent chain,
+     * would break as soon as a rule's issues move between severities.
+     *
+     * <p>Pure and SWT-free by design, so it can be unit-tested without a display.
+     *
+     * @param element a tree node ({@link IssueSuperGroup}, {@link IssueGroup} or {@link IssueEntry}), not
+     *     {@code null}
+     * @return the node's stable key, never {@code null}
+     */
+    static String elementKey(Object element)
+    {
+        if (element instanceof IssueSuperGroup superGroup)
+        {
+            return "S:" + superGroup.label(); //$NON-NLS-1$
+        }
+        if (element instanceof IssueGroup group)
+        {
+            return "G:" + group.label(); //$NON-NLS-1$
+        }
+        if (element instanceof IssueEntry entry)
+        {
+            return "E:" + entry.issue().key(); //$NON-NLS-1$
+        }
+        return "?:" + element; //$NON-NLS-1$
+    }
+
+    /**
+     * Collects the nodes of a freshly built tree whose {@link #elementKey} is in {@code keys}.
+     *
+     * <p>Walks the whole tree, which is at most three levels deep (see {@link IssueTreeBuilder#build}).
+     * Leaves are only collected when asked for: expansion applies to group nodes alone, while selection can
+     * name an individual issue.
+     *
+     * <p>Pure and SWT-free by design, so it can be unit-tested without a display.
+     *
+     * @param roots the rebuilt tree's top-level nodes, not {@code null}
+     * @param keys the keys to look for, not {@code null}
+     * @param includeEntries {@code true} to also match {@link IssueEntry} leaves
+     * @return the matching nodes, never {@code null}
+     */
+    static List<Object> elementsForKeys(List<Object> roots, Set<String> keys, boolean includeEntries)
+    {
+        List<Object> found = new ArrayList<>();
+        if (keys.isEmpty())
+        {
+            return found;
+        }
+        for (Object root : roots)
+        {
+            collectMatching(root, keys, includeEntries, found);
+        }
+        return found;
+    }
+
+    /**
+     * Adds {@code node} and, recursively, its children to {@code found} when their key is in {@code keys}.
+     *
+     * @param node the node to test, not {@code null}
+     * @param keys the keys to look for, not {@code null}
+     * @param includeEntries {@code true} to also match {@link IssueEntry} leaves
+     * @param found the accumulator, not {@code null}, mutated in place
+     */
+    private static void collectMatching(Object node, Set<String> keys, boolean includeEntries, List<Object> found)
+    {
+        boolean isEntry = node instanceof IssueEntry;
+        if ((includeEntries || !isEntry) && keys.contains(elementKey(node)))
+        {
+            found.add(node);
+        }
+        if (node instanceof IssueSuperGroup superGroup)
+        {
+            for (IssueGroup group : superGroup.groups())
+            {
+                collectMatching(group, keys, includeEntries, found);
+            }
+        }
+        else if (includeEntries && node instanceof IssueGroup group)
+        {
+            // Only the selection ever names a leaf; expansion never does, and a large snapshot holds tens of
+            // thousands of them.
+            for (IssueEntry entry : group.entries())
+            {
+                collectMatching(entry, keys, includeEntries, found);
+            }
+        }
     }
 
     /**
@@ -591,12 +738,17 @@ public class SonarIssuesView extends ViewPart
     private void suppressIssue(IssueEntry entry)
     {
         IFile file = selectedProject.getFile(entry.relativePath());
-        if (!file.exists())
-        {
-            return;
-        }
         try
         {
+            // A file changed behind the workspace's back (a git checkout run outside EDT) is not in the
+            // resource tree until something refreshes it. That used to happen only inside marker
+            // synchronization, which is skipped entirely when editor markers are switched off, so this action
+            // silently did nothing for such a file (review minor M11).
+            if (!WorkspaceFiles.existsAfterRefresh(file))
+            {
+                applyFileUnavailableStatus(entry);
+                return;
+            }
             if (SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage()))
             {
                 applySuppressionLineShift(entry.issue());
@@ -606,6 +758,25 @@ public class SonarIssuesView extends ViewPart
         {
             SonarqPlugin.getInstance().getLog().error(e.getMessage(), e);
         }
+    }
+
+    /**
+     * Tells the user, on the status line, that an issue's file is not in the project - instead of leaving a
+     * double-click or a "Suppress issue" click looking like it did nothing at all (review minor M11).
+     *
+     * <p>Deliberately not a dialog: nothing in this view may pop up a modal window outside an explicit user
+     * click on the "Details" link (see {@link #showErrorDetails}). This is a note, not a failure, so
+     * {@link #lastErrorMessage} is left alone and the link is hidden with it.
+     *
+     * @param entry the entry whose file could not be resolved, not {@code null}
+     */
+    private void applyFileUnavailableStatus(IssueEntry entry)
+    {
+        String path = entry.relativePath() != null ? entry.relativePath() : entry.issue().componentKey();
+        statusLabel.setText(NLS.bind(Messages.IssuesView_FileUnavailable, path));
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
+        statusLabel.getParent().layout();
     }
 
     /**
@@ -647,6 +818,16 @@ public class SonarIssuesView extends ViewPart
      * so this method never needs a fresh server or local-analysis round-trip to stay correct (issue #7
      * follow-up). Only ever called once an insertion is known to have happened.
      *
+     * <p>The edit also retires the current {@link RefreshGeneration}. A refresh may well be in flight - in
+     * local-analysis mode a large configuration takes minutes - and its results were computed from the
+     * sources as they were before these two comment lines existed. Letting such a result through would
+     * replace the snapshot just shifted here with pre-edit line numbers, and re-sync pre-edit markers on top
+     * of an already-edited file: the very desynchronization this method exists to prevent, only reintroduced
+     * from behind. {@link #scheduleMarkerSync} reads the generation after the bump, so the marker sync
+     * started right below is still applied; the dropped refresh leaves the status line without its
+     * completion callback, so it is refreshed here instead (unless an error message is on screen, which
+     * outranks a plain issue count).
+     *
      * @param issue the issue that was just suppressed, not {@code null}
      */
     private void applySuppressionLineShift(SonarIssue issue)
@@ -655,17 +836,20 @@ public class SonarIssuesView extends ViewPart
         {
             return;
         }
-        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), issue.key(),
-            issue.componentKey(), issue.line());
+        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), issue);
         snapshot = new IssueSnapshot(snapshot.query(), adjusted, adjusted.size(), snapshot.loadedAt());
+        refreshGeneration.invalidate();
         rebuildTree();
         scheduleMarkerSync();
+        if (lastErrorMessage == null)
+        {
+            updateStatusAndBanner();
+        }
     }
 
     private void refreshIssues()
     {
-        refreshGeneration++;
-        long generation = refreshGeneration;
+        long generation = refreshGeneration.start();
         IProject project = selectedProject != null ? selectedProject : firstOpenProject();
         if (project == null)
         {
@@ -683,6 +867,10 @@ public class SonarIssuesView extends ViewPart
         boundProjectKey = refreshInputs.mappingProjectKey();
         boundPathPrefix = refreshInputs.mappingPathPrefix();
         IIssueProvider refreshedProvider = refreshInputs.provider();
+        // Recorded from the provider actually used, rather than re-read from the preferences when the status
+        // line is built: the mode can be switched while a refresh is in flight, and the advice on screen has
+        // to describe the run that produced the issues (see #truncationMessage).
+        lastRefreshWasLocal = RefreshIssuesJob.isLocalProvider(refreshedProvider);
         applyRunningStatus();
         showEngineDownloadHintIfNeeded();
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
@@ -921,7 +1109,7 @@ public class SonarIssuesView extends ViewPart
             {
                 return;
             }
-            if (generation != refreshGeneration)
+            if (!refreshGeneration.isCurrent(generation))
             {
                 return;
             }
@@ -1021,7 +1209,7 @@ public class SonarIssuesView extends ViewPart
         IssueSnapshot markerSnapshot = snapshot;
         String projectKey = boundProjectKey;
         String pathPrefix = boundPathPrefix;
-        long generation = refreshGeneration;
+        long generation = refreshGeneration.current();
         new MarkerSyncJob(project,
             () -> IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix),
             result -> Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result)))
@@ -1037,7 +1225,7 @@ public class SonarIssuesView extends ViewPart
      */
     private void applyMarkerSyncResult(long generation, MarkerSyncResult result)
     {
-        if (viewer.getControl().isDisposed() || generation != refreshGeneration)
+        if (viewer.getControl().isDisposed() || !refreshGeneration.isCurrent(generation))
         {
             return;
         }
@@ -1053,6 +1241,25 @@ public class SonarIssuesView extends ViewPart
         setErrorDetailsVisible(false);
         statusLabel.getParent().layout();
         updateBanner();
+    }
+
+    /**
+     * Picks the "showing first N of M" message that matches where the issues came from.
+     *
+     * <p>Local analysis caps its own report at {@code LocalIssueProvider#MAX_ISSUES} just as the server-mode
+     * search caps its paging, so both modes can render a truncated snapshot - but the server-mode advice,
+     * "narrow the filters on the server side", is meaningless when nothing was fetched from a server. What
+     * actually shortens a local run is a narrower analysis scope (the project's Analysis scope properties) or
+     * fewer enabled checks.
+     *
+     * <p>Pure and SWT-free by design, so it can be unit-tested without a display.
+     *
+     * @param localMode {@code true} when the snapshot came from a local BSL Language Server analysis
+     * @return the message pattern to bind the counts into, never {@code null}
+     */
+    static String truncationMessage(boolean localMode)
+    {
+        return localMode ? Messages.IssuesView_Status_TruncatedLocal : Messages.IssuesView_Status_Truncated;
     }
 
     private String buildStatusText()
@@ -1072,7 +1279,7 @@ public class SonarIssuesView extends ViewPart
         }
         if (snapshot.truncated())
         {
-            text += "  " + NLS.bind(Messages.IssuesView_Status_Truncated, //$NON-NLS-1$
+            text += "  " + NLS.bind(truncationMessage(lastRefreshWasLocal), //$NON-NLS-1$
                 new Object[] { Integer.valueOf(count), Integer.valueOf(snapshot.serverTotal()) });
         }
         long unmapped = IssueTreeBuilder.countUnmapped(

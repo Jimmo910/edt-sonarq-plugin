@@ -7,7 +7,6 @@
 package ru.jimmo.edt.sonarq.ui.preferences;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -1041,10 +1040,10 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
     }
 
     /**
-     * Runs on the job thread: installs the language server if needed, analyzes an empty temporary source
-     * directory, parses the resulting SARIF report into a catalog and persists it, then applies it to the
-     * tree on the UI thread. Tolerates the page having been closed in the meantime (see
-     * {@link #applyFetchedCatalog(List)} and {@link #reportFetchError(String)}).
+     * Runs on the job thread: fetches the catalog (see {@link #fetchCatalogEntries(Path, IProgressMonitor)})
+     * and either applies it to the tree or reports the failure, both on the UI thread. Tolerates the page
+     * having been closed in the meantime (see {@link #applyFetchedCatalog(List)} and
+     * {@link #reportFetchError(String)}).
      *
      * @param stateDir the plugin state directory, not {@code null}
      * @param monitor the job's progress monitor, not {@code null}
@@ -1053,6 +1052,90 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
      *     job status)
      */
     private IStatus runFetchJob(Path stateDir, IProgressMonitor monitor)
+    {
+        FetchOutcome outcome = fetchOutcome(stateDir, monitor, BslChecksPreferencePage::fetchCatalogEntries);
+        if (outcome.cancelled())
+        {
+            return Status.CANCEL_STATUS;
+        }
+        if (outcome.errorMessage() != null)
+        {
+            reportFetchError(outcome.errorMessage());
+        }
+        else
+        {
+            applyFetchedCatalog(outcome.entries());
+        }
+        return Status.OK_STATUS;
+    }
+
+    /**
+     * Runs one catalog fetch and classifies its outcome, so every non-cancellation failure lands on
+     * {@link #statusLabel} instead of escaping to the Job framework as an error status.
+     *
+     * <p>The unchecked branch matters as much as the checked ones: a corrupt SARIF report raises a
+     * {@link com.google.gson.JsonSyntaxException} and the installer's directory walk can raise a
+     * {@link java.io.UncheckedIOException}, neither of which is an {@link IOException} the caller could
+     * otherwise catch (review minor M10).
+     *
+     * @param stateDir the plugin state directory, not {@code null}
+     * @param monitor the job's progress monitor, not {@code null}
+     * @param fetcher performs the fetch, not {@code null}
+     * @return the classified outcome, never {@code null}
+     */
+    static FetchOutcome fetchOutcome(Path stateDir, IProgressMonitor monitor, CatalogFetcher fetcher)
+    {
+        try
+        {
+            return new FetchOutcome(fetcher.fetch(stateDir, monitor), null, false);
+        }
+        catch (OperationCanceledException e)
+        {
+            // The user cancelled the job from the progress dialog; nothing to report, but the job status
+            // must reflect the cancellation rather than reporting OK.
+            return new FetchOutcome(List.of(), null, true);
+        }
+        catch (IOException e)
+        {
+            return new FetchOutcome(List.of(), failureMessage(e), false);
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            return new FetchOutcome(List.of(), failureMessage(e), false);
+        }
+        catch (RuntimeException e)
+        {
+            return new FetchOutcome(List.of(), failureMessage(e), false);
+        }
+    }
+
+    /**
+     * The text to show on the status label for a failed fetch.
+     *
+     * @param failure the caught failure, not {@code null}
+     * @return its message, or its {@code toString()} when it carries none (an
+     *     {@link IndexOutOfBoundsException}, say, would otherwise report an empty failure)
+     */
+    private static String failureMessage(Exception failure)
+    {
+        String message = failure.getMessage();
+        return message != null && !message.isBlank() ? message : String.valueOf(failure);
+    }
+
+    /**
+     * Does the actual fetch on the job thread: installs the language server if needed, analyzes an empty
+     * temporary source directory (yielding the full rule catalog with zero issues), parses the resulting
+     * SARIF report into a catalog and persists it.
+     *
+     * @param stateDir the plugin state directory, not {@code null}
+     * @param monitor the job's progress monitor, not {@code null}
+     * @return the fetched catalog entries, never {@code null}
+     * @throws IOException if the server cannot be installed, run, or its report read
+     * @throws InterruptedException if the analyzer process wait is interrupted
+     */
+    private static List<DiagnosticsCatalog.Entry> fetchCatalogEntries(Path stateDir, IProgressMonitor monitor)
+        throws IOException, InterruptedException
     {
         Path emptySrcDir = null;
         Path reportDir = null;
@@ -1067,35 +1150,44 @@ public class BslChecksPreferencePage extends PreferencePage implements IWorkbenc
             emptySrcDir = Files.createTempDirectory(TEMP_SRC_PREFIX);
             reportDir = Files.createTempDirectory(TEMP_REPORT_PREFIX);
             Path sarif = new ProcessAnalyzeRunner().analyze(executable, emptySrcDir, reportDir, null, monitor);
-            SarifReport report =
-                SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), CATALOG_PROJECT_KEY);
+            SarifReport report = SarifParser.parse(sarif, CATALOG_PROJECT_KEY);
             List<DiagnosticsCatalog.Entry> fetched = DiagnosticsCatalog.fromReport(report);
             DiagnosticsCatalog.save(stateDir.resolve(DiagnosticsCatalog.CATALOG_FILE_NAME), fetched);
-            applyFetchedCatalog(fetched);
-            return Status.OK_STATUS;
-        }
-        catch (OperationCanceledException e)
-        {
-            // The user cancelled the job from the progress dialog; nothing to report, but the job status
-            // must reflect the cancellation rather than reporting OK.
-            return Status.CANCEL_STATUS;
-        }
-        catch (IOException e)
-        {
-            reportFetchError(e.getMessage());
-            return Status.OK_STATUS;
-        }
-        catch (InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            reportFetchError(e.getMessage());
-            return Status.OK_STATUS;
+            return fetched;
         }
         finally
         {
             deleteQuietly(emptySrcDir);
             deleteQuietly(reportDir);
         }
+    }
+
+    /** Performs one diagnostics-catalog fetch; separated from its error handling so both are testable. */
+    @FunctionalInterface
+    interface CatalogFetcher
+    {
+        /**
+         * Fetches the diagnostics catalog.
+         *
+         * @param stateDir the plugin state directory, not {@code null}
+         * @param monitor the job's progress monitor, not {@code null}
+         * @return the fetched catalog entries, never {@code null}
+         * @throws IOException if the fetch fails on I/O
+         * @throws InterruptedException if the fetch is interrupted
+         */
+        List<DiagnosticsCatalog.Entry> fetch(Path stateDir, IProgressMonitor monitor)
+            throws IOException, InterruptedException;
+    }
+
+    /**
+     * The classified result of one catalog fetch.
+     *
+     * @param entries the fetched entries, empty unless the fetch succeeded, not {@code null}
+     * @param errorMessage the failure to show on the status label, or {@code null} when there was none
+     * @param cancelled whether the user cancelled the fetch
+     */
+    record FetchOutcome(List<DiagnosticsCatalog.Entry> entries, String errorMessage, boolean cancelled)
+    {
     }
 
     /**

@@ -12,6 +12,7 @@ import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient.Redirect;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -184,6 +185,37 @@ public class SonarHttpClientTest
         assertEquals(2, languages.size());
         assertTrue(languages.contains("bsl"));
         assertTrue(languages.contains("java"));
+    }
+
+    /**
+     * Regression test for review minor M9: the client used the JDK default redirect policy
+     * ({@link java.net.http.HttpClient.Redirect#NEVER}), so a server published behind a redirect answered
+     * with a 3xx whose HTML body was handed to the JSON parser - the user saw a Gson syntax error instead of
+     * the issues, with nothing pointing at the URL.
+     */
+    @Test
+    public void followsARedirectInsteadOfParsingItsBody() throws Exception
+    {
+        server.createContext("/api/server/version", exchange ->
+        {
+            exchange.getResponseHeaders().add("Location", "/moved/version");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        respond("/moved/version", 200, "10.4.1");
+
+        assertEquals("10.4.1", client().serverVersion());
+    }
+
+    /**
+     * The policy is {@code NORMAL}, not {@code ALWAYS}: a redirect must never be allowed to move the request
+     * - and its {@code Authorization} header - from {@code https} down to plain {@code http}.
+     */
+    @Test
+    public void redirectPolicyIsNormalSoHttpsIsNeverDowngraded()
+    {
+        assertEquals(Redirect.NORMAL,
+            SonarHttpClient.newHttpClient(SonarConnection.of(baseUrl + "/", "t", 10)).followRedirects());
     }
 
     @Test

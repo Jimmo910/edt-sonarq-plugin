@@ -8,14 +8,22 @@ package ru.jimmo.edt.sonarq.ui.preferences;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
 import org.junit.Test;
+
+import com.google.gson.JsonSyntaxException;
 
 import ru.jimmo.edt.sonarq.core.checks.CategoryEntry;
 import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategories;
@@ -26,6 +34,9 @@ import ru.jimmo.edt.sonarq.ui.Messages;
 /** Tests for the pure (SWT-free) parts of {@link BslChecksPreferencePage}. */
 public class BslChecksPreferencePageTest
 {
+    /** A stand-in state directory; the fetch stubs below never touch the file system. */
+    private static final Path STATE_DIR = Path.of("state");
+
     @Test
     public void recommendedToDisableReturnsExactlyTheRecommendedSubset()
     {
@@ -167,5 +178,93 @@ public class BslChecksPreferencePageTest
         String body = BslChecksPreferencePage.descriptionBody(diagKey, "Some description.");
 
         assertTrue(body.contains(Messages.BslChecksPage_NoTags));
+    }
+
+    /**
+     * A corrupt SARIF report raises an unchecked {@link JsonSyntaxException}, which used to escape the fetch
+     * job's {@code IOException}/{@code InterruptedException} catches and surface as a Job-framework error
+     * status instead of on the page's status label (review minor M10).
+     */
+    @Test
+    public void fetchOutcomeReportsACorruptReportOnThePageRatherThanEscaping()
+    {
+        BslChecksPreferencePage.FetchOutcome outcome =
+            BslChecksPreferencePage.fetchOutcome(STATE_DIR, new NullProgressMonitor(), (dir, monitor) ->
+            {
+                throw new JsonSyntaxException("Malformed SARIF report");
+            });
+
+        assertFalse(outcome.cancelled());
+        assertEquals("Malformed SARIF report", outcome.errorMessage());
+        assertTrue(outcome.entries().isEmpty());
+    }
+
+    /** The installer's {@code Files.walk} can fail with an unchecked wrapper; that must be reported too. */
+    @Test
+    public void fetchOutcomeReportsAnUncheckedIoFailure()
+    {
+        BslChecksPreferencePage.FetchOutcome outcome =
+            BslChecksPreferencePage.fetchOutcome(STATE_DIR, new NullProgressMonitor(), (dir, monitor) ->
+            {
+                throw new UncheckedIOException(new IOException("engine tree vanished"));
+            });
+
+        assertFalse(outcome.cancelled());
+        assertTrue(outcome.errorMessage().contains("engine tree vanished"));
+    }
+
+    /** A failure that carries no message must still say something on the status label. */
+    @Test
+    public void fetchOutcomeFallsBackToTheExceptionItselfWhenItCarriesNoMessage()
+    {
+        BslChecksPreferencePage.FetchOutcome outcome =
+            BslChecksPreferencePage.fetchOutcome(STATE_DIR, new NullProgressMonitor(), (dir, monitor) ->
+            {
+                throw new IllegalStateException();
+            });
+
+        assertFalse(outcome.cancelled());
+        assertTrue(outcome.errorMessage().contains("IllegalStateException"));
+    }
+
+    @Test
+    public void fetchOutcomeReportsACheckedIoFailure()
+    {
+        BslChecksPreferencePage.FetchOutcome outcome =
+            BslChecksPreferencePage.fetchOutcome(STATE_DIR, new NullProgressMonitor(), (dir, monitor) ->
+            {
+                throw new IOException("download failed");
+            });
+
+        assertFalse(outcome.cancelled());
+        assertEquals("download failed", outcome.errorMessage());
+    }
+
+    /** Cancellation is not a failure: it must stay a cancelled job status, with nothing on the label. */
+    @Test
+    public void fetchOutcomeTreatsCancellationAsCancelledNotAsAFailure()
+    {
+        BslChecksPreferencePage.FetchOutcome outcome =
+            BslChecksPreferencePage.fetchOutcome(STATE_DIR, new NullProgressMonitor(), (dir, monitor) ->
+            {
+                throw new OperationCanceledException();
+            });
+
+        assertTrue(outcome.cancelled());
+        assertNull(outcome.errorMessage());
+    }
+
+    @Test
+    public void fetchOutcomeCarriesTheFetchedEntriesOnSuccess()
+    {
+        List<DiagnosticsCatalog.Entry> fetched =
+            List.of(new DiagnosticsCatalog.Entry("MethodSize", "Method size", ""));
+
+        BslChecksPreferencePage.FetchOutcome outcome =
+            BslChecksPreferencePage.fetchOutcome(STATE_DIR, new NullProgressMonitor(), (dir, monitor) -> fetched);
+
+        assertFalse(outcome.cancelled());
+        assertNull(outcome.errorMessage());
+        assertEquals(fetched, outcome.entries());
     }
 }

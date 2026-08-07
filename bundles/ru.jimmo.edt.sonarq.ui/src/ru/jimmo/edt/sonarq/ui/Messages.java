@@ -62,6 +62,7 @@ public final class Messages extends NLS
     public static String IssuesView_Error_DetailsLink;
     public static String IssuesView_Error_DetailsTitle;
     public static String IssuesView_FileMissing_Tooltip;
+    public static String IssuesView_FileUnavailable;
     public static String IssuesView_FilterText_Hint;
     public static String IssuesView_GroupByFile;
     public static String IssuesView_GroupByRule;
@@ -79,10 +80,13 @@ public final class Messages extends NLS
     public static String IssuesView_Status_NotConfigured;
     public static String IssuesView_Status_Running;
     public static String IssuesView_Status_Truncated;
+    public static String IssuesView_Status_TruncatedLocal;
+    public static String IssuesView_Status_UnexpectedError;
     public static String IssuesView_Status_UnmappedCount;
     public static String IssuesView_SuppressAction;
     public static String IssuesView_TypeMenu;
     public static String IssuesView_UnmappedGroup;
+    public static String LocalAnalysis_OutOfMemory;
     public static String LocalProgress_Analyzing;
     public static String LocalProgress_PrepareEngine;
     public static String LocalProgress_Task;

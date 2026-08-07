@@ -8,10 +8,13 @@ package ru.jimmo.edt.sonarq.ui.views;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
 
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
@@ -22,6 +25,10 @@ import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.junit.Test;
 
+import ru.jimmo.edt.sonarq.core.model.SonarIssue;
+import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
+import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
+import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 
 /**
@@ -108,6 +115,78 @@ public class SonarIssuesViewTest
     {
         assertEquals(EnumSet.noneOf(SonarIssuesView.IssueColumn.class),
             SonarIssuesView.hiddenColumnFor(IssueGrouping.BY_FILE));
+    }
+
+    /**
+     * Regression test for review minor M8: a rebuild used to reset expansion and selection, because the tree
+     * nodes are records - structurally equal - and both rebuild paths change their structure. Here the
+     * "rebuilt" tree is what a quick-suppress leaves behind: the same file and the same issue, two lines
+     * further down. The captured nodes are not {@code equals} to the rebuilt ones, so restoring by element
+     * identity would drop them; restoring by {@link SonarIssuesView#elementKey} finds them.
+     */
+    @Test
+    public void expansionSurvivesTheLineShiftASuppressionLeavesBehind()
+    {
+        IssueEntry before = entry("issue-1", "bsl:CodeOutOfRegion", 10);
+        IssueEntry after = entry("issue-1", "bsl:CodeOutOfRegion", 12);
+        IssueGroup groupBefore = new IssueGroup("src/Module.bsl", List.of(before));
+        List<Object> rebuilt = List.of(new IssueGroup("src/Module.bsl", List.of(after)));
+
+        assertNotEquals("precondition: the rebuilt group is a different record", groupBefore, rebuilt.get(0));
+
+        Set<String> expanded = Set.of(SonarIssuesView.elementKey(groupBefore));
+        assertEquals(rebuilt, SonarIssuesView.elementsForKeys(rebuilt, expanded, false));
+    }
+
+    /** The selection is restored down to the individual issue, which expansion never names. */
+    @Test
+    public void selectionIsRestoredForALeafButExpansionIgnoresLeaves()
+    {
+        IssueEntry entry = entry("issue-7", "bsl:MethodSize", 42);
+        List<Object> rebuilt = List.of(new IssueGroup("src/Module.bsl", List.of(entry("issue-7",
+            "bsl:MethodSize", 44))));
+        Set<String> keys = Set.of(SonarIssuesView.elementKey(entry));
+
+        assertEquals(1, SonarIssuesView.elementsForKeys(rebuilt, keys, true).size());
+        assertTrue(SonarIssuesView.elementsForKeys(rebuilt, keys, false).isEmpty());
+    }
+
+    /** A three-level by-severity tree is walked, so a nested rule group is restored too. */
+    @Test
+    public void nestedRuleGroupOfTheBySeverityTreeIsRestored()
+    {
+        IssueGroup ruleGroup = new IssueGroup("bsl:MethodSize", List.of(entry("issue-3", "bsl:MethodSize", 5)));
+        List<Object> rebuilt = List.of(new IssueSuperGroup("MAJOR", List.of(ruleGroup)));
+        Set<String> keys = Set.of(SonarIssuesView.elementKey(ruleGroup));
+
+        assertEquals(List.of(ruleGroup), SonarIssuesView.elementsForKeys(rebuilt, keys, false));
+    }
+
+    /** The type prefix keeps a file group from inheriting a same-named rule group's expansion state. */
+    @Test
+    public void elementKeysOfDifferentNodeKindsNeverCollide()
+    {
+        assertNotEquals(SonarIssuesView.elementKey(new IssueGroup("MAJOR", List.of())),
+            SonarIssuesView.elementKey(new IssueSuperGroup("MAJOR", List.of())));
+    }
+
+    /**
+     * Regression test for the wording carried over from the previous review batch: local analysis caps its
+     * own report, so a local snapshot can read as truncated - but the server-mode advice ("narrow the filters
+     * on the server side") is meaningless when no server was involved.
+     */
+    @Test
+    public void localTruncationGetsItsOwnAdviceInsteadOfTheServerOne()
+    {
+        assertEquals(Messages.IssuesView_Status_Truncated, SonarIssuesView.truncationMessage(false));
+        assertEquals(Messages.IssuesView_Status_TruncatedLocal, SonarIssuesView.truncationMessage(true));
+        assertNotEquals(Messages.IssuesView_Status_Truncated, Messages.IssuesView_Status_TruncatedLocal);
+    }
+
+    private static IssueEntry entry(String key, String ruleKey, int line)
+    {
+        return new IssueEntry(new SonarIssue(key, ruleKey, SonarSeverity.MAJOR, SonarIssueType.CODE_SMELL,
+            "project:src/Module.bsl", "message", line), "src/Module.bsl");
     }
 
     /**

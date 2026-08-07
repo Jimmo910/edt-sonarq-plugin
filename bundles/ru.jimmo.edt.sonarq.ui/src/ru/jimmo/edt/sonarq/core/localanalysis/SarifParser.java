@@ -7,17 +7,25 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
+import com.google.gson.stream.MalformedJsonException;
 
 import ru.jimmo.edt.sonarq.core.checks.DiagnosticCategories;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
@@ -25,9 +33,32 @@ import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarRule;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 
-/** Parses SARIF reports produced by a local BSL Language Server analysis run. */
+/**
+ * Parses SARIF reports produced by a local BSL Language Server analysis run.
+ *
+ * <p>The report is read with a pull parser ({@link JsonReader}) straight off a {@link Reader}, one token at
+ * a time: neither the document text nor a parsed JSON tree is ever materialized. A full-checks run over an
+ * ERP-class 1C configuration produces a SARIF file in the hundreds of megabytes, and this parser runs inside
+ * the EDT JVM shared with the modeling core - reading such a report into a {@link String} (two bytes per
+ * character) and then into an object tree (several times that again) would exhaust the IDE's heap with an
+ * {@link OutOfMemoryError}, which, being an {@link Error}, no {@code catch (RuntimeException)} in the job
+ * layer would contain. Streaming keeps the resident cost proportional to the issues actually kept, not to
+ * the report size.
+ *
+ * <p>Members are handled in whatever order they arrive: SARIF puts {@code runs[].tool} before
+ * {@code runs[].results} in practice, but nothing here relies on that. Nothing needs buffering either - a
+ * result's issue type comes from the bundled diagnostic catalog rather than from the run's rule list (see
+ * {@link #issueTypeOf}), so results can be emitted as they are read even if the rules arrive afterwards.
+ *
+ * <p>A malformed or truncated report is reported as a {@link JsonSyntaxException} - the same unchecked
+ * failure the previous tree-based implementation raised - so callers see a clean, reportable error rather
+ * than a stray {@link IllegalStateException} or a checked I/O failure that has nothing to do with I/O.
+ */
 public final class SarifParser
 {
+    /** Passed as the issue limit to parse every result in the report, however many there are. */
+    public static final int NO_ISSUE_LIMIT = Integer.MAX_VALUE;
+
     private static final String FILE_SCHEME_PREFIX = "file://"; //$NON-NLS-1$
 
     private static final String FILE_SCHEME_ABSOLUTE = "file:///"; //$NON-NLS-1$
@@ -39,6 +70,8 @@ public final class SarifParser
     private static final String SLASH = "/"; //$NON-NLS-1$
 
     private static final String EMPTY = ""; //$NON-NLS-1$
+
+    private static final String MALFORMED_REPORT = "Malformed SARIF report"; //$NON-NLS-1$
 
     /** The BSL Language Server diagnostic type that maps onto {@link SonarIssueType#BUG}. */
     private static final String BSL_TYPE_ERROR = "Error"; //$NON-NLS-1$
@@ -80,6 +113,10 @@ public final class SarifParser
      * <p>Each result's {@link SonarIssueType} is derived from the bundled diagnostic catalog (see
      * {@link #issueTypeOf}); the catalog is loaded once per call, never per result.
      *
+     * <p>This overload takes the whole document as a {@link String} and is therefore only appropriate for
+     * reports of a known, bounded size (test fixtures, catalog-only reports). Prefer
+     * {@link #parse(Path, String, String, int)} for a report an analysis run produced.
+     *
      * @param json the SARIF document, not {@code null}
      * @param projectKey the SonarQube project key used to build component keys, not {@code null}
      * @param uriBasePrefix the absolute path prefix to strip from artifact URIs, may be empty or {@code null}
@@ -87,110 +124,88 @@ public final class SarifParser
      */
     public static SarifReport parse(String json, String projectKey, String uriBasePrefix)
     {
-        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-        List<SonarIssue> issues = new ArrayList<>();
-        Map<String, SonarRule> rules = new LinkedHashMap<>();
-        JsonArray runs = root.getAsJsonArray("runs"); //$NON-NLS-1$
-        if (runs != null)
+        try (Reader reader = new StringReader(json))
         {
-            DiagnosticCategories categories = DiagnosticCategories.load();
-            for (JsonElement runElement : runs)
-            {
-                JsonObject run = runElement.getAsJsonObject();
-                rules.putAll(parseRules(run));
-                issues.addAll(parseResults(run, projectKey, uriBasePrefix, categories));
-            }
+            return parse(reader, projectKey, uriBasePrefix, NO_ISSUE_LIMIT);
         }
-        return new SarifReport(issues, rules);
-    }
-
-    private static Map<String, SonarRule> parseRules(JsonObject run)
-    {
-        Map<String, SonarRule> rules = new LinkedHashMap<>();
-        JsonObject tool = run.getAsJsonObject("tool"); //$NON-NLS-1$
-        JsonObject driver = tool != null ? tool.getAsJsonObject("driver") : null; //$NON-NLS-1$
-        JsonArray ruleArray = driver != null ? driver.getAsJsonArray("rules") : null; //$NON-NLS-1$
-        if (ruleArray != null)
+        catch (IOException e)
         {
-            for (JsonElement element : ruleArray)
-            {
-                JsonObject ruleObject = element.getAsJsonObject();
-                String id = asString(ruleObject, "id"); //$NON-NLS-1$
-                rules.put(id, parseRule(ruleObject, id));
-            }
+            // A StringReader never fails on I/O; only a malformed document can get here, and that is
+            // already reported as a JsonSyntaxException from #parse(Reader, ...).
+            throw new JsonSyntaxException(MALFORMED_REPORT, e);
         }
-        return rules;
     }
 
-    private static SonarRule parseRule(JsonObject ruleObject, String id)
+    /**
+     * Streams a SARIF report file into issues and rule descriptions, keeping every result.
+     *
+     * @param reportFile the SARIF report file, not {@code null}
+     * @param projectKey the SonarQube project key used to build component keys, not {@code null}
+     * @return the parsed report, never {@code null}; empty when {@code runs} is absent or empty
+     * @throws IOException if the file cannot be read
+     * @throws JsonSyntaxException if the report is malformed or truncated
+     */
+    public static SarifReport parse(Path reportFile, String projectKey) throws IOException
     {
-        String name = asString(ruleObject, "name"); //$NON-NLS-1$
-        String ruleName = name.isEmpty() ? id : name;
-        return new SonarRule(id, ruleName, ruleDescription(ruleObject));
+        return parse(reportFile, projectKey, EMPTY, NO_ISSUE_LIMIT);
     }
 
-    private static String ruleDescription(JsonObject ruleObject)
+    /**
+     * Streams a SARIF report file into issues and rule descriptions, keeping at most {@code maxIssues} of
+     * them.
+     *
+     * <p>The file is read through a buffered {@link Reader} and never materialized as a string; see the
+     * class javadoc for why that matters inside the EDT JVM.
+     *
+     * @param reportFile the SARIF report file, not {@code null}
+     * @param projectKey the SonarQube project key used to build component keys, not {@code null}
+     * @param uriBasePrefix the absolute path prefix to strip from artifact URIs, may be empty or {@code null}
+     * @param maxIssues the maximum number of issues to keep, or {@link #NO_ISSUE_LIMIT} for all of them
+     * @return the parsed report, never {@code null}; {@link SarifReport#totalResults()} counts every result
+     *     in the file, including those dropped by the limit
+     * @throws IOException if the file cannot be read
+     * @throws JsonSyntaxException if the report is malformed or truncated
+     */
+    public static SarifReport parse(Path reportFile, String projectKey, String uriBasePrefix, int maxIssues)
+        throws IOException
     {
-        JsonObject fullDescription = ruleObject.getAsJsonObject("fullDescription"); //$NON-NLS-1$
-        String description = ""; //$NON-NLS-1$
-        if (fullDescription != null)
+        try (Reader reader = Files.newBufferedReader(reportFile, StandardCharsets.UTF_8))
         {
-            String text = asString(fullDescription, "text"); //$NON-NLS-1$
-            description = !text.isEmpty() ? text : asString(fullDescription, "markdown"); //$NON-NLS-1$
+            return parse(reader, projectKey, uriBasePrefix, maxIssues);
         }
-        String html = MarkdownHtml.toHtml(DiagnosticDescription.cleanMarkdown(description));
-        String helpUri = asString(ruleObject, "helpUri"); //$NON-NLS-1$
-        if (helpUri.isEmpty() || !hasSafeScheme(helpUri))
+    }
+
+    /**
+     * Streams a SARIF report off a {@link Reader} into issues and rule descriptions, keeping at most
+     * {@code maxIssues} of them.
+     *
+     * <p>Results beyond {@code maxIssues} are skipped token by token but still counted, so the caller can
+     * report a truthful "showing first N of M" total without holding on to the surplus.
+     *
+     * @param reader the SARIF document reader, not {@code null}; not closed by this method
+     * @param projectKey the SonarQube project key used to build component keys, not {@code null}
+     * @param uriBasePrefix the absolute path prefix to strip from artifact URIs, may be empty or {@code null}
+     * @param maxIssues the maximum number of issues to keep, or {@link #NO_ISSUE_LIMIT} for all of them
+     * @return the parsed report, never {@code null}; empty when {@code runs} is absent or empty
+     * @throws IOException if the reader fails
+     * @throws JsonSyntaxException if the report is malformed or truncated
+     */
+    public static SarifReport parse(Reader reader, String projectKey, String uriBasePrefix, int maxIssues)
+        throws IOException
+    {
+        JsonReader json = new JsonReader(reader);
+        ReportBuilder builder = new ReportBuilder(projectKey, uriBasePrefix, maxIssues);
+        try
         {
-            return html;
+            readRoot(json, builder);
         }
-        return html + "<p><a href=\"" + escapeAttribute(helpUri) //$NON-NLS-1$
-            + "\">Documentation</a></p>"; //$NON-NLS-1$
-    }
-
-    private static boolean hasSafeScheme(String url)
-    {
-        String lower = url.trim().toLowerCase(Locale.ROOT);
-        return lower.startsWith("http://") || lower.startsWith("https://") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.startsWith("mailto:"); //$NON-NLS-1$
-    }
-
-    private static String escapeAttribute(String value)
-    {
-        return value.replace("&", "&amp;") //$NON-NLS-1$ //$NON-NLS-2$
-            .replace("\"", "&quot;") //$NON-NLS-1$ //$NON-NLS-2$
-            .replace("<", "&lt;") //$NON-NLS-1$ //$NON-NLS-2$
-            .replace(">", "&gt;"); //$NON-NLS-1$ //$NON-NLS-2$
-    }
-
-    private static List<SonarIssue> parseResults(JsonObject run, String projectKey, String uriBasePrefix,
-        DiagnosticCategories categories)
-    {
-        List<SonarIssue> issues = new ArrayList<>();
-        JsonArray results = run.getAsJsonArray("results"); //$NON-NLS-1$
-        if (results != null)
+        catch (MalformedJsonException | EOFException | IllegalStateException | NumberFormatException e)
         {
-            for (JsonElement element : results)
-            {
-                issues.add(parseResult(element.getAsJsonObject(), projectKey, uriBasePrefix, categories));
-            }
+            // Gson reports a broken document as one of these; funnel them all into the single unchecked
+            // failure callers already handle, so a corrupt report never escapes as a stray IllegalState.
+            throw new JsonSyntaxException(MALFORMED_REPORT, e);
         }
-        return issues;
-    }
-
-    private static SonarIssue parseResult(JsonObject result, String projectKey, String uriBasePrefix,
-        DiagnosticCategories categories)
-    {
-        String ruleId = asString(result, "ruleId"); //$NON-NLS-1$
-        String message = asMessage(result);
-        SonarSeverity severity = severityFromLevel(asString(result, "level")); //$NON-NLS-1$
-        SonarIssueType type = issueTypeOf(categories.typeOf(ruleId));
-        JsonObject physicalLocation = firstPhysicalLocation(result);
-        String uri = normalizeUri(locationUri(physicalLocation), uriBasePrefix);
-        int line = locationLine(physicalLocation);
-        String componentKey = projectKey + ":" + uri; //$NON-NLS-1$
-        String key = ruleId + ":" + uri + ":" + line; //$NON-NLS-1$ //$NON-NLS-2$
-        return new SonarIssue(key, ruleId, severity, type, componentKey, message, line);
+        return builder.build();
     }
 
     /**
@@ -224,41 +239,502 @@ public final class SarifParser
         return SonarIssueType.CODE_SMELL;
     }
 
-    private static String asMessage(JsonObject result)
+    private static void readRoot(JsonReader json, ReportBuilder builder) throws IOException
     {
-        JsonObject message = result.getAsJsonObject("message"); //$NON-NLS-1$
-        return message != null ? asString(message, "text") : ""; //$NON-NLS-1$ //$NON-NLS-2$
-    }
-
-    private static JsonObject firstPhysicalLocation(JsonObject result)
-    {
-        JsonArray locations = result.getAsJsonArray("locations"); //$NON-NLS-1$
-        if (locations == null || locations.isEmpty())
+        json.beginObject();
+        while (json.hasNext())
         {
-            return null;
+            if ("runs".equals(json.nextName())) //$NON-NLS-1$
+            {
+                readRuns(json, builder);
+            }
+            else
+            {
+                json.skipValue();
+            }
         }
-        JsonObject location = locations.get(0).getAsJsonObject();
-        return location.getAsJsonObject("physicalLocation"); //$NON-NLS-1$
+        json.endObject();
     }
 
-    private static String locationUri(JsonObject physicalLocation)
+    private static void readRuns(JsonReader json, ReportBuilder builder) throws IOException
     {
-        if (physicalLocation == null)
+        if (!beginArrayOrSkip(json))
         {
-            return ""; //$NON-NLS-1$
+            return;
         }
-        JsonObject artifactLocation = physicalLocation.getAsJsonObject("artifactLocation"); //$NON-NLS-1$
-        return artifactLocation != null ? asString(artifactLocation, "uri") : ""; //$NON-NLS-1$ //$NON-NLS-2$
+        while (json.hasNext())
+        {
+            readRun(json, builder);
+        }
+        json.endArray();
     }
 
-    private static int locationLine(JsonObject physicalLocation)
+    private static void readRun(JsonReader json, ReportBuilder builder) throws IOException
     {
-        if (physicalLocation == null)
+        json.beginObject();
+        while (json.hasNext())
         {
+            String member = json.nextName();
+            if ("tool".equals(member)) //$NON-NLS-1$
+            {
+                readTool(json, builder);
+            }
+            else if ("results".equals(member)) //$NON-NLS-1$
+            {
+                readResults(json, builder);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    private static void readTool(JsonReader json, ReportBuilder builder) throws IOException
+    {
+        if (!beginObjectOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            if ("driver".equals(json.nextName())) //$NON-NLS-1$
+            {
+                readDriver(json, builder);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    private static void readDriver(JsonReader json, ReportBuilder builder) throws IOException
+    {
+        if (!beginObjectOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            if ("rules".equals(json.nextName())) //$NON-NLS-1$
+            {
+                readRules(json, builder);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    private static void readRules(JsonReader json, ReportBuilder builder) throws IOException
+    {
+        if (!beginArrayOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            builder.addRule(readRule(json));
+        }
+        json.endArray();
+    }
+
+    private static SonarRule readRule(JsonReader json) throws IOException
+    {
+        String id = EMPTY;
+        String name = EMPTY;
+        String helpUri = EMPTY;
+        RuleDescription description = new RuleDescription();
+        json.beginObject();
+        while (json.hasNext())
+        {
+            String member = json.nextName();
+            if ("id".equals(member)) //$NON-NLS-1$
+            {
+                id = nextStringOrEmpty(json);
+            }
+            else if ("name".equals(member)) //$NON-NLS-1$
+            {
+                name = nextStringOrEmpty(json);
+            }
+            else if ("helpUri".equals(member)) //$NON-NLS-1$
+            {
+                helpUri = nextStringOrEmpty(json);
+            }
+            else if ("fullDescription".equals(member)) //$NON-NLS-1$
+            {
+                readFullDescription(json, description);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+        String ruleName = name.isEmpty() ? id : name;
+        return new SonarRule(id, ruleName, ruleDescription(description, helpUri));
+    }
+
+    /**
+     * Reads a rule's {@code fullDescription} object.
+     *
+     * @param json the pull parser positioned on the member's value, not {@code null}
+     * @param description receives the {@code text} and {@code markdown} members, not {@code null}
+     * @throws IOException if the reader fails
+     */
+    private static void readFullDescription(JsonReader json, RuleDescription description) throws IOException
+    {
+        if (!beginObjectOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            String member = json.nextName();
+            if ("text".equals(member)) //$NON-NLS-1$
+            {
+                description.text = nextStringOrEmpty(json);
+            }
+            else if ("markdown".equals(member)) //$NON-NLS-1$
+            {
+                description.markdown = nextStringOrEmpty(json);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    private static String ruleDescription(RuleDescription description, String helpUri)
+    {
+        String raw = !description.text.isEmpty() ? description.text : description.markdown;
+        String html = MarkdownHtml.toHtml(DiagnosticDescription.cleanMarkdown(raw));
+        if (helpUri.isEmpty() || !hasSafeScheme(helpUri))
+        {
+            return html;
+        }
+        return html + "<p><a href=\"" + escapeAttribute(helpUri) //$NON-NLS-1$
+            + "\">Documentation</a></p>"; //$NON-NLS-1$
+    }
+
+    private static boolean hasSafeScheme(String url)
+    {
+        String lower = url.trim().toLowerCase(Locale.ROOT);
+        return lower.startsWith("http://") || lower.startsWith("https://") //$NON-NLS-1$ //$NON-NLS-2$
+            || lower.startsWith("mailto:"); //$NON-NLS-1$
+    }
+
+    private static String escapeAttribute(String value)
+    {
+        return value.replace("&", "&amp;") //$NON-NLS-1$ //$NON-NLS-2$
+            .replace("\"", "&quot;") //$NON-NLS-1$ //$NON-NLS-2$
+            .replace("<", "&lt;") //$NON-NLS-1$ //$NON-NLS-2$
+            .replace(">", "&gt;"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Streams the {@code results} array, materializing at most the builder's issue limit and skipping - but
+     * still counting - the rest.
+     *
+     * @param json the pull parser positioned on the member's value, not {@code null}
+     * @param builder collects the issues, not {@code null}
+     * @throws IOException if the reader fails
+     */
+    private static void readResults(JsonReader json, ReportBuilder builder) throws IOException
+    {
+        if (!beginArrayOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            if (builder.wantsMoreIssues())
+            {
+                builder.addIssue(readResult(json, builder));
+            }
+            else
+            {
+                json.skipValue();
+            }
+            builder.countResult();
+        }
+        json.endArray();
+    }
+
+    private static SonarIssue readResult(JsonReader json, ReportBuilder builder) throws IOException
+    {
+        String ruleId = EMPTY;
+        String level = EMPTY;
+        String message = EMPTY;
+        ResultLocation location = new ResultLocation();
+        json.beginObject();
+        while (json.hasNext())
+        {
+            String member = json.nextName();
+            if ("ruleId".equals(member)) //$NON-NLS-1$
+            {
+                ruleId = nextStringOrEmpty(json);
+            }
+            else if ("level".equals(member)) //$NON-NLS-1$
+            {
+                level = nextStringOrEmpty(json);
+            }
+            else if ("message".equals(member)) //$NON-NLS-1$
+            {
+                message = readMessageText(json);
+            }
+            else if ("locations".equals(member)) //$NON-NLS-1$
+            {
+                readLocations(json, location);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+        return builder.toIssue(ruleId, level, message, location);
+    }
+
+    private static String readMessageText(JsonReader json) throws IOException
+    {
+        String text = EMPTY;
+        if (!beginObjectOrSkip(json))
+        {
+            return text;
+        }
+        while (json.hasNext())
+        {
+            if ("text".equals(json.nextName())) //$NON-NLS-1$
+            {
+                text = nextStringOrEmpty(json);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+        return text;
+    }
+
+    /**
+     * Reads a result's {@code locations} array, keeping the first entry's physical location and skipping
+     * any further ones - exactly what the tree-based parser did with {@code locations.get(0)}.
+     *
+     * @param json the pull parser positioned on the member's value, not {@code null}
+     * @param location receives the first location's coordinates, not {@code null}
+     * @throws IOException if the reader fails
+     */
+    private static void readLocations(JsonReader json, ResultLocation location) throws IOException
+    {
+        if (!beginArrayOrSkip(json))
+        {
+            return;
+        }
+        boolean first = true;
+        while (json.hasNext())
+        {
+            if (first)
+            {
+                readLocation(json, location);
+                first = false;
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endArray();
+    }
+
+    private static void readLocation(JsonReader json, ResultLocation location) throws IOException
+    {
+        if (!beginObjectOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            if ("physicalLocation".equals(json.nextName())) //$NON-NLS-1$
+            {
+                readPhysicalLocation(json, location);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    private static void readPhysicalLocation(JsonReader json, ResultLocation location) throws IOException
+    {
+        if (!beginObjectOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            String member = json.nextName();
+            if ("artifactLocation".equals(member)) //$NON-NLS-1$
+            {
+                location.uri = readArtifactUri(json);
+            }
+            else if ("region".equals(member)) //$NON-NLS-1$
+            {
+                readRegion(json, location);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    private static String readArtifactUri(JsonReader json) throws IOException
+    {
+        String uri = EMPTY;
+        if (!beginObjectOrSkip(json))
+        {
+            return uri;
+        }
+        while (json.hasNext())
+        {
+            if ("uri".equals(json.nextName())) //$NON-NLS-1$
+            {
+                uri = nextStringOrEmpty(json);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+        return uri;
+    }
+
+    private static void readRegion(JsonReader json, ResultLocation location) throws IOException
+    {
+        if (!beginObjectOrSkip(json))
+        {
+            return;
+        }
+        while (json.hasNext())
+        {
+            String member = json.nextName();
+            if ("startLine".equals(member)) //$NON-NLS-1$
+            {
+                location.line = nextIntOrZero(json);
+            }
+            else if ("startColumn".equals(member)) //$NON-NLS-1$
+            {
+                location.column = nextIntOrZero(json);
+            }
+            else
+            {
+                json.skipValue();
+            }
+        }
+        json.endObject();
+    }
+
+    /**
+     * Enters an object value, or consumes it when it is JSON {@code null} - the tree-based parser treated a
+     * null member exactly like a missing one.
+     *
+     * @param json the pull parser positioned on a value, not {@code null}
+     * @return {@code true} when the object was entered and must be closed with {@code endObject}
+     * @throws IOException if the reader fails
+     */
+    private static boolean beginObjectOrSkip(JsonReader json) throws IOException
+    {
+        if (json.peek() != JsonToken.BEGIN_OBJECT)
+        {
+            json.skipValue();
+            return false;
+        }
+        json.beginObject();
+        return true;
+    }
+
+    /**
+     * Enters an array value, or consumes it when it is JSON {@code null}.
+     *
+     * @param json the pull parser positioned on a value, not {@code null}
+     * @return {@code true} when the array was entered and must be closed with {@code endArray}
+     * @throws IOException if the reader fails
+     */
+    private static boolean beginArrayOrSkip(JsonReader json) throws IOException
+    {
+        if (json.peek() != JsonToken.BEGIN_ARRAY)
+        {
+            json.skipValue();
+            return false;
+        }
+        json.beginArray();
+        return true;
+    }
+
+    private static String nextStringOrEmpty(JsonReader json) throws IOException
+    {
+        if (json.peek() == JsonToken.NULL)
+        {
+            json.nextNull();
+            return EMPTY;
+        }
+        return json.nextString();
+    }
+
+    private static int nextIntOrZero(JsonReader json) throws IOException
+    {
+        if (json.peek() == JsonToken.NULL)
+        {
+            json.nextNull();
             return 0;
         }
-        JsonObject region = physicalLocation.getAsJsonObject("region"); //$NON-NLS-1$
-        return region != null ? asInt(region, "startLine", 0) : 0; //$NON-NLS-1$
+        return json.nextInt();
+    }
+
+    /**
+     * Makes an issue key unique within one report.
+     *
+     * <p>A local-analysis key is synthesized from the finding's own coordinates - there is no server-side
+     * issue id to use - and the rule, file and line alone do not identify a finding: one line routinely
+     * carries several results of the same rule (e.g. {@code MissingSpace} around each of two operators).
+     * Duplicate keys break everything that treats a key as an identity: the Problems-view quick fix hands
+     * its marker's key to the issue view, which then renumbers whichever of the colliding issues it finds
+     * first, and the suppression bookkeeping cannot tell them apart. The column disambiguates all realistic
+     * collisions; the counter suffix is the belt-and-braces guarantee for a report that still repeats a
+     * position, so uniqueness is a property of this method rather than an assumption about the analyzer.
+     *
+     * @param candidate the key built from the finding's coordinates, not {@code null}
+     * @param usedKeys the keys already handed out for this report, mutated by this call, not {@code null}
+     * @return {@code candidate} when it is still free, otherwise {@code candidate} with a {@code #<n>}
+     *     occurrence suffix
+     */
+    private static String uniqueKey(String candidate, Set<String> usedKeys)
+    {
+        if (usedKeys.add(candidate))
+        {
+            return candidate;
+        }
+        int occurrence = 2;
+        String key = candidate + "#" + occurrence; //$NON-NLS-1$
+        while (!usedKeys.add(key))
+        {
+            occurrence++;
+            key = candidate + "#" + occurrence; //$NON-NLS-1$
+        }
+        return key;
     }
 
     /**
@@ -426,15 +902,87 @@ public final class SarifParser
         return remainder;
     }
 
-    private static String asString(JsonObject object, String member)
+    /** A rule's {@code fullDescription} members, filled in as the pull parser walks them. */
+    private static final class RuleDescription
     {
-        JsonElement value = object.get(member);
-        return value != null && !value.isJsonNull() ? value.getAsString() : ""; //$NON-NLS-1$
+        private String text = EMPTY;
+
+        private String markdown = EMPTY;
     }
 
-    private static int asInt(JsonObject object, String member, int defaultValue)
+    /** The coordinates of a result's first physical location, filled in as the pull parser walks it. */
+    private static final class ResultLocation
     {
-        JsonElement value = object.get(member);
-        return value != null && !value.isJsonNull() ? value.getAsInt() : defaultValue;
+        private String uri = EMPTY;
+
+        private int line;
+
+        private int column;
+    }
+
+    /**
+     * Accumulates one report as it streams past: the rule catalog, the issues kept within the limit, and
+     * the count of every result seen.
+     */
+    private static final class ReportBuilder
+    {
+        private final String projectKey;
+
+        private final String uriBasePrefix;
+
+        private final int maxIssues;
+
+        private final DiagnosticCategories categories = DiagnosticCategories.load();
+
+        private final List<SonarIssue> issues = new ArrayList<>();
+
+        private final Map<String, SonarRule> rules = new LinkedHashMap<>();
+
+        private final Set<String> usedKeys = new HashSet<>();
+
+        private int totalResults;
+
+        ReportBuilder(String projectKey, String uriBasePrefix, int maxIssues)
+        {
+            this.projectKey = projectKey;
+            this.uriBasePrefix = uriBasePrefix;
+            this.maxIssues = maxIssues;
+        }
+
+        boolean wantsMoreIssues()
+        {
+            return issues.size() < maxIssues;
+        }
+
+        void addRule(SonarRule rule)
+        {
+            rules.put(rule.key(), rule);
+        }
+
+        void addIssue(SonarIssue issue)
+        {
+            issues.add(issue);
+        }
+
+        void countResult()
+        {
+            totalResults++;
+        }
+
+        SonarIssue toIssue(String ruleId, String level, String message, ResultLocation location)
+        {
+            SonarSeverity severity = severityFromLevel(level);
+            SonarIssueType type = issueTypeOf(categories.typeOf(ruleId));
+            String uri = normalizeUri(location.uri, uriBasePrefix);
+            String componentKey = projectKey + ":" + uri; //$NON-NLS-1$
+            String key = uniqueKey(ruleId + ":" + uri + ":" + location.line //$NON-NLS-1$ //$NON-NLS-2$
+                + ":" + location.column, usedKeys); //$NON-NLS-1$
+            return new SonarIssue(key, ruleId, severity, type, componentKey, message, location.line);
+        }
+
+        SarifReport build()
+        {
+            return new SarifReport(issues, rules, totalResults);
+        }
     }
 }

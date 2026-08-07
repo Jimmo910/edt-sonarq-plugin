@@ -8,12 +8,21 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.util.Iterator;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import org.junit.Test;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
@@ -92,7 +101,7 @@ public class SarifParserTest
         assertEquals("Too long", first.message()); //$NON-NLS-1$
         assertEquals(42, first.line());
         assertEquals("TestConfiguration:src/CommonModules/X/Module.bsl", first.componentKey()); //$NON-NLS-1$
-        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:42", first.key()); //$NON-NLS-1$
+        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:42:0", first.key()); //$NON-NLS-1$
 
         SonarIssue second = report.issues().get(1);
         assertEquals(SonarSeverity.MINOR, second.severity());
@@ -133,7 +142,74 @@ public class SarifParserTest
             }""";
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
         assertEquals(0, report.issues().get(0).line());
-        assertEquals("MethodSize:src/Module.bsl:0", report.issues().get(0).key()); //$NON-NLS-1$
+        assertEquals("MethodSize:src/Module.bsl:0:0", report.issues().get(0).key()); //$NON-NLS-1$
+    }
+
+    /**
+     * A local-analysis key is synthesized, and one line routinely carries several findings of the same rule
+     * (two operators missing a space, say). While the key was only rule, file and line, those findings
+     * shared one key - and both the Problems-view quick fix (which hands its marker's key to the issue view)
+     * and the suppression bookkeeping treat a key as an identity.
+     */
+    @Test
+    public void twoFindingsOfOneRuleOnOneLineGetDistinctKeys()
+    {
+        String json = twoResultsOnLine10("""
+            "region": { "startLine": 10, "startColumn": 5 }""", """
+            "region": { "startLine": 10, "startColumn": 20 }""");
+
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY);
+
+        assertEquals(2, report.issues().size());
+        SonarIssue first = report.issues().get(0);
+        SonarIssue second = report.issues().get(1);
+        assertEquals(10, first.line());
+        assertEquals(10, second.line());
+        assertEquals("MissingSpace:src/Module.bsl:10:5", first.key()); //$NON-NLS-1$
+        assertEquals("MissingSpace:src/Module.bsl:10:20", second.key()); //$NON-NLS-1$
+    }
+
+    /** Even a report that repeats a position outright must not hand out one key twice. */
+    @Test
+    public void findingsAtTheVerySamePositionStillGetDistinctKeys()
+    {
+        String json = twoResultsOnLine10("""
+            "region": { "startLine": 10 }""", """
+            "region": { "startLine": 10 }""");
+
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY);
+
+        assertEquals(2, report.issues().size());
+        assertEquals("MissingSpace:src/Module.bsl:10:0", report.issues().get(0).key()); //$NON-NLS-1$
+        assertEquals("MissingSpace:src/Module.bsl:10:0#2", report.issues().get(1).key()); //$NON-NLS-1$
+    }
+
+    /**
+     * Builds a report of two {@code MissingSpace} results in one module, differing only in their region.
+     *
+     * @param firstRegion the first result's {@code region} member
+     * @param secondRegion the second result's {@code region} member
+     * @return the SARIF report as JSON
+     */
+    private static String twoResultsOnLine10(String firstRegion, String secondRegion)
+    {
+        String result = """
+            {
+              "ruleId": "MissingSpace",
+              "level": "note",
+              "message": { "text": "Missing space" },
+              "locations": [
+                {
+                  "physicalLocation": {
+                    "artifactLocation": { "uri": "src/Module.bsl" },
+                    %s
+                  }
+                }
+              ]
+            }""";
+        return "{ \"runs\": [ { \"results\": [ " //$NON-NLS-1$
+            + String.format(result, firstRegion) + ", " //$NON-NLS-1$
+            + String.format(result, secondRegion) + " ] } ] }"; //$NON-NLS-1$
     }
 
     @Test
@@ -288,7 +364,7 @@ public class SarifParserTest
         SarifReport report = SarifParser.parse(json, PROJECT_KEY);
         SonarIssue issue = report.issues().get(0);
         assertEquals("TestConfiguration:src/CommonModules/X/Module.bsl", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:5", issue.key()); //$NON-NLS-1$
+        assertEquals("MethodSize:src/CommonModules/X/Module.bsl:5:0", issue.key()); //$NON-NLS-1$
     }
 
     @Test
@@ -472,7 +548,7 @@ public class SarifParserTest
         SarifReport report = SarifParser.parse(json, PROJECT_KEY, "/home/user/proj"); //$NON-NLS-1$
         SonarIssue issue = report.issues().get(0);
         assertEquals("TestConfiguration:src/M.bsl", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MagicNumber:src/M.bsl:3", issue.key()); //$NON-NLS-1$
+        assertEquals("MagicNumber:src/M.bsl:3:0", issue.key()); //$NON-NLS-1$
     }
 
     @Test
@@ -506,7 +582,7 @@ public class SarifParserTest
         SarifReport report = SarifParser.parse(json, PROJECT_KEY, "E:/proj/TestConfiguration"); //$NON-NLS-1$
         SonarIssue issue = report.issues().get(0);
         assertEquals("TestConfiguration:src/CommonModules/Calc/Module.bsl", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MagicNumber:src/CommonModules/Calc/Module.bsl:6", issue.key()); //$NON-NLS-1$
+        assertEquals("MagicNumber:src/CommonModules/Calc/Module.bsl:6:0", issue.key()); //$NON-NLS-1$
     }
 
     @Test
@@ -714,7 +790,211 @@ public class SarifParserTest
         SonarIssue issue = report.issues().get(0);
         assertEquals(0, issue.line());
         assertEquals("TestConfiguration:", issue.componentKey()); //$NON-NLS-1$
-        assertEquals("MethodSize::0", issue.key()); //$NON-NLS-1$
+        assertEquals("MethodSize::0:0", issue.key()); //$NON-NLS-1$
+    }
+
+    /**
+     * The parser must consume the report as a stream, not as a document. This report is produced lazily,
+     * chunk by chunk, by a {@link Reader} the test controls: it is never a {@code String} and never a JSON
+     * tree, so it can only be parsed at all by a pull parser. Fifty thousand results are generated - far
+     * more than the hundred kept - and every one of them is still counted, so the caller can report an
+     * honest total.
+     */
+    @Test
+    public void hugeResultsArrayIsStreamedOffAReaderAndCappedAtTheIssueLimit() throws IOException
+    {
+        int generated = 50_000;
+        int limit = 100;
+
+        SarifReport report;
+        try (Reader reader = new ChunkedReader(sarifChunks(generated)))
+        {
+            report = SarifParser.parse(reader, PROJECT_KEY, "", limit); //$NON-NLS-1$
+        }
+
+        assertEquals(limit, report.issues().size());
+        assertEquals(generated, report.totalResults());
+        assertTrue(report.truncated());
+        // The kept issues are the first ones, in report order, fully parsed - not placeholders.
+        assertEquals(1, report.issues().get(0).line());
+        assertEquals(limit, report.issues().get(limit - 1).line());
+        assertEquals("MethodSize", report.issues().get(0).ruleKey()); //$NON-NLS-1$
+        // The rule catalog still comes out of the same single pass.
+        assertNotNull(report.rules().get("MethodSize")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void reportWithinTheIssueLimitIsNotReportedAsTruncated() throws IOException
+    {
+        SarifReport report;
+        try (Reader reader = new ChunkedReader(sarifChunks(5)))
+        {
+            report = SarifParser.parse(reader, PROJECT_KEY, "", 100); //$NON-NLS-1$
+        }
+
+        assertEquals(5, report.issues().size());
+        assertEquals(5, report.totalResults());
+        assertFalse(report.truncated());
+    }
+
+    @Test
+    public void unlimitedStringParseKeepsEveryResultAndReportsNoTruncation()
+    {
+        SarifReport report = SarifParser.parse(FULL_REPORT_JSON, PROJECT_KEY);
+
+        assertEquals(2, report.totalResults());
+        assertFalse(report.truncated());
+    }
+
+    /**
+     * SARIF puts {@code tool} before {@code results} in practice, but the streaming parser must not depend
+     * on that: a run whose rule catalog trails its results still yields both.
+     */
+    @Test
+    public void ruleCatalogIsCollectedEvenWhenItFollowsTheResults()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "MethodSize",
+                      "level": "warning",
+                      "message": { "text": "Too long" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "src/Module.bsl" },
+                            "region": { "startLine": 3 }
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "tool": {
+                    "driver": {
+                      "rules": [
+                        { "id": "MethodSize", "name": "Method size" }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }""";
+
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY);
+
+        assertEquals(1, report.issues().size());
+        assertEquals("Method size", report.rules().get("MethodSize").name()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A report cut off mid-document (a killed analyzer, a full disk) must fail cleanly, not as an Error. */
+    @Test
+    public void truncatedReportFailsAsAJsonSyntaxException()
+    {
+        String json = "{ \"runs\": [ { \"results\": [ { \"ruleId\": \"MethodSize\""; //$NON-NLS-1$
+
+        try
+        {
+            SarifParser.parse(json, PROJECT_KEY);
+            fail("expected a JsonSyntaxException"); //$NON-NLS-1$
+        }
+        catch (JsonSyntaxException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    @Test
+    public void corruptReportFailsAsAJsonSyntaxException()
+    {
+        try
+        {
+            SarifParser.parse("{ \"runs\": [ not json at all ] }", PROJECT_KEY); //$NON-NLS-1$
+            fail("expected a JsonSyntaxException"); //$NON-NLS-1$
+        }
+        catch (JsonSyntaxException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    /** A root that is not a JSON object is corrupt input, not an internal {@code IllegalStateException}. */
+    @Test
+    public void nonObjectRootFailsAsAJsonSyntaxException()
+    {
+        try
+        {
+            SarifParser.parse("[]", PROJECT_KEY); //$NON-NLS-1$
+            fail("expected a JsonSyntaxException"); //$NON-NLS-1$
+        }
+        catch (JsonSyntaxException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    /**
+     * Produces one SARIF document as a lazy sequence of chunks: a prefix carrying the rule catalog, one
+     * chunk per result, then the closing brackets. Nothing ever holds the whole document.
+     *
+     * @param resultCount how many results to generate
+     * @return the chunk sequence, never {@code null}
+     */
+    private static Iterator<String> sarifChunks(int resultCount)
+    {
+        String prefix = "{\"runs\":[{\"tool\":{\"driver\":{\"rules\":[" //$NON-NLS-1$
+            + "{\"id\":\"MethodSize\",\"name\":\"Method size\"}]}},\"results\":["; //$NON-NLS-1$
+        Stream<String> results = IntStream.rangeClosed(1, resultCount)
+            .mapToObj(line -> (line == 1 ? "" : ",") + generatedResult(line)); //$NON-NLS-1$ //$NON-NLS-2$
+        return Stream.concat(Stream.of(prefix), Stream.concat(results, Stream.of("]}]}"))).iterator(); //$NON-NLS-1$
+    }
+
+    private static String generatedResult(int line)
+    {
+        return "{\"ruleId\":\"MethodSize\",\"level\":\"warning\",\"message\":{\"text\":\"Too long\"}," //$NON-NLS-1$
+            + "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/M.bsl\"}," //$NON-NLS-1$
+            + "\"region\":{\"startLine\":" + line + ",\"startColumn\":1}}}]}"; //$NON-NLS-1$
+    }
+
+    /** Serves a lazily produced sequence of chunks as a {@link Reader}, never materializing the whole. */
+    private static final class ChunkedReader extends Reader
+    {
+        private final Iterator<String> chunks;
+
+        private String current = ""; //$NON-NLS-1$
+
+        private int position;
+
+        ChunkedReader(Iterator<String> chunks)
+        {
+            this.chunks = chunks;
+        }
+
+        @Override
+        public int read(char[] buffer, int offset, int length)
+        {
+            while (position >= current.length())
+            {
+                if (!chunks.hasNext())
+                {
+                    return -1;
+                }
+                current = chunks.next();
+                position = 0;
+            }
+            int count = Math.min(length, current.length() - position);
+            current.getChars(position, position + count, buffer, offset);
+            position += count;
+            return count;
+        }
+
+        @Override
+        public void close()
+        {
+            // Nothing to release; the chunk sequence is pure computation.
+        }
     }
 
     private static SonarSeverity parseSingleResultSeverity(String level)

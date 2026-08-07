@@ -25,6 +25,10 @@ import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 
 import ru.jimmo.edt.sonarq.core.analysis.Processes;
+// Layering compromise, as in LocalIssueProvider: this "core" package has no NLS facility of its own, but the
+// out-of-memory hint below is shown to the user on the view's status line, so it borrows the UI bundle's
+// Messages rather than putting hardcoded English (naming an English settings path, at that) on a Russian EDT.
+import ru.jimmo.edt.sonarq.ui.Messages;
 
 /**
  * Runs the BSL Language Server native launcher as an external process.
@@ -75,9 +79,6 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
     private static final String PUMP_THREAD_NAME = "sonarq-bsl-ls-output"; //$NON-NLS-1$
     private static final String EMPTY = ""; //$NON-NLS-1$
     private static final String OUT_OF_MEMORY_MARKER = "OutOfMemoryError"; //$NON-NLS-1$
-    private static final String OUT_OF_MEMORY_HINT =
-        "BSL Language Server ran out of memory. Increase 'BSL LS max heap' in Settings -> SonarQube, " //$NON-NLS-1$
-            + "then retry."; //$NON-NLS-1$
     private static final String JAVA_OPTIONS_ENV_VAR = "_JAVA_OPTIONS"; //$NON-NLS-1$
     private static final String XMX_FLAG_PREFIX = "-Xmx"; //$NON-NLS-1$
     private static final String HEAP_UNIT_SUFFIX = "g"; //$NON-NLS-1$
@@ -161,7 +162,7 @@ public final class ProcessAnalyzeRunner implements AnalyzeRunner
         if (exit != 0)
         {
             String hint = logContainsOutOfMemory(logFile)
-                ? OUT_OF_MEMORY_HINT + System.lineSeparator()
+                ? Messages.LocalAnalysis_OutOfMemory + System.lineSeparator()
                 : EMPTY;
             throw new IOException(hint + "The BSL Language Server exited with code " + exit //$NON-NLS-1$
                 + " while analyzing the sources (this usually means it failed to parse a module)." //$NON-NLS-1$

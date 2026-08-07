@@ -125,9 +125,28 @@ public class RefreshIssuesJob extends Job
         catch (RuntimeException e)
         {
             Platform.getLog(getClass()).error(e.getMessage(), e);
-            callback.accept(RefreshResult.error(String.valueOf(e)));
+            callback.accept(RefreshResult.error(toUserMessage(e)));
             return Status.OK_STATUS;
         }
+    }
+
+    /**
+     * Turns an unexpected runtime failure into a message fit for the view's status line.
+     *
+     * <p>The bare {@link String#valueOf(Object)} of the exception used to go straight to the status line, so a
+     * malformed server response showed up as {@code com.google.gson.JsonSyntaxException: ...} - a Java class
+     * name tells the user nothing about what to do. The first line is now a localized sentence pointing at the
+     * Error Log (where {@code run} has just logged the whole stack trace); the exception's own text follows on
+     * a second line, which the status line does not show but the label tooltip and the "Details" dialog do
+     * (see {@code SonarIssuesView#applyErrorStatus} and {@code SonarIssuesView#headlineOf}), so nothing
+     * technical is lost.
+     *
+     * @param e the unexpected failure, not {@code null}
+     * @return the user-facing message, never {@code null}
+     */
+    static String toUserMessage(RuntimeException e)
+    {
+        return Messages.IssuesView_Status_UnexpectedError + System.lineSeparator() + e;
     }
 
     private static String toUserMessage(SonarServerException e)

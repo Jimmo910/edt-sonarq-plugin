@@ -12,9 +12,9 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.jobs.Job;
@@ -45,7 +45,7 @@ import org.eclipse.ui.IWorkbenchPreferencePage;
 import org.osgi.service.prefs.BackingStoreException;
 
 import ru.jimmo.edt.sonarq.core.analysis.AnalysisLaunchMode;
-import ru.jimmo.edt.sonarq.core.analysis.Processes;
+import ru.jimmo.edt.sonarq.core.analysis.ProcessOutput;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClient;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
@@ -76,6 +76,9 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     // and this array maps that same index back to the stored preference value.
     private static final String[] UPDATE_CHANNEL_VALUES = { PreferenceConstants.UPDATE_CHANNEL_FIXED,
         PreferenceConstants.UPDATE_CHANNEL_STABLE, PreferenceConstants.UPDATE_CHANNEL_PRERELEASE };
+
+    /** How long {@link #probeBslExecutable} waits for the {@code --version} run to finish. */
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
 
     private Combo modeCombo;
 
@@ -123,6 +126,24 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     private Spinner autoSyncMinutesSpinner;
 
+    /** The server URL {@link #tokenText}'s current content was loaded for; see {@link #shouldReloadSecret}. */
+    private String tokenLoadedForUrl = ""; //$NON-NLS-1$
+
+    /** Whether the user typed in {@link #tokenText} since it was last filled from the secure store. */
+    private boolean tokenEdited;
+
+    /** Guards {@link #tokenEdited} against this page's own {@code setText} calls. */
+    private boolean tokenUpdating;
+
+    /** The CI URL {@link #ciSecretText}'s current content was loaded for; see {@link #shouldReloadSecret}. */
+    private String ciSecretLoadedForUrl = ""; //$NON-NLS-1$
+
+    /** Whether the user typed in {@link #ciSecretText} since it was last filled from the secure store. */
+    private boolean ciSecretEdited;
+
+    /** Guards {@link #ciSecretEdited} against this page's own {@code setText} calls. */
+    private boolean ciSecretUpdating;
+
     @Override
     public void init(IWorkbench workbench)
     {
@@ -147,13 +168,20 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         urlText = new Text(composite, SWT.BORDER);
         urlText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
         // Reload the token stored for whichever server the URL now names, so an old server's token is never
-        // left in the field to be sent to (or saved for) a different server after the URL is changed.
-        urlText.addFocusListener(FocusListener.focusLostAdapter(e ->
-            tokenText.setText(new SecureTokenStore().loadToken(urlText.getText().trim()))));
+        // left in the field to be sent to (or saved for) a different server after the URL is changed - but
+        // never over a token the user typed (see #shouldReloadSecret).
+        urlText.addFocusListener(FocusListener.focusLostAdapter(e -> reloadTokenForCurrentUrl()));
 
         new Label(composite, SWT.NONE).setText(Messages.PreferencePage_Token);
         tokenText = new Text(composite, SWT.BORDER | SWT.PASSWORD);
         tokenText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        tokenText.addModifyListener(e ->
+        {
+            if (!tokenUpdating)
+            {
+                tokenEdited = true;
+            }
+        });
 
         new Label(composite, SWT.NONE).setText(Messages.PreferencePage_TimeoutSeconds);
         timeoutSpinner = new Spinner(composite, SWT.BORDER);
@@ -196,12 +224,18 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         new Label(group, SWT.NONE).setText(Messages.PreferencePage_CiUrl);
         ciUrlText = new Text(group, SWT.BORDER);
         ciUrlText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-        ciUrlText.addFocusListener(FocusListener.focusLostAdapter(e ->
-            ciSecretText.setText(new SecureTokenStore().loadCiSecret(ciUrlText.getText().trim()))));
+        ciUrlText.addFocusListener(FocusListener.focusLostAdapter(e -> reloadCiSecretForCurrentUrl()));
 
         new Label(group, SWT.NONE).setText(Messages.PreferencePage_CiSecret);
         ciSecretText = new Text(group, SWT.BORDER | SWT.PASSWORD);
         ciSecretText.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        ciSecretText.addModifyListener(e ->
+        {
+            if (!ciSecretUpdating)
+            {
+                ciSecretEdited = true;
+            }
+        });
 
         new Label(group, SWT.NONE).setText(Messages.PreferencePage_ExtraArgs);
         extraArgsText = new Text(group, SWT.BORDER);
@@ -322,6 +356,97 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
     }
 
     /**
+     * Decides whether a secret field (the server token, the CI secret) may be refilled from the secure store
+     * for the URL it is paired with.
+     *
+     * <p>Refilling is what keeps a previous server's token from being sent to - or saved for - a different
+     * server once its URL is edited. It must, however, never throw away a secret the user typed: the URL
+     * field's focus-lost event fires <em>before</em> the OK button's own handler, so the sequence "type the
+     * token, click into the URL field, press OK" used to overwrite the freshly typed token (usually with the
+     * empty string stored for that URL) and save that instead, silently. Hence both conditions: the URL has
+     * to have actually changed since the field was filled, and the field must not have been edited by hand
+     * since then (review minor M1).
+     *
+     * <p>Pure and SWT-free by design, so it can be unit-tested without a display.
+     *
+     * @param loadedForUrl the URL the field's current content was loaded for, not {@code null}
+     * @param currentUrl the URL now typed in the paired URL field, not {@code null}
+     * @param fieldEdited {@code true} when the user typed in the secret field since it was last loaded
+     * @return {@code true} when the stored secret for {@code currentUrl} may replace the field's content
+     */
+    static boolean shouldReloadSecret(String loadedForUrl, String currentUrl, boolean fieldEdited)
+    {
+        return !fieldEdited && !loadedForUrl.equals(currentUrl);
+    }
+
+    /**
+     * Refills the token field from the secure store for the URL currently typed, when that is safe.
+     */
+    private void reloadTokenForCurrentUrl()
+    {
+        String url = urlText.getText().trim();
+        if (shouldReloadSecret(tokenLoadedForUrl, url, tokenEdited))
+        {
+            setTokenText(new SecureTokenStore().loadToken(url), url);
+        }
+    }
+
+    /**
+     * Refills the CI secret field from the secure store for the CI URL currently typed, when that is safe.
+     */
+    private void reloadCiSecretForCurrentUrl()
+    {
+        String url = ciUrlText.getText().trim();
+        if (shouldReloadSecret(ciSecretLoadedForUrl, url, ciSecretEdited))
+        {
+            setCiSecretText(new SecureTokenStore().loadCiSecret(url), url);
+        }
+    }
+
+    /**
+     * Fills the token field programmatically, recording which URL the value belongs to and clearing the
+     * "edited by the user" flag that {@link #shouldReloadSecret} consults.
+     *
+     * @param token the token to show, not {@code null}
+     * @param url the trimmed server URL the token was loaded for, not {@code null}
+     */
+    private void setTokenText(String token, String url)
+    {
+        tokenUpdating = true;
+        try
+        {
+            tokenText.setText(token);
+        }
+        finally
+        {
+            tokenUpdating = false;
+        }
+        tokenLoadedForUrl = url;
+        tokenEdited = false;
+    }
+
+    /**
+     * Fills the CI secret field programmatically; the counterpart of {@link #setTokenText}.
+     *
+     * @param secret the secret to show, not {@code null}
+     * @param url the trimmed CI trigger URL the secret was loaded for, not {@code null}
+     */
+    private void setCiSecretText(String secret, String url)
+    {
+        ciSecretUpdating = true;
+        try
+        {
+            ciSecretText.setText(secret);
+        }
+        finally
+        {
+            ciSecretUpdating = false;
+        }
+        ciSecretLoadedForUrl = url;
+        ciSecretEdited = false;
+    }
+
+    /**
      * Blocks the page while local mode expects a user-supplied executable that does not point to a file.
      */
     private void validateBslPath()
@@ -384,7 +509,13 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
 
     /**
      * Runs the given file with {@code --version} and reports whether the output looks like BSL Language
-     * Server. The wait is bounded; output is read only after the process exits (version output is tiny).
+     * Server.
+     *
+     * <p>The wait is bounded, and the output is drained <em>while</em> the process runs (see
+     * {@link ProcessOutput}): reading it only after the exit deadlocked against any executable printing more
+     * than one OS pipe buffer on {@code --version} - a JVM launcher with a verbose {@code _JAVA_OPTIONS} or
+     * GC logging does exactly that - and the deadlock was then reported to the user as a timeout (review
+     * minor M6).
      *
      * @param path the executable path chosen by the user, not {@code null}
      * @return the localized result message, never {@code null}
@@ -394,12 +525,13 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         try
         {
             Process process = new ProcessBuilder(path, "--version").redirectErrorStream(true).start(); //$NON-NLS-1$
-            if (!process.waitFor(30, TimeUnit.SECONDS))
+            Optional<String> captured =
+                ProcessOutput.awaitMergedOutput(process, PROBE_TIMEOUT, Charset.defaultCharset());
+            if (captured.isEmpty())
             {
-                Processes.terminate(process);
                 return NLS.bind(Messages.PreferencePage_BslVerifyFail, "timeout"); //$NON-NLS-1$
             }
-            String output = new String(process.getInputStream().readAllBytes(), Charset.defaultCharset());
+            String output = captured.get();
             // The native launcher prints JVM warnings first; prefer the "version: ..." line for display.
             String display = output.lines().map(String::trim)
                 .filter(line -> line.toLowerCase(Locale.ROOT).startsWith("version")) //$NON-NLS-1$
@@ -568,7 +700,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         timeoutSpinner.setSelection(service.getInt(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_TIMEOUT_SECONDS, PreferenceConstants.DEFAULT_TIMEOUT_SECONDS, null));
         SecureTokenStore tokenStore = new SecureTokenStore();
-        tokenText.setText(tokenStore.loadToken(serverUrl.trim()));
+        setTokenText(tokenStore.loadToken(serverUrl.trim()), serverUrl.trim());
 
         AnalysisLaunchMode launchMode = AnalysisLaunchMode.fromKey(service.getString(SonarqPlugin.PLUGIN_ID,
             PreferenceConstants.PREF_LAUNCH_MODE, AnalysisLaunchMode.LOCAL_AUTO.name(), null));
@@ -578,7 +710,7 @@ public class SonarPreferencePage extends PreferencePage implements IWorkbenchPre
         String ciUrl =
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_CI_URL, "", null); //$NON-NLS-1$
         ciUrlText.setText(ciUrl);
-        ciSecretText.setText(tokenStore.loadCiSecret(ciUrl.trim()));
+        setCiSecretText(tokenStore.loadCiSecret(ciUrl.trim()), ciUrl.trim());
         extraArgsText.setText(
             service.getString(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_EXTRA_ARGS, "", null)); //$NON-NLS-1$
         updateModeEnablement();

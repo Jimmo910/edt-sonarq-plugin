@@ -23,6 +23,15 @@ import org.eclipse.equinox.security.storage.StorageException;
  * the secret): the storage key is derived from a hash of that URL. This keeps one workspace's server token
  * from being sent to a different server after the URL is changed — pointing the plugin at a new URL simply
  * finds no secret stored for it, rather than reusing the previous server's.
+ *
+ * <p>Storing an empty secret <em>removes</em> the entry instead of writing an empty value (review minor
+ * M13). That is the whole cleanup rule, and it is deliberately the only one: clearing the token field and
+ * pressing OK drops the stored token for that URL, so a server the user has finished with does not keep a
+ * credential in the secure storage forever. Nothing is pruned merely for not matching the URL configured
+ * right now — the secure storage is per <em>installation</em>, shared by every workspace of that EDT, so a
+ * URL absent from this workspace's preferences may well be the one another workspace is bound to. An empty
+ * stored value was never distinguishable from a missing one anyway ({@link #loadToken} answers {@code ""}
+ * for both), so the rule removes stale entries without changing any observable behaviour.
  */
 public final class SecureTokenStore
 {
@@ -32,6 +41,28 @@ public final class SecureTokenStore
 
     private static final String KEY_CI_SECRET = "ciSecret"; //$NON-NLS-1$
 
+    private static final String EMPTY = ""; //$NON-NLS-1$
+
+    private final ISecretNode node;
+
+    /** Creates a store backed by the platform secure storage. */
+    public SecureTokenStore()
+    {
+        this(new PlatformSecretNode());
+    }
+
+    /**
+     * Creates a store over the given backing node. Package-private: it exists so the headless test fragment
+     * can drive the scoping and cleanup rules without touching the platform secure storage, which may
+     * prompt for a master password.
+     *
+     * @param node the backing node, not {@code null}
+     */
+    SecureTokenStore(ISecretNode node)
+    {
+        this.node = node;
+    }
+
     /**
      * Loads the user token stored for the given server URL.
      *
@@ -40,11 +71,12 @@ public final class SecureTokenStore
      */
     public String loadToken(String serverUrl)
     {
-        return load(scopedKey(KEY_TOKEN, serverUrl));
+        return node.get(scopedKey(KEY_TOKEN, serverUrl));
     }
 
     /**
-     * Stores the user token for the given server URL, encrypted.
+     * Stores the user token for the given server URL, encrypted; an empty token removes the stored entry
+     * (see the class javadoc).
      *
      * @param serverUrl the server URL the token belongs to, may be empty
      * @param token the token to store, not {@code null}
@@ -64,11 +96,12 @@ public final class SecureTokenStore
      */
     public String loadCiSecret(String ciUrl)
     {
-        return load(scopedKey(KEY_CI_SECRET, ciUrl));
+        return node.get(scopedKey(KEY_CI_SECRET, ciUrl));
     }
 
     /**
-     * Stores the CI trigger secret for the given CI webhook URL, encrypted.
+     * Stores the CI trigger secret for the given CI webhook URL, encrypted; an empty secret removes the
+     * stored entry (see the class javadoc).
      *
      * @param ciUrl the CI webhook URL the secret belongs to, may be empty
      * @param secret the secret to store, not {@code null}
@@ -90,7 +123,7 @@ public final class SecureTokenStore
      */
     private static String scopedKey(String base, String url)
     {
-        String trimmed = url == null ? "" : url.trim(); //$NON-NLS-1$
+        String trimmed = url == null ? EMPTY : url.trim();
         if (trimmed.isEmpty())
         {
             return base;
@@ -113,23 +146,95 @@ public final class SecureTokenStore
         }
     }
 
-    private String load(String key)
+    private void save(String key, String value) throws StorageException, IOException
     {
-        ISecurePreferences node = SecurePreferencesFactory.getDefault().node(NODE_PATH);
-        try
+        if (value == null || value.isEmpty())
         {
-            return node.get(key, ""); //$NON-NLS-1$
+            node.remove(key);
         }
-        catch (StorageException e)
+        else
         {
-            return ""; //$NON-NLS-1$
+            node.put(key, value);
         }
     }
 
-    private void save(String key, String value) throws StorageException, IOException
+    /**
+     * The slice of the platform secure storage this store uses, as a seam for headless tests.
+     *
+     * <p>Every method persists immediately, as the platform node's own {@code flush} does: the preference
+     * page has no second "commit" step to hang a deferred write on.
+     */
+    interface ISecretNode
     {
-        ISecurePreferences node = SecurePreferencesFactory.getDefault().node(NODE_PATH);
-        node.put(key, value, true);
-        node.flush();
+        /**
+         * Reads a stored value.
+         *
+         * @param key the storage key, not {@code null}
+         * @return the value, or an empty string when absent or unreadable
+         */
+        String get(String key);
+
+        /**
+         * Stores a value, encrypted, and persists the change.
+         *
+         * @param key the storage key, not {@code null}
+         * @param value the value to store, not {@code null} and not empty
+         * @throws StorageException when the value cannot be encrypted
+         * @throws IOException when the storage cannot be persisted
+         */
+        void put(String key, String value) throws StorageException, IOException;
+
+        /**
+         * Removes a stored value, if any, and persists the change.
+         *
+         * @param key the storage key, not {@code null}
+         * @throws IOException when the storage cannot be persisted
+         */
+        void remove(String key) throws IOException;
+    }
+
+    /** {@link ISecretNode} over the platform secure storage. */
+    private static final class PlatformSecretNode implements ISecretNode
+    {
+        @Override
+        public String get(String key)
+        {
+            try
+            {
+                return node().get(key, EMPTY);
+            }
+            catch (StorageException e)
+            {
+                return EMPTY;
+            }
+        }
+
+        @Override
+        public void put(String key, String value) throws StorageException, IOException
+        {
+            ISecurePreferences node = node();
+            node.put(key, value, true);
+            node.flush();
+        }
+
+        @Override
+        public void remove(String key) throws IOException
+        {
+            ISecurePreferences node = node();
+            node.remove(key);
+            node.flush();
+        }
+
+        /**
+         * Resolves the storage node per call, rather than once per store instance: a
+         * {@link SecureTokenStore} is created eagerly on paths that may never touch a secret, and resolving
+         * the node initializes the platform secure storage.
+         *
+         * @return the plug-in's secure storage node, never {@code null}
+         */
+        private static ISecurePreferences node()
+        {
+            return SecurePreferencesFactory.getDefault().node(NODE_PATH);
+        }
     }
 }

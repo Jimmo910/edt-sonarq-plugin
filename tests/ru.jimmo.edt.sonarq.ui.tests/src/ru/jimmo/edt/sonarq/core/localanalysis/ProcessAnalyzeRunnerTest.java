@@ -28,6 +28,8 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 import org.junit.After;
 import org.junit.Test;
 
+import ru.jimmo.edt.sonarq.ui.Messages;
+
 /**
  * Regression test for the process-leak fix in {@link ProcessAnalyzeRunner}: interrupting the calling
  * thread while it waits for the analysis process must destroy that process, not merely let the
@@ -360,6 +362,10 @@ public class ProcessAnalyzeRunnerTest
      * Regression test for issue #5: a non-zero exit whose log mentions {@code OutOfMemoryError} must raise
      * an {@link IOException} with an actionable hint prepended, pointing the user at the configurable
      * heap setting - while still carrying the existing exit-code message and the absolute log path.
+     *
+     * <p>Also a regression test for review minor M5: that hint was hardcoded English - naming an English
+     * settings path, at that - on a UI that is Russian by default, so it now has to be the localized
+     * {@link Messages#LocalAnalysis_OutOfMemory}, exactly as this class's progress phases already are.
      */
     @Test
     public void analyzeThrowsActionableHintWhenLogMentionsOutOfMemoryError() throws Exception
@@ -381,9 +387,8 @@ public class ProcessAnalyzeRunnerTest
         {
             Path logFile = outputDir.resolve("analyze.log");
             String message = e.getMessage();
-            assertTrue("expected message to mention running out of memory, got: " + message,
-                message.contains("ran out of memory"));
-            assertTrue("expected message to point at Settings, got: " + message, message.contains("Settings"));
+            assertTrue("expected message to start with the localized out-of-memory hint, got: " + message,
+                message.startsWith(Messages.LocalAnalysis_OutOfMemory));
             assertTrue("expected message to still contain the absolute log path, got: " + message,
                 message.contains(logFile.toAbsolutePath().toString()));
             assertTrue("expected message to still contain the exit code sentence, got: " + message,

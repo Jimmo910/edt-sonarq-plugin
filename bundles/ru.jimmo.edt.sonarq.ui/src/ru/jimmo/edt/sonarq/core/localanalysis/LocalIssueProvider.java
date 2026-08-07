@@ -9,7 +9,6 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -19,6 +18,8 @@ import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.IProgressMonitor;
+
+import com.google.gson.JsonParseException;
 
 import ru.jimmo.edt.sonarq.core.analysis.TimeoutDownloads;
 import ru.jimmo.edt.sonarq.core.client.SonarServerException;
@@ -42,7 +43,7 @@ import ru.jimmo.edt.sonarq.ui.Messages;
  * <p>{@code projectRoot} is the EDT project location. If it has a {@code src} subdirectory (the
  * conventional layout of a 1C configuration) that subdirectory is analyzed; otherwise the project root
  * itself is analyzed. Either way {@code projectRoot} is passed as the {@code uriBasePrefix} argument to
- * {@link SarifParser#parse(String, String, String)}: the language server reports absolute
+ * {@link SarifParser#parse(Path, String, String, int)}: the language server reports absolute
  * {@code file:///} artifact locations, and relativizing them against the project root turns them into
  * {@code src/...} paths, so component keys come out as {@code <projectKey>:src/...} — matching the
  * mapping server-backed issues use for markers and navigation.
@@ -53,6 +54,10 @@ import ru.jimmo.edt.sonarq.ui.Messages;
  * {@link BslServerInstaller#configureHeap}), recreates a clean report directory, runs the analysis and
  * parses the resulting report. Branches are not a local-analysis concept: {@link #listBranches(String)}
  * always returns an empty list and {@link #branchAnalysisSupported()} always returns {@code false}.
+ *
+ * <p>The report is streamed off disk rather than read into memory, and at most {@link #MAX_ISSUES} issues
+ * are kept; a report that holds more yields a snapshot the view renders as truncated, the same way an
+ * over-large server response does.
  *
  * <p>A generated checks configuration ({@code configPath}) is passed to the language server, but a
  * project-local {@code .bsl-language-server.json} always takes priority — looked up first under
@@ -78,6 +83,21 @@ import ru.jimmo.edt.sonarq.ui.Messages;
  */
 public final class LocalIssueProvider implements IIssueProvider
 {
+    /**
+     * The most issues one local analysis snapshot carries, mirroring {@code ServerIssueProvider.MAX_ISSUES}.
+     *
+     * <p>A local run has no server-side paging limit of its own: a full-checks analysis of an ERP-class 1C
+     * configuration can report hundreds of thousands of findings, and materializing all of them - in this
+     * list, in the issue tree, and as Problems-view markers - happens inside the EDT JVM shared with the
+     * modeling core, where the failure mode is an {@link OutOfMemoryError} rather than a slow view. The same
+     * 10 000 the server path is capped at is the defensible ceiling here: it is the volume the view, the
+     * marker synchronizer and the status line are already known to cope with, it keeps the two modes
+     * consistent, and it is far beyond what anyone reviews by hand. Beyond it the snapshot degrades exactly
+     * like an over-large server response - visibly truncated (see {@link IssueSnapshot#truncated()}), with
+     * the true total still reported - instead of taking the IDE down.
+     */
+    public static final int MAX_ISSUES = 10_000;
+
     private static final String BSL_REPORT_DIR = "bsl-report"; //$NON-NLS-1$
     private static final String SRC_DIR_NAME = "src"; //$NON-NLS-1$
     private static final String PROJECT_CONFIG_FILE_NAME = ".bsl-language-server.json"; //$NON-NLS-1$
@@ -178,8 +198,7 @@ public final class LocalIssueProvider implements IIssueProvider
             Path effectiveConfigPath = projectConfig != null ? projectConfig : configPath;
             reportProgress(monitor, Messages.LocalProgress_Analyzing);
             Path sarif = runner.analyze(executable, srcDir, outputDir, effectiveConfigPath, monitor);
-            SarifReport report = SarifParser.parse(Files.readString(sarif, StandardCharsets.UTF_8), projectKey,
-                projectRoot.toString());
+            SarifReport report = SarifParser.parse(sarif, projectKey, projectRoot.toString(), MAX_ISSUES);
             saveDiagnosticsCatalog(report);
             List<SonarIssue> issues = report.issues();
             if (baseBranch != null && !baseBranch.isBlank())
@@ -187,7 +206,14 @@ public final class LocalIssueProvider implements IIssueProvider
                 ChangedLines changed = changedLinesSource.apply(projectRoot.toFile(), baseBranch.trim());
                 issues = ChangedLinesIssueFilter.keepChanged(issues, projectKey, projectRoot, changed);
             }
-            return new IssueSnapshot(query, issues, issues.size(), Instant.now());
+            return new IssueSnapshot(query, issues, totalFor(report, issues), Instant.now());
+        }
+        catch (JsonParseException e)
+        {
+            // A corrupt or truncated report (a killed analyzer, a full disk) is a normal, reportable
+            // failure, not an internal error: reporting it as a SonarServerException puts it on the view's
+            // status line like any other fetch failure instead of leaking a raw stack trace (review I2).
+            throw new SonarServerException(e.getMessage(), e);
         }
         catch (IOException | UncheckedIOException e)
         {
@@ -210,6 +236,24 @@ public final class LocalIssueProvider implements IIssueProvider
                 monitor.done();
             }
         }
+    }
+
+    /**
+     * The total to report in the snapshot, which decides whether the view shows it as truncated.
+     *
+     * <p>When {@link #MAX_ISSUES} dropped part of the report, the report's own result count is the honest
+     * total and the snapshot must read as truncated - exactly as an over-large server response does.
+     * Otherwise the total is simply what is being shown: the base-branch post-filter legitimately removes
+     * issues from a complete report, and reporting the pre-filter count there would make every filtered
+     * refresh claim to be truncated.
+     *
+     * @param report the parsed report, not {@code null}
+     * @param issues the issues left after any post-filtering, not {@code null}
+     * @return the total to store in the snapshot
+     */
+    private static int totalFor(SarifReport report, List<SonarIssue> issues)
+    {
+        return report.truncated() ? report.totalResults() : issues.size();
     }
 
     /**
