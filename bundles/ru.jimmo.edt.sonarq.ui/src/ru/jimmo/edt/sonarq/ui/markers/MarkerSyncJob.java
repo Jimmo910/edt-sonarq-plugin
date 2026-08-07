@@ -19,6 +19,7 @@ import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 
 import ru.jimmo.edt.sonarq.ui.Messages;
+import ru.jimmo.edt.sonarq.ui.resources.IssueAnchors;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /**
@@ -85,7 +86,15 @@ public final class MarkerSyncJob extends WorkspaceJob
     {
         try
         {
-            MarkerSyncResult result = new IssueMarkerSynchronizer().sync(project, entries.get());
+            // Anchoring belongs here rather than in either caller: this is the one background job every
+            // marker synchronization goes through - the issues view's and the unattended auto-sync's alike -
+            // and the markers it writes are what the Problems-view quick fix verifies its line against when
+            // no view is open at all. It reads each referenced file once, skips issues that are already
+            // anchored (the view's refresh anchors its snapshot before it gets here), and must run before
+            // IssueMarkerSynchronizer#sync, whose first act is to delete the markers whose anchors it
+            // carries over.
+            List<IssueEntry> anchored = IssueAnchors.anchor(project, entries.get());
+            MarkerSyncResult result = new IssueMarkerSynchronizer().sync(project, anchored);
             if (result.missingFile() > 0)
             {
                 Platform.getLog(MarkerSyncJob.class).warn(result.missingFile()

@@ -124,7 +124,8 @@ public class SuppressionDesyncRegressionTest
         throws Exception
     {
         SonarIssue target = issues.stream().filter(i -> i.key().equals(issueKey)).findFirst().orElseThrow();
-        boolean inserted = BslSuppression.insert(document, target.line(), ruleKey);
+        boolean inserted =
+            BslSuppression.insert(document, target.line(), ruleKey, target.lineAnchor()).inserted();
         if (!inserted)
         {
             return new Applied(false, issues);

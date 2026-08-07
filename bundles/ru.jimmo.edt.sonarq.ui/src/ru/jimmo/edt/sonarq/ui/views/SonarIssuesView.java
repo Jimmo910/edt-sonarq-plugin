@@ -75,10 +75,12 @@ import ru.jimmo.edt.sonarq.core.provider.BranchState;
 import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
+import ru.jimmo.edt.sonarq.ui.resources.IssueAnchors;
 import ru.jimmo.edt.sonarq.ui.resources.WorkspaceFiles;
 import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
@@ -86,6 +88,7 @@ import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
 import ru.jimmo.edt.sonarq.ui.suppress.SuppressionApplier;
+import ru.jimmo.edt.sonarq.ui.suppress.SuppressionMessages;
 import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
 import ru.jimmo.edt.sonarq.ui.sync.RefreshInputsFactory;
 
@@ -749,9 +752,15 @@ public class SonarIssuesView extends ViewPart
                 applyFileUnavailableStatus(entry);
                 return;
             }
-            if (SuppressionApplier.apply(file, entry.issue().line(), entry.issue().ruleKey(), getSite().getPage()))
+            SuppressionOutcome outcome = SuppressionApplier.apply(file, entry.issue().line(),
+                entry.issue().ruleKey(), entry.issue().lineAnchor(), getSite().getPage());
+            if (outcome.inserted())
             {
                 applySuppressionLineShift(entry.issue());
+            }
+            else
+            {
+                applySuppressionRefusedStatus(outcome);
             }
         }
         catch (CoreException | BadLocationException e)
@@ -774,6 +783,23 @@ public class SonarIssuesView extends ViewPart
     {
         String path = entry.relativePath() != null ? entry.relativePath() : entry.issue().componentKey();
         statusLabel.setText(NLS.bind(Messages.IssuesView_FileUnavailable, path));
+        statusLabel.setToolTipText(null);
+        setErrorDetailsVisible(false);
+        statusLabel.getParent().layout();
+    }
+
+    /**
+     * Tells the user, on the status line, that the suppression wrote nothing and why - most importantly when
+     * the flagged line could no longer be verified, which is a refusal by design and not a failure.
+     *
+     * <p>Same channel and same reasoning as {@link #applyFileUnavailableStatus}: a note, never a dialog, so
+     * that nothing in this view can pop up a modal window outside an explicit click on the "Details" link.
+     *
+     * @param outcome the refusal, not {@code null}
+     */
+    private void applySuppressionRefusedStatus(SuppressionOutcome outcome)
+    {
+        statusLabel.setText(SuppressionMessages.describe(outcome));
         statusLabel.setToolTipText(null);
         setErrorDetailsVisible(false);
         statusLabel.getParent().layout();
@@ -874,7 +900,7 @@ public class SonarIssuesView extends ViewPart
         applyRunningStatus();
         showEngineDownloadHintIfNeeded();
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, result)));
+            result -> onRefreshFinished(generation, project, refreshInputs, result)));
     }
 
     /**
@@ -1101,8 +1127,28 @@ public class SonarIssuesView extends ViewPart
             NLS.bind(Messages.Analysis_Confirm_MainBody, displayBranch));
     }
 
-    private void onRefreshFinished(long generation, RefreshResult result)
+    /**
+     * Receives a finished refresh <em>in the refresh job's thread</em>, fingerprints the issues' source lines
+     * there, and applies the result on the UI thread.
+     *
+     * <p>The anchoring has to happen here, before the snapshot reaches the view: it reads every file the
+     * issues point at, which must not happen on the UI thread, and it is what later lets a quick-suppress
+     * verify the line it is about to edit instead of trusting a number that a local edit - or the server's
+     * own memory of its last analysis - may already have invalidated (see {@link IssueAnchors}). The mapping
+     * inputs are the ones this refresh was scheduled with, passed in rather than read from the view's fields,
+     * because those fields belong to the UI thread.
+     *
+     * @param generation the refresh generation this result belongs to
+     * @param project the project the refresh ran for, not {@code null}
+     * @param inputs the inputs the refresh was scheduled with, not {@code null}
+     * @param result the refresh outcome, not {@code null}
+     */
+    private void onRefreshFinished(long generation, IProject project, ProjectRefreshInputs inputs,
+        RefreshResult result)
     {
+        IssueSnapshot anchored = result.isError() ? null
+            : IssueAnchors.anchor(project, inputs.mappingProjectKey(), inputs.mappingPathPrefix(),
+                result.snapshot());
         Display.getDefault().asyncExec(() ->
         {
             if (viewer.getControl().isDisposed())
@@ -1118,7 +1164,7 @@ public class SonarIssuesView extends ViewPart
                 applyErrorStatus(result.errorMessage());
                 return;
             }
-            setInput(result.snapshot(), result.branchState());
+            setInput(anchored, result.branchState());
             // A previous sync's missing-file count no longer applies to this fresh snapshot; scheduleMarkerSync
             // reports the up-to-date count asynchronously once its background job completes.
             missingFileMarkerCount = 0;

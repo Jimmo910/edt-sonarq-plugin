@@ -14,12 +14,14 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
@@ -27,7 +29,13 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import ru.jimmo.edt.sonarq.core.model.SonarIssue;
+import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
+import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
+import ru.jimmo.edt.sonarq.core.suppress.LineAnchor;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
+import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /**
  * Tests the Problems-view quick fix on its own, the way it runs when the SonarQube Issues view is closed or
@@ -147,6 +155,100 @@ public class SuppressMarkerResolutionTest
         assertEquals(11, again.getAttribute(IMarker.LINE_NUMBER, -1));
         assertEquals(22, below.getAttribute(IMarker.LINE_NUMBER, -1));
         assertEquals(afterFirst, onDisk());
+    }
+
+    /**
+     * The whole path, as it runs in production: the marker synchronization fingerprints the flagged lines
+     * and stores the fingerprints on the markers, and the quick fix verifies its line against them.
+     *
+     * <p>The scenario is the one no amount of renumbering could fix. One suppression grows the file by two
+     * lines; a server-mode refresh then re-synchronizes the markers from the line numbers SonarQube recorded
+     * at its last analysis, which know nothing about that edit - so the second marker is back on its pre-edit
+     * line 20, two lines above its own statement. The carried anchor is what makes the second quick fix wrap
+     * {@code L20;} anyway, instead of {@code L18;}.
+     */
+    @Test
+    public void quickFixFollowsTheAnchorTheMarkerSyncStoredAfterARefreshRestoredPreEditLines() throws Exception
+    {
+        syncMarkers(issue("k1", "R1", 10), issue("k2", "R2", 20));
+
+        new SuppressMarkerResolution("R1").run(markerOf("k1"));
+        // The refresh: the same pre-edit line numbers, re-synchronized onto the already-edited file.
+        syncMarkers(issue("k1", "R1", 10), issue("k2", "R2", 20));
+        assertEquals("the refresh restored the pre-edit line number", 20,
+            markerOf("k2").getAttribute(IMarker.LINE_NUMBER, -1));
+
+        new SuppressMarkerResolution("R2").run(markerOf("k2"));
+
+        assertEquals(expected(Map.of(10, "R1", 20, "R2")), onDisk());
+    }
+
+    /** The marker sync stores the anchor of the line the issue was reported on. */
+    @Test
+    public void markerSyncStoresTheAnchorOfTheFlaggedLine() throws Exception
+    {
+        syncMarkers(issue("k1", "R1", 10));
+
+        assertEquals(LineAnchor.of("L10;"), markerOf("k1").getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, ""));
+    }
+
+    /**
+     * A marker whose anchored line is gone - the user rewrote it since the analysis - is not resolved at all:
+     * no byte of the file changes, and the marker survives so the finding is not silently lost.
+     */
+    @Test
+    public void quickFixWritesNothingWhenTheMarkersAnchorIsNoLongerInTheFile() throws Exception
+    {
+        String untouched = onDisk();
+        IMarker stale = marker("R1", 10);
+        stale.setAttribute(IssueMarkers.ATTR_LINE_ANCHOR, LineAnchor.of("this line is long gone;"));
+
+        new SuppressMarkerResolution("R1").run(stale);
+
+        assertTrue("a refused quick fix must not resolve the marker", stale.exists());
+        assertEquals(untouched, onDisk());
+    }
+
+    /**
+     * Runs a marker synchronization exactly as the issues view and the background auto-sync do, and waits
+     * for it: the job is what fingerprints the lines.
+     *
+     * @param issues the issues to materialize as markers
+     * @throws InterruptedException when the wait is interrupted
+     */
+    private void syncMarkers(SonarIssue... issues) throws InterruptedException
+    {
+        List<IssueEntry> entries = List.of(issues).stream()
+            .map(issue -> new IssueEntry(issue, RELATIVE_PATH))
+            .toList();
+        MarkerSyncJob job = new MarkerSyncJob(project, () -> entries);
+        job.schedule();
+        job.join();
+    }
+
+    /**
+     * The single marker carrying the given issue key.
+     *
+     * @param issueKey the issue key to look for
+     * @return the marker
+     * @throws CoreException when the markers cannot be read
+     */
+    private IMarker markerOf(String issueKey) throws CoreException
+    {
+        for (IMarker marker : file.findMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_ZERO))
+        {
+            if (issueKey.equals(marker.getAttribute(IssueMarkers.ATTR_ISSUE_KEY, "")))
+            {
+                return marker;
+            }
+        }
+        throw new AssertionError("no marker for issue " + issueKey);
+    }
+
+    private static SonarIssue issue(String key, String ruleKey, int line)
+    {
+        return new SonarIssue(key, ruleKey, SonarSeverity.MAJOR, SonarIssueType.CODE_SMELL,
+            "proj:" + RELATIVE_PATH, "boom", line);
     }
 
     private IMarker marker(String ruleKey, int line) throws CoreException

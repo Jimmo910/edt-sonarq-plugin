@@ -110,12 +110,9 @@ public final class SuppressionLineShift
             return issue;
         }
         int shifted = shiftedLine(issue.line(), codeLine);
-        return shifted == issue.line() ? issue : withLine(issue, shifted);
-    }
-
-    private static SonarIssue withLine(SonarIssue issue, int newLine)
-    {
-        return new SonarIssue(issue.key(), issue.ruleKey(), issue.severity(), issue.type(), issue.componentKey(),
-            issue.message(), newLine);
+        // withLine keeps the issue's line anchor: the comment pair moved the line, it did not change its
+        // text, and that anchor is what lets the next suppression find the line again even if this
+        // renumbering is later undone by a refresh that restores the analysis-time numbers.
+        return shifted == issue.line() ? issue : issue.withLine(shifted);
     }
 }

@@ -119,6 +119,7 @@ public final class IssueMarkerSynchronizer
         attributes.put(IssueMarkers.ATTR_RULE_KEY, issue.ruleKey());
         attributes.put(IssueMarkers.ATTR_SONAR_SEVERITY, issue.severity().name());
         attributes.put(IssueMarkers.ATTR_ISSUE_KEY, issue.key());
+        attributes.put(IssueMarkers.ATTR_LINE_ANCHOR, issue.lineAnchor());
         IMarker marker = file.createMarker(IssueMarkers.MARKER_TYPE);
         marker.setAttributes(attributes);
         return MarkerOutcome.CREATED;

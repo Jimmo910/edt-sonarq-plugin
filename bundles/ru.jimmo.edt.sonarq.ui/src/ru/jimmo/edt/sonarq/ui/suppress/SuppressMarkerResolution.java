@@ -13,14 +13,17 @@ import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.IWorkspaceRunnable;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.osgi.util.NLS;
 import org.eclipse.swt.graphics.Image;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.IMarkerResolution2;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PlatformUI;
 
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
 import ru.jimmo.edt.sonarq.ui.views.SonarIssuesView;
@@ -72,11 +75,15 @@ final class SuppressMarkerResolution implements IMarkerResolution2
         try
         {
             String issueKey = marker.getAttribute(IssueMarkers.ATTR_ISSUE_KEY, ""); //$NON-NLS-1$
+            String lineAnchor = marker.getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, ""); //$NON-NLS-1$
             IWorkbenchPage page = activePage();
-            if (!SuppressionApplier.apply(file, line, bareRuleKey, page))
+            SuppressionOutcome outcome = SuppressionApplier.apply(file, line, bareRuleKey, lineAnchor, page);
+            if (!outcome.inserted())
             {
-                // Nothing was written (an already-suppressed line, or a file with unsaved changes) - leave
-                // both the marker and the issue view's line numbers exactly as they are.
+                // Nothing was written (the file changed since the analysis, the line is already suppressed,
+                // or the file has unsaved changes) - leave both the marker and the issue view's line numbers
+                // exactly as they are, and tell the user why the quick fix appears to have done nothing.
+                report(outcome);
                 return;
             }
             // The edit already removed the cause of this finding; drop this one marker and renumber the rest
@@ -166,6 +173,30 @@ final class SuppressMarkerResolution implements IMarkerResolution2
         {
             view.issueSuppressedExternally(issueKey);
         }
+    }
+
+    /**
+     * Tells the user that the quick fix wrote nothing, and why.
+     *
+     * <p>A dialog is the right channel here, and the only one that reaches the user: this method only ever
+     * runs from an {@link IMarkerResolution2#run} call, i.e. in direct response to an explicit click in the
+     * Problems view, which is exactly the case this project's unattended-safety rule allows a modal window
+     * in (the same reason the issues view's "Details" link may open one). It is also the one suppression
+     * entry point that cannot fall back to a status line - the issues view need not even be open. Skipped
+     * with no workbench, which is how the headless tests drive this class.
+     *
+     * @param outcome the refusal to report, not {@code null}
+     */
+    private static void report(SuppressionOutcome outcome)
+    {
+        if (!PlatformUI.isWorkbenchRunning() || PlatformUI.getWorkbench().getActiveWorkbenchWindow() == null)
+        {
+            // SuppressionApplier already logged the refusal; there is nobody to show it to.
+            return;
+        }
+        Shell shell = PlatformUI.getWorkbench().getActiveWorkbenchWindow().getShell();
+        MessageDialog.openInformation(shell, Messages.Suppress_Refused_Title,
+            SuppressionMessages.describe(outcome));
     }
 
     private static IWorkbenchPage activePage()
