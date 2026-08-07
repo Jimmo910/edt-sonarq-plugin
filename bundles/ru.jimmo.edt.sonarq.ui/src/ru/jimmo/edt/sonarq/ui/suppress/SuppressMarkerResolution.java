@@ -36,13 +36,34 @@ final class SuppressMarkerResolution implements IMarkerResolution2
 {
     private final String bareRuleKey;
 
+    private final MarkerRenumbering renumbering;
+
+    private final UserNotice notice;
+
     /**
      * @param bareRuleKey the marker's rule key with any {@code bsl:} prefix already stripped, not
      *     {@code null}
      */
     SuppressMarkerResolution(String bareRuleKey)
     {
+        this(bareRuleKey, SuppressMarkerResolution::renumberFileMarkers, SuppressMarkerResolution::openDialog);
+    }
+
+    /**
+     * The seams of the two steps that follow a successful edit, so both can be driven headless: the marker
+     * bookkeeping (whose failure is the case worth testing) and the channel its failure is reported through
+     * (which otherwise needs a running workbench).
+     *
+     * @param bareRuleKey the marker's rule key with any {@code bsl:} prefix already stripped, not
+     *     {@code null}
+     * @param renumbering the marker bookkeeping to run after a successful edit, not {@code null}
+     * @param notice the channel to tell the user through, not {@code null}
+     */
+    SuppressMarkerResolution(String bareRuleKey, MarkerRenumbering renumbering, UserNotice notice)
+    {
         this.bareRuleKey = bareRuleKey;
+        this.renumbering = renumbering;
+        this.notice = notice;
     }
 
     @Override
@@ -74,7 +95,7 @@ final class SuppressMarkerResolution implements IMarkerResolution2
         }
         try
         {
-            String issueKey = marker.getAttribute(IssueMarkers.ATTR_ISSUE_KEY, ""); //$NON-NLS-1$
+            SuppressedIssue suppressed = SuppressedIssue.of(marker);
             String lineAnchor = marker.getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, ""); //$NON-NLS-1$
             IWorkbenchPage page = activePage();
             SuppressionOutcome outcome = SuppressionApplier.apply(file, line, bareRuleKey, lineAnchor, page);
@@ -83,18 +104,50 @@ final class SuppressMarkerResolution implements IMarkerResolution2
                 // Nothing was written (the file changed since the analysis, the line is already suppressed,
                 // or the file has unsaved changes) - leave both the marker and the issue view's line numbers
                 // exactly as they are, and tell the user why the quick fix appears to have done nothing.
-                report(outcome);
+                notice.show(Messages.Suppress_Refused_Title, SuppressionMessages.describe(outcome));
                 return;
             }
-            // The edit already removed the cause of this finding; drop this one marker and renumber the rest
-            // of the file's markers right away, instead of waiting for the next full issue-tree refresh to
-            // re-sync them all (see ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer#sync).
-            renumberFileMarkers(file, marker, line);
-            notifyIssuesView(page, issueKey);
+            updateModelsAfterEdit(file, marker, line, page, suppressed);
         }
         catch (CoreException | BadLocationException e)
         {
             Platform.getLog(getClass()).error(e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Brings the two line-number models that survive this quick fix - the file's other issue markers and the
+     * issues view's snapshot - in step with the edit that was just written, and tells the user when that
+     * fails.
+     *
+     * <p>The edit is already on disk by the time this runs and cannot be taken back, so a failure here is not
+     * a failure of the suppression: it leaves correct source next to line numbers that are two lines short.
+     * The anchors mean the next quick fix will refuse or relocate rather than cut into the wrong statement, so
+     * nothing can be corrupted by it - but the numbers on screen are wrong until the issues are refreshed, and
+     * a user who is only told through the workspace log is not told at all. Hence the same visible channel the
+     * refusals use.
+     *
+     * @param file the edited file, not {@code null}
+     * @param resolved the marker whose quick fix was just applied, not {@code null}
+     * @param codeLine the 1-based line the {@code -off}/{@code -on} comments were wrapped around
+     * @param page the active workbench page, or {@code null} when there is none
+     * @param suppressed the identity of the suppressed issue, or {@code null} when the marker carried none
+     */
+    private void updateModelsAfterEdit(IFile file, IMarker resolved, int codeLine, IWorkbenchPage page,
+        SuppressedIssue suppressed)
+    {
+        try
+        {
+            // The edit already removed the cause of this finding; drop this one marker and renumber the rest
+            // of the file's markers right away, instead of waiting for the next full issue-tree refresh to
+            // re-sync them all (see ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer#sync).
+            renumbering.renumber(file, resolved, codeLine);
+            notifyIssuesView(page, suppressed);
+        }
+        catch (CoreException | RuntimeException e)
+        {
+            Platform.getLog(getClass()).error(e.getMessage(), e);
+            notice.show(Messages.Suppress_Stale_Title, Messages.Suppress_Stale_Message);
         }
     }
 
@@ -159,24 +212,25 @@ final class SuppressMarkerResolution implements IMarkerResolution2
      * which needs no view at all.
      *
      * @param page the workbench page to look the view up in, or {@code null} when there is none
-     * @param issueKey the suppressed issue's key as carried by the marker, never {@code null} (empty when
-     *     the marker has no such attribute)
+     * @param suppressed the project-scoped identity of the suppressed issue, or {@code null} when the marker
+     *     is not inside a project
      */
-    private static void notifyIssuesView(IWorkbenchPage page, String issueKey)
+    private static void notifyIssuesView(IWorkbenchPage page, SuppressedIssue suppressed)
     {
-        if (page == null || issueKey.isEmpty())
+        if (page == null || suppressed == null)
         {
             return;
         }
         // findView returns null when the view is not open at all - then there is no model to update.
         if (page.findView(SonarIssuesView.VIEW_ID) instanceof SonarIssuesView view)
         {
-            view.issueSuppressedExternally(issueKey);
+            view.issueSuppressedExternally(suppressed);
         }
     }
 
     /**
-     * Tells the user that the quick fix wrote nothing, and why.
+     * Tells the user something about a quick fix that is not visible in the Problems view itself: that
+     * nothing was written and why, or that the edit landed but the line numbers on screen did not follow.
      *
      * <p>A dialog is the right channel here, and the only one that reaches the user: this method only ever
      * runs from an {@link IMarkerResolution2#run} call, i.e. in direct response to an explicit click in the
@@ -185,18 +239,18 @@ final class SuppressMarkerResolution implements IMarkerResolution2
      * entry point that cannot fall back to a status line - the issues view need not even be open. Skipped
      * with no workbench, which is how the headless tests drive this class.
      *
-     * @param outcome the refusal to report, not {@code null}
+     * @param title the dialog title, not {@code null}
+     * @param message the message to show, not {@code null}
      */
-    private static void report(SuppressionOutcome outcome)
+    private static void openDialog(String title, String message)
     {
         if (!PlatformUI.isWorkbenchRunning() || PlatformUI.getWorkbench().getActiveWorkbenchWindow() == null)
         {
-            // SuppressionApplier already logged the refusal; there is nobody to show it to.
+            // The failure is already in the log; there is nobody to show it to.
             return;
         }
         Shell shell = PlatformUI.getWorkbench().getActiveWorkbenchWindow().getShell();
-        MessageDialog.openInformation(shell, Messages.Suppress_Refused_Title,
-            SuppressionMessages.describe(outcome));
+        MessageDialog.openInformation(shell, title, message);
     }
 
     private static IWorkbenchPage activePage()
@@ -206,5 +260,33 @@ final class SuppressMarkerResolution implements IMarkerResolution2
             return null;
         }
         return PlatformUI.getWorkbench().getActiveWorkbenchWindow().getActivePage();
+    }
+
+    /** The marker bookkeeping that follows a successful edit; {@link #renumberFileMarkers} in production. */
+    @FunctionalInterface
+    interface MarkerRenumbering
+    {
+        /**
+         * Deletes the resolved marker and renumbers the file's remaining issue markers.
+         *
+         * @param file the edited file, not {@code null}
+         * @param resolved the marker whose quick fix was applied, not {@code null}
+         * @param codeLine the 1-based line the comments were wrapped around
+         * @throws CoreException when the workspace operation fails
+         */
+        void renumber(IFile file, IMarker resolved, int codeLine) throws CoreException;
+    }
+
+    /** The channel this quick fix reports through; {@link #openDialog} in production. */
+    @FunctionalInterface
+    interface UserNotice
+    {
+        /**
+         * Shows one message to the user.
+         *
+         * @param title the title, not {@code null}
+         * @param message the message, not {@code null}
+         */
+        void show(String title, String message);
     }
 }

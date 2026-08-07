@@ -78,6 +78,7 @@ import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
 import ru.jimmo.edt.sonarq.ui.resources.IssueAnchors;
@@ -87,6 +88,7 @@ import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.settings.ProjectBindingStore;
 import ru.jimmo.edt.sonarq.ui.settings.SecureTokenStore;
 import ru.jimmo.edt.sonarq.ui.settings.SonarConnectionFactory;
+import ru.jimmo.edt.sonarq.ui.suppress.SuppressedIssue;
 import ru.jimmo.edt.sonarq.ui.suppress.SuppressionApplier;
 import ru.jimmo.edt.sonarq.ui.suppress.SuppressionMessages;
 import ru.jimmo.edt.sonarq.ui.sync.ProjectRefreshInputs;
@@ -812,25 +814,21 @@ public class SonarIssuesView extends ViewPart
      * the two comment lines while this view kept the old line numbers, which is the same desynchronization
      * as shifting after a no-op, only from the other direction.
      *
-     * <p>Does nothing when the view holds no issues yet, when its controls are gone, or when the suppressed
-     * issue is not part of the current snapshot (a refresh has since replaced it). Must be called on the UI
-     * thread, as marker resolutions are.
+     * <p>Does nothing when the view holds no issues yet, when its controls are gone, when the suppression
+     * happened in another project than the one on screen, or when the suppressed issue is not part of the
+     * current snapshot (a refresh has since replaced it) - see {@link SuppressedIssue#locateIn}, which owns
+     * that decision. Must be called on the UI thread, as marker resolutions are.
      *
-     * @param issueKey the {@link SonarIssue#key()} of the issue that was just suppressed, may be
-     *     {@code null} or empty, in which case nothing happens
+     * @param suppressed the project-scoped identity of the issue that was just suppressed, may be
+     *     {@code null}, in which case nothing happens
      */
-    public void issueSuppressedExternally(String issueKey)
+    public void issueSuppressedExternally(SuppressedIssue suppressed)
     {
-        if (issueKey == null || issueKey.isEmpty() || snapshot == null || viewer == null
-            || viewer.getControl().isDisposed())
+        if (suppressed == null || viewer == null || viewer.getControl().isDisposed())
         {
             return;
         }
-        snapshot.issues()
-            .stream()
-            .filter(issue -> issueKey.equals(issue.key()))
-            .findFirst()
-            .ifPresent(this::applySuppressionLineShift);
+        suppressed.locateIn(selectedProject, snapshot).ifPresent(this::applySuppressionLineShift);
     }
 
     /**
@@ -862,9 +860,20 @@ public class SonarIssuesView extends ViewPart
         {
             return;
         }
-        List<SonarIssue> adjusted = SuppressionLineShift.applyAfterSuppress(snapshot.issues(), issue);
-        snapshot = new IssueSnapshot(snapshot.query(), adjusted, adjusted.size(), snapshot.loadedAt());
+        // Rebuilt through the snapshot overload, which carries the server total over: rebuilding it here with
+        // "total = the issues I still hold" dropped the truncation warning ("Showing first N of M") at the
+        // first suppression and never brought it back until the next refresh.
+        snapshot = SuppressionLineShift.applyAfterSuppress(snapshot, issue);
         refreshGeneration.invalidate();
+        if (selectedProject != null)
+        {
+            // Fence the marker synchronizations already in flight for this project: they were produced from
+            // the pre-edit sources and would put pre-edit line numbers back onto a file that has just grown by
+            // two lines. Published here, and not only by the job #scheduleMarkerSync creates below, because
+            // that method returns without creating one when the user switched editor markers off - and a job
+            // created while they were still on must not write after this edit either.
+            MarkerStateVersion.publish(selectedProject);
+        }
         rebuildTree();
         scheduleMarkerSync();
         if (lastErrorMessage == null)

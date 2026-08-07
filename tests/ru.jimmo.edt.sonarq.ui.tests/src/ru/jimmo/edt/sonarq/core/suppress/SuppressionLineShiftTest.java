@@ -8,11 +8,15 @@ package ru.jimmo.edt.sonarq.core.suppress;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
+import java.time.Instant;
 import java.util.List;
 
 import org.junit.Test;
 
+import ru.jimmo.edt.sonarq.core.model.IssueQuery;
+import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
@@ -146,6 +150,61 @@ public class SuppressionLineShiftTest
     {
         assertEquals(13, SuppressionLineShift.shiftedLine(11, 10));
         assertEquals(1002, SuppressionLineShift.shiftedLine(1000, 10));
+    }
+
+    /**
+     * A truncated snapshot ("Showing first N of M") must still read as truncated after a suppression. The
+     * view used to rebuild it with "total = the issues I still hold", which turned every capped result into a
+     * complete one at the first suppression and hid the warning until the next refresh.
+     */
+    @Test
+    public void suppressingInATruncatedSnapshotKeepsItTruncated()
+    {
+        SonarIssue suppressed = issue("k-suppressed", FILE_A, 10);
+        IssueSnapshot snapshot = new IssueSnapshot(new IssueQuery("proj", null),
+            List.of(suppressed, issue("k-below", FILE_A, 20)), 5000, Instant.EPOCH);
+
+        IssueSnapshot result = SuppressionLineShift.applyAfterSuppress(snapshot, suppressed);
+
+        assertTrue("the result is still only a fraction of what the server has", result.truncated());
+        assertEquals("the total loses exactly the silenced findings", 4999, result.serverTotal());
+        assertEquals(1, result.issues().size());
+        assertEquals(22, lineOf(result.issues(), "k-below"));
+        assertEquals(snapshot.query(), result.query());
+        assertEquals(snapshot.loadedAt(), result.loadedAt());
+    }
+
+    /** A complete snapshot must not start claiming a truncation the suppression invented. */
+    @Test
+    public void suppressingInACompleteSnapshotDoesNotInventATruncation()
+    {
+        SonarIssue suppressed = issue("k-suppressed", FILE_A, 10);
+        IssueSnapshot snapshot = new IssueSnapshot(new IssueQuery("proj", null),
+            List.of(suppressed, issue("k-below", FILE_A, 20)), 2, Instant.EPOCH);
+
+        IssueSnapshot result = SuppressionLineShift.applyAfterSuppress(snapshot, suppressed);
+
+        assertFalse(result.truncated());
+        assertEquals(1, result.serverTotal());
+    }
+
+    /**
+     * Two findings of the same rule on the wrapped line are silenced by one comment pair, and the total has
+     * to account for both - never for fewer issues than the snapshot still holds.
+     */
+    @Test
+    public void theTotalNeverFallsBelowTheIssuesLeft()
+    {
+        SonarIssue suppressed = issue("k-suppressed", "rule", FILE_A, 10);
+        IssueSnapshot snapshot = new IssueSnapshot(new IssueQuery("proj", null),
+            List.of(suppressed, issue("k-twin", "rule", FILE_A, 10), issue("k-below", FILE_A, 20)), 3,
+            Instant.EPOCH);
+
+        IssueSnapshot result = SuppressionLineShift.applyAfterSuppress(snapshot, suppressed);
+
+        assertEquals(1, result.issues().size());
+        assertEquals(1, result.serverTotal());
+        assertFalse(result.truncated());
     }
 
     private static int lineOf(List<SonarIssue> issues, String key)

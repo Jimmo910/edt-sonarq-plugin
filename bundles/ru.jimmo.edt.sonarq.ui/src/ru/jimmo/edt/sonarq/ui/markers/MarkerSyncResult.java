@@ -19,7 +19,30 @@ package ru.jimmo.edt.sonarq.ui.markers;
  *     distinct from an entry whose component never mapped to a path at all, which
  *     {@link ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder#countUnmapped} already tracks and which this
  *     count does not include
+ * @param abandoned {@code true} when the synchronization wrote nothing at all because a newer marker state
+ *     had already been published for the project (see {@link MarkerStateVersion}); the two counts are then
+ *     zero and describe nothing, and callers must not report them as the project's current state
  */
-public record MarkerSyncResult(int created, int missingFile)
+public record MarkerSyncResult(int created, int missingFile, boolean abandoned)
 {
+    /**
+     * A completed synchronization.
+     *
+     * @param created the number of markers created
+     * @param missingFile the number of entries whose file does not exist in the project
+     */
+    public MarkerSyncResult(int created, int missingFile)
+    {
+        this(created, missingFile, false);
+    }
+
+    /**
+     * The outcome of a run that was fenced off by a newer marker state and therefore touched no marker.
+     *
+     * @return the abandoned outcome, never {@code null}
+     */
+    public static MarkerSyncResult superseded()
+    {
+        return new MarkerSyncResult(0, 0, true);
+    }
 }

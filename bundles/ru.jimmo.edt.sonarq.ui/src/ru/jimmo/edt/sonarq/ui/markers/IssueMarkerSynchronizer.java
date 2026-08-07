@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.ui.markers;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IMarker;
@@ -57,10 +58,41 @@ public final class IssueMarkerSynchronizer
      */
     public MarkerSyncResult sync(IProject project, List<IssueEntry> entries) throws CoreException
     {
+        return sync(project, entries, () -> true);
+    }
+
+    /**
+     * Replaces all issue markers on the given project with markers derived from the given entries, unless
+     * {@code stillCurrent} reports that the entries have been superseded.
+     *
+     * <p>The fence is evaluated <em>inside</em> the workspace operation, i.e. while this thread already holds
+     * the project's scheduling rule and immediately before the first marker is deleted, so between the check
+     * and the write no other marker writer can slip in: any newer state must have been published before the
+     * check to be seen at all, and any state published after it cannot start writing until this operation has
+     * released the rule (see {@link MarkerStateVersion} for what the fence protects against). A superseded run
+     * deletes and creates nothing.
+     *
+     * @param project the EDT project whose markers are replaced, not {@code null}
+     * @param entries the issue entries to materialize as markers, not {@code null}
+     * @param stillCurrent tells whether the entries are still the project's current issue state; evaluated
+     *     once, under the project's rule, before anything is deleted, not {@code null}
+     * @return the created-versus-missing-file marker counts, or {@link MarkerSyncResult#superseded()} when
+     *     {@code stillCurrent} said no, never {@code null}
+     * @throws CoreException when the workspace operation fails
+     */
+    public MarkerSyncResult sync(IProject project, List<IssueEntry> entries, BooleanSupplier stillCurrent)
+        throws CoreException
+    {
         int[] created = new int[1];
         int[] missingFile = new int[1];
+        boolean[] abandoned = new boolean[1];
         IWorkspaceRunnable runnable = monitor ->
         {
+            if (!stillCurrent.getAsBoolean())
+            {
+                abandoned[0] = true;
+                return;
+            }
             project.deleteMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_INFINITE);
             for (IssueEntry entry : entries)
             {
@@ -76,7 +108,7 @@ public final class IssueMarkerSynchronizer
             }
         };
         project.getWorkspace().run(runnable, project, IWorkspace.AVOID_UPDATE, null);
-        return new MarkerSyncResult(created[0], missingFile[0]);
+        return abandoned[0] ? MarkerSyncResult.superseded() : new MarkerSyncResult(created[0], missingFile[0]);
     }
 
     /**

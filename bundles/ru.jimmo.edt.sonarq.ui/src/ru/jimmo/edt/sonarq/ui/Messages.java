@@ -176,6 +176,8 @@ public final class Messages extends NLS
     public static String Suppress_Refused_Unavailable;
     public static String Suppress_Refused_UnsavedChanges;
     public static String Suppress_ResolutionLabel;
+    public static String Suppress_Stale_Message;
+    public static String Suppress_Stale_Title;
 
     static
     {

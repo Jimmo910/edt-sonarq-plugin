@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +26,7 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.Status;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -33,6 +35,7 @@ import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.core.suppress.LineAnchor;
+import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
@@ -207,6 +210,68 @@ public class SuppressMarkerResolutionTest
 
         assertTrue("a refused quick fix must not resolve the marker", stale.exists());
         assertEquals(untouched, onDisk());
+    }
+
+    /**
+     * The identity handed to the issues view is the marker's project together with its issue key. Two
+     * projects that hold the same relative module path produce equal local-analysis keys, so the key alone
+     * would let a quick fix here renumber the snapshot of a view showing the other project.
+     */
+    @Test
+    public void theViewNotificationCarriesTheMarkersProject() throws Exception
+    {
+        syncMarkers(issue("k1", "R1", 10));
+
+        SuppressedIssue suppressed = SuppressedIssue.of(markerOf("k1"));
+
+        assertEquals(project, suppressed.project());
+        assertEquals("k1", suppressed.issueKey());
+    }
+
+    /**
+     * The edit is on disk and cannot be taken back, so a failure of the bookkeeping that follows it is not a
+     * failure of the suppression - but it does leave the line numbers on screen two lines short of the file.
+     * Anchors keep the next quick fix from cutting into the wrong statement, and the user still has to be
+     * told to refresh, through the same visible channel the refusals use. Logging it was not telling anyone.
+     */
+    @Test
+    public void aFailedMarkerRenumberingAfterASuccessfulEditTellsTheUserToRefresh() throws Exception
+    {
+        IMarker resolved = marker("R1", 10);
+        List<String> shown = new ArrayList<>();
+
+        new SuppressMarkerResolution("R1", (file, marker, codeLine) ->
+        {
+            throw new CoreException(Status.error("marker bookkeeping failed"));
+        }, (title, message) -> shown.add(message)).run(resolved);
+
+        assertEquals("the edit itself must still have been written", expected(Map.of(10, "R1")), onDisk());
+        assertEquals(List.of(Messages.Suppress_Stale_Message), shown);
+    }
+
+    /** Nothing is shown when the bookkeeping succeeds; the quick fix is silent on its happy path. */
+    @Test
+    public void aSuccessfulQuickFixShowsNothing() throws Exception
+    {
+        IMarker resolved = marker("R1", 10);
+        List<String> shown = new ArrayList<>();
+
+        new SuppressMarkerResolution("R1", SuppressMarkerResolutionTest::noRenumbering,
+            (title, message) -> shown.add(message)).run(resolved);
+
+        assertEquals(List.of(), shown);
+    }
+
+    /**
+     * A bookkeeping step that does nothing, for the tests that only care about what is reported.
+     *
+     * @param file the edited file
+     * @param resolved the resolved marker
+     * @param codeLine the wrapped line
+     */
+    private static void noRenumbering(IFile file, IMarker resolved, int codeLine)
+    {
+        // Nothing to do.
     }
 
     /**

@@ -257,6 +257,11 @@ public final class AutoSyncScheduler
      * safe from the auto-sync job, which holds no scheduling rule of its own, and from any caller whose rule
      * does not conflict with the project's resource rule.
      *
+     * <p>This is the second of the two producers of marker state, alongside the issues view's
+     * {@code scheduleMarkerSync}, and it publishes through the same fence: constructing the job records the
+     * state version ({@link ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion}), so a background cycle whose
+     * issues were fetched before a quick-suppress cannot write its markers after it.
+     *
      * @param project the project whose markers are replaced, not {@code null}
      * @param entries supplies the entries to materialize, evaluated in the synchronization job, not
      *     {@code null}
