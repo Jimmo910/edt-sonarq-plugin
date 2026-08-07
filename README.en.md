@@ -135,6 +135,10 @@ Also in the view:
   in the SonarQube web UI and create a **User Token**. For the analysis-launch button the
   token additionally needs the **Execute Analysis** permission. The token is stored in the
   **Eclipse Secure Storage**, not in plain preferences.
+- **Stored Secrets...** lists every token and CI secret this EDT installation has accumulated
+  in the secure storage (including ones for URLs you no longer use) and removes only the
+  entries you tick, after a confirmation. The storage is shared by every workspace of the
+  installation, so nothing is ever pruned automatically.
 - **Timeout (seconds)** — the HTTP request timeout.
 - **Test Connection** verifies the URL and token and reports the server version.
 

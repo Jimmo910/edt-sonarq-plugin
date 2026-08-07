@@ -331,6 +331,10 @@ public class ProcessAnalyzeRunnerTest
                 message.contains(logFile.toAbsolutePath().toString()));
             assertTrue("expected message to contain the known tail line, got: " + message,
                 message.contains(knownLine));
+            assertTrue("expected the localized exit-code sentence, got: " + message,
+                message.contains(beforePlaceholder(Messages.LocalAnalysis_ExitCode)));
+            assertTrue("expected the localized full-log label, got: " + message,
+                message.contains(beforePlaceholder(Messages.LocalAnalysis_FullLog)));
         }
     }
 
@@ -391,9 +395,89 @@ public class ProcessAnalyzeRunnerTest
                 message.startsWith(Messages.LocalAnalysis_OutOfMemory));
             assertTrue("expected message to still contain the absolute log path, got: " + message,
                 message.contains(logFile.toAbsolutePath().toString()));
-            assertTrue("expected message to still contain the exit code sentence, got: " + message,
-                message.contains("exited with code"));
+            assertTrue("expected message to still contain the localized exit-code sentence, got: " + message,
+                message.contains(beforePlaceholder(Messages.LocalAnalysis_ExitCode)));
         }
+    }
+
+    /**
+     * The exit-code headline and the pointer to the full log are what the user reads on <em>every</em> failed
+     * local analysis, out-of-memory or not, so they must come from the {@link Messages} bundle rather than be
+     * hardcoded English on a Russian EDT - the compromise the out-of-memory hint alone was fixed for.
+     *
+     * <p>Proved by swapping the bundle fields for sentinels for the duration of the call: text that did not
+     * come from the bundle would survive the swap and break the equality. The whole composition is asserted,
+     * so the actionable parts - exit code, absolute log path, log tail - are pinned as well.
+     */
+    @Test
+    public void failureMessageOfAPlainFailureIsAssembledFromTheBundle() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-message-test");
+        Path logFile = scratchDir.resolve("analyze.log");
+        Files.writeString(logFile, "the last log line\n", StandardCharsets.UTF_8);
+        String exitCode = Messages.LocalAnalysis_ExitCode;
+        String fullLog = Messages.LocalAnalysis_FullLog;
+        try
+        {
+            Messages.LocalAnalysis_ExitCode = "EXIT-SENTINEL {0}";
+            Messages.LocalAnalysis_FullLog = "LOG-SENTINEL {0}";
+
+            String message = ProcessAnalyzeRunner.failureMessage(3, logFile, false);
+
+            assertEquals("EXIT-SENTINEL 3" + System.lineSeparator() + "LOG-SENTINEL "
+                + logFile.toAbsolutePath() + System.lineSeparator() + "the last log line", message);
+        }
+        finally
+        {
+            Messages.LocalAnalysis_ExitCode = exitCode;
+            Messages.LocalAnalysis_FullLog = fullLog;
+        }
+    }
+
+    /**
+     * The same for the out-of-memory path: the localized hint is prepended to - and does not replace - the
+     * equally localized rest of the message.
+     */
+    @Test
+    public void failureMessageOfAnOutOfMemoryFailureIsAssembledFromTheBundle() throws Exception
+    {
+        scratchDir = Files.createTempDirectory("sonarq-process-analyze-runner-oom-message-test");
+        Path logFile = scratchDir.resolve("analyze.log");
+        Files.writeString(logFile, "java.lang.OutOfMemoryError: Java heap space\n", StandardCharsets.UTF_8);
+        String outOfMemory = Messages.LocalAnalysis_OutOfMemory;
+        String exitCode = Messages.LocalAnalysis_ExitCode;
+        String fullLog = Messages.LocalAnalysis_FullLog;
+        try
+        {
+            Messages.LocalAnalysis_OutOfMemory = "OOM-SENTINEL";
+            Messages.LocalAnalysis_ExitCode = "EXIT-SENTINEL {0}";
+            Messages.LocalAnalysis_FullLog = "LOG-SENTINEL {0}";
+
+            String message = ProcessAnalyzeRunner.failureMessage(1, logFile, true);
+
+            assertEquals("OOM-SENTINEL" + System.lineSeparator() + "EXIT-SENTINEL 1" + System.lineSeparator()
+                + "LOG-SENTINEL " + logFile.toAbsolutePath() + System.lineSeparator()
+                + "java.lang.OutOfMemoryError: Java heap space", message);
+        }
+        finally
+        {
+            Messages.LocalAnalysis_OutOfMemory = outOfMemory;
+            Messages.LocalAnalysis_ExitCode = exitCode;
+            Messages.LocalAnalysis_FullLog = fullLog;
+        }
+    }
+
+    /**
+     * The part of a message pattern before its {@code {0}} placeholder: the invariant text to look for when
+     * the message is asserted against a bundle whose wording depends on the platform's locale.
+     *
+     * @param pattern the message pattern, not {@code null}
+     * @return the text before the first placeholder, or the whole pattern when it has none
+     */
+    private static String beforePlaceholder(String pattern)
+    {
+        int index = pattern.indexOf("{0}");
+        return index < 0 ? pattern : pattern.substring(0, index);
     }
 
     /**
