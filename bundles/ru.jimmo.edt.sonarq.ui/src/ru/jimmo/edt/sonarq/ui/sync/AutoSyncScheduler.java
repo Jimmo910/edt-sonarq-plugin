@@ -45,6 +45,8 @@ public final class AutoSyncScheduler
 
     private static long generation;
 
+    private static boolean localModeSkipLogged;
+
     private AutoSyncScheduler()
     {
     }
@@ -59,6 +61,7 @@ public final class AutoSyncScheduler
     public static synchronized void applyPreferences()
     {
         generation++;
+        localModeSkipLogged = false;
         if (currentJob != null)
         {
             currentJob.cancel();
@@ -85,6 +88,7 @@ public final class AutoSyncScheduler
     public static synchronized void stop()
     {
         generation++;
+        localModeSkipLogged = false;
         if (currentJob != null)
         {
             currentJob.cancel();
@@ -118,6 +122,34 @@ public final class AutoSyncScheduler
         }
     }
 
+    /**
+     * Enters the "skipping because the plug-in is in local-analysis mode" state, and tells whether that is
+     * a change worth logging.
+     *
+     * <p>The timer keeps rescheduling while in local mode - by default every 15 minutes, for as long as EDT
+     * runs - so logging the skip on every cycle would fill the workspace log with one identical INFO line
+     * forever (review minor M12). The condition is logged once, when it first holds, and again only after
+     * {@link #leaveLocalModeSkip()} or a scheduler state change ({@link #applyPreferences()},
+     * {@link #stop()}) has re-armed it, so a genuinely new occurrence is never silenced.
+     *
+     * @return {@code true} when the caller should log the skip
+     */
+    static synchronized boolean enterLocalModeSkip()
+    {
+        if (localModeSkipLogged)
+        {
+            return false;
+        }
+        localModeSkipLogged = true;
+        return true;
+    }
+
+    /** Re-arms the local-mode skip log, so returning to local mode later is reported again. */
+    static synchronized void leaveLocalModeSkip()
+    {
+        localModeSkipLogged = false;
+    }
+
     private static void refreshAllProjects()
     {
         String mode = Platform.getPreferencesService().getString(SonarqPlugin.PLUGIN_ID,
@@ -126,10 +158,14 @@ public final class AutoSyncScheduler
         {
             // Local analysis is a heavyweight per-project language-server run; never trigger it from the
             // background timer. The job still reschedules, so switching back to server mode resumes syncing.
-            Platform.getLog(AutoSyncScheduler.class)
-                .info("Background auto-sync skipped: local analysis runs only on an explicit refresh."); //$NON-NLS-1$
+            if (enterLocalModeSkip())
+            {
+                Platform.getLog(AutoSyncScheduler.class).info(
+                    "Background auto-sync skipped: local analysis runs only on an explicit refresh."); //$NON-NLS-1$
+            }
             return;
         }
+        leaveLocalModeSkip();
         for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects())
         {
             if (project.isOpen() && !runRefresh(project))

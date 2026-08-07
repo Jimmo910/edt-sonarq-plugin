@@ -8,12 +8,21 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.util.Iterator;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import org.junit.Test;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
@@ -782,6 +791,210 @@ public class SarifParserTest
         assertEquals(0, issue.line());
         assertEquals("TestConfiguration:", issue.componentKey()); //$NON-NLS-1$
         assertEquals("MethodSize::0:0", issue.key()); //$NON-NLS-1$
+    }
+
+    /**
+     * The parser must consume the report as a stream, not as a document. This report is produced lazily,
+     * chunk by chunk, by a {@link Reader} the test controls: it is never a {@code String} and never a JSON
+     * tree, so it can only be parsed at all by a pull parser. Fifty thousand results are generated - far
+     * more than the hundred kept - and every one of them is still counted, so the caller can report an
+     * honest total.
+     */
+    @Test
+    public void hugeResultsArrayIsStreamedOffAReaderAndCappedAtTheIssueLimit() throws IOException
+    {
+        int generated = 50_000;
+        int limit = 100;
+
+        SarifReport report;
+        try (Reader reader = new ChunkedReader(sarifChunks(generated)))
+        {
+            report = SarifParser.parse(reader, PROJECT_KEY, "", limit); //$NON-NLS-1$
+        }
+
+        assertEquals(limit, report.issues().size());
+        assertEquals(generated, report.totalResults());
+        assertTrue(report.truncated());
+        // The kept issues are the first ones, in report order, fully parsed - not placeholders.
+        assertEquals(1, report.issues().get(0).line());
+        assertEquals(limit, report.issues().get(limit - 1).line());
+        assertEquals("MethodSize", report.issues().get(0).ruleKey()); //$NON-NLS-1$
+        // The rule catalog still comes out of the same single pass.
+        assertNotNull(report.rules().get("MethodSize")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void reportWithinTheIssueLimitIsNotReportedAsTruncated() throws IOException
+    {
+        SarifReport report;
+        try (Reader reader = new ChunkedReader(sarifChunks(5)))
+        {
+            report = SarifParser.parse(reader, PROJECT_KEY, "", 100); //$NON-NLS-1$
+        }
+
+        assertEquals(5, report.issues().size());
+        assertEquals(5, report.totalResults());
+        assertFalse(report.truncated());
+    }
+
+    @Test
+    public void unlimitedStringParseKeepsEveryResultAndReportsNoTruncation()
+    {
+        SarifReport report = SarifParser.parse(FULL_REPORT_JSON, PROJECT_KEY);
+
+        assertEquals(2, report.totalResults());
+        assertFalse(report.truncated());
+    }
+
+    /**
+     * SARIF puts {@code tool} before {@code results} in practice, but the streaming parser must not depend
+     * on that: a run whose rule catalog trails its results still yields both.
+     */
+    @Test
+    public void ruleCatalogIsCollectedEvenWhenItFollowsTheResults()
+    {
+        String json = """
+            {
+              "runs": [
+                {
+                  "results": [
+                    {
+                      "ruleId": "MethodSize",
+                      "level": "warning",
+                      "message": { "text": "Too long" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "src/Module.bsl" },
+                            "region": { "startLine": 3 }
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "tool": {
+                    "driver": {
+                      "rules": [
+                        { "id": "MethodSize", "name": "Method size" }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }""";
+
+        SarifReport report = SarifParser.parse(json, PROJECT_KEY);
+
+        assertEquals(1, report.issues().size());
+        assertEquals("Method size", report.rules().get("MethodSize").name()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A report cut off mid-document (a killed analyzer, a full disk) must fail cleanly, not as an Error. */
+    @Test
+    public void truncatedReportFailsAsAJsonSyntaxException()
+    {
+        String json = "{ \"runs\": [ { \"results\": [ { \"ruleId\": \"MethodSize\""; //$NON-NLS-1$
+
+        try
+        {
+            SarifParser.parse(json, PROJECT_KEY);
+            fail("expected a JsonSyntaxException"); //$NON-NLS-1$
+        }
+        catch (JsonSyntaxException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    @Test
+    public void corruptReportFailsAsAJsonSyntaxException()
+    {
+        try
+        {
+            SarifParser.parse("{ \"runs\": [ not json at all ] }", PROJECT_KEY); //$NON-NLS-1$
+            fail("expected a JsonSyntaxException"); //$NON-NLS-1$
+        }
+        catch (JsonSyntaxException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    /** A root that is not a JSON object is corrupt input, not an internal {@code IllegalStateException}. */
+    @Test
+    public void nonObjectRootFailsAsAJsonSyntaxException()
+    {
+        try
+        {
+            SarifParser.parse("[]", PROJECT_KEY); //$NON-NLS-1$
+            fail("expected a JsonSyntaxException"); //$NON-NLS-1$
+        }
+        catch (JsonSyntaxException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    /**
+     * Produces one SARIF document as a lazy sequence of chunks: a prefix carrying the rule catalog, one
+     * chunk per result, then the closing brackets. Nothing ever holds the whole document.
+     *
+     * @param resultCount how many results to generate
+     * @return the chunk sequence, never {@code null}
+     */
+    private static Iterator<String> sarifChunks(int resultCount)
+    {
+        String prefix = "{\"runs\":[{\"tool\":{\"driver\":{\"rules\":[" //$NON-NLS-1$
+            + "{\"id\":\"MethodSize\",\"name\":\"Method size\"}]}},\"results\":["; //$NON-NLS-1$
+        Stream<String> results = IntStream.rangeClosed(1, resultCount)
+            .mapToObj(line -> (line == 1 ? "" : ",") + generatedResult(line)); //$NON-NLS-1$ //$NON-NLS-2$
+        return Stream.concat(Stream.of(prefix), Stream.concat(results, Stream.of("]}]}"))).iterator(); //$NON-NLS-1$
+    }
+
+    private static String generatedResult(int line)
+    {
+        return "{\"ruleId\":\"MethodSize\",\"level\":\"warning\",\"message\":{\"text\":\"Too long\"}," //$NON-NLS-1$
+            + "\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"src/M.bsl\"}," //$NON-NLS-1$
+            + "\"region\":{\"startLine\":" + line + ",\"startColumn\":1}}}]}"; //$NON-NLS-1$
+    }
+
+    /** Serves a lazily produced sequence of chunks as a {@link Reader}, never materializing the whole. */
+    private static final class ChunkedReader extends Reader
+    {
+        private final Iterator<String> chunks;
+
+        private String current = ""; //$NON-NLS-1$
+
+        private int position;
+
+        ChunkedReader(Iterator<String> chunks)
+        {
+            this.chunks = chunks;
+        }
+
+        @Override
+        public int read(char[] buffer, int offset, int length)
+        {
+            while (position >= current.length())
+            {
+                if (!chunks.hasNext())
+                {
+                    return -1;
+                }
+                current = chunks.next();
+                position = 0;
+            }
+            int count = Math.min(length, current.length() - position);
+            current.getChars(position, position + count, buffer, offset);
+            position += count;
+            return count;
+        }
+
+        @Override
+        public void close()
+        {
+            // Nothing to release; the chunk sequence is pure computation.
+        }
     }
 
     private static SonarSeverity parseSingleResultSeverity(String level)

@@ -8,6 +8,7 @@ package ru.jimmo.edt.sonarq.core.localanalysis;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -302,9 +303,99 @@ public class LocalIssueProviderTest
 
         assertEquals(1, snapshot.issues().size());
         assertEquals(1, snapshot.serverTotal());
+        assertFalse(snapshot.truncated());
         SonarIssue issue = snapshot.issues().get(0);
         assertEquals(PROJECT_KEY + ":src/CommonModules/X/Module.bsl", issue.componentKey());
         assertEquals(42, issue.line());
+    }
+
+    /**
+     * A full-checks run over a large 1C configuration can report far more findings than the IDE can hold or
+     * show. The local path must degrade the way the server path does - a visibly truncated snapshot with the
+     * true total - instead of materializing everything inside the EDT JVM (review I2).
+     */
+    @Test
+    public void reportBeyondTheIssueCapYieldsATruncatedSnapshotWithTheTrueTotal() throws Exception
+    {
+        int generated = LocalIssueProvider.MAX_ISSUES + 1;
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixtureWithResults(generated);
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4,
+                BslUpdateChannel.STABLE, runner);
+
+        IssueSnapshot snapshot = provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+
+        assertEquals(LocalIssueProvider.MAX_ISSUES, snapshot.issues().size());
+        assertEquals(generated, snapshot.serverTotal());
+        assertTrue(snapshot.truncated());
+    }
+
+    @Test
+    public void reportExactlyAtTheIssueCapIsNotReportedAsTruncated() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = sarifFixtureWithResults(LocalIssueProvider.MAX_ISSUES);
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4,
+                BslUpdateChannel.STABLE, runner);
+
+        IssueSnapshot snapshot = provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+
+        assertEquals(LocalIssueProvider.MAX_ISSUES, snapshot.issues().size());
+        assertEquals(LocalIssueProvider.MAX_ISSUES, snapshot.serverTotal());
+        assertFalse(snapshot.truncated());
+    }
+
+    /**
+     * A report cut off mid-document - a killed analyzer, a full disk - must be reported as an ordinary fetch
+     * failure, not escape as an unhandled error.
+     */
+    @Test
+    public void corruptSarifReportBecomesSonarServerException() throws Exception
+    {
+        FakeRunner runner = new FakeRunner();
+        runner.sarifJson = "{ \"runs\": [ { \"results\": [ { \"ruleId\": \"MethodSize\"";
+        LocalIssueProvider provider =
+            new LocalIssueProvider(PROJECT_KEY, projectRoot, stateDir, override, null, "", 4,
+                BslUpdateChannel.STABLE, runner);
+
+        try
+        {
+            provider.fetchIssues(new IssueQuery(PROJECT_KEY, null), new NullProgressMonitor());
+            fail("expected SonarServerException");
+        }
+        catch (SonarServerException e)
+        {
+            assertNotNull(e.getMessage());
+        }
+    }
+
+    /**
+     * Builds a fixture SARIF document with {@code count} results, all on the same module, at ascending
+     * lines, so the issue cap has more results to chew through than it keeps.
+     *
+     * @param count how many results to emit
+     * @return the SARIF report as JSON
+     */
+    private String sarifFixtureWithResults(int count)
+    {
+        String moduleUri = projectRoot.resolve("src").resolve("CommonModules").resolve("X")
+            .resolve("Module.bsl").toUri().toString();
+        StringBuilder json = new StringBuilder("{\"runs\":[{\"tool\":{\"driver\":{\"rules\":[")
+            .append("{\"id\":\"MethodSize\",\"name\":\"Method size\"}]}},\"results\":[");
+        for (int line = 1; line <= count; line++)
+        {
+            if (line > 1)
+            {
+                json.append(',');
+            }
+            json.append("{\"ruleId\":\"MethodSize\",\"level\":\"warning\",\"message\":{\"text\":\"Too long\"},")
+                .append("\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"")
+                .append(moduleUri)
+                .append("\"},\"region\":{\"startLine\":").append(line).append(",\"startColumn\":1}}}]}");
+        }
+        return json.append("]}]}").toString();
     }
 
     @Test
