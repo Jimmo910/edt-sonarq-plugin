@@ -6,6 +6,8 @@
 
 package ru.jimmo.edt.sonarq.ui.views;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * The generation counter that decides whether an asynchronous result may still be applied to the SonarQube
  * Issues view.
@@ -21,20 +23,23 @@ package ru.jimmo.edt.sonarq.ui.views;
  * desynchronization the suppression bookkeeping exists to prevent. {@link #invalidate()} retires the current
  * generation for that case, without pretending a new refresh has started.
  *
- * <p>Not thread-safe by design: like the view fields it replaced, it is only ever touched on the UI thread.
+ * <p>The same counter fences the marker writes, one instance per project (see
+ * {@link ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion}), which is why it is safe to use from any thread:
+ * a marker synchronization job takes its version on the producer's thread and verifies it in its own, under
+ * the project's scheduling rule. The view's own instance is still only ever touched on the UI thread.
  */
 public final class RefreshGeneration
 {
-    private long current;
+    private final AtomicLong current = new AtomicLong();
 
     /**
-     * Opens a new generation for a refresh that is about to be scheduled.
+     * Opens a new generation for a refresh, or any other state, that is about to be published.
      *
-     * @return the generation the refresh must carry to its completion callback
+     * @return the generation the work must carry to its completion callback
      */
     public long start()
     {
-        return ++current;
+        return current.incrementAndGet();
     }
 
     /**
@@ -43,7 +48,7 @@ public final class RefreshGeneration
      */
     public void invalidate()
     {
-        current++;
+        current.incrementAndGet();
     }
 
     /**
@@ -53,7 +58,7 @@ public final class RefreshGeneration
      */
     public long current()
     {
-        return current;
+        return current.get();
     }
 
     /**
@@ -64,6 +69,6 @@ public final class RefreshGeneration
      */
     public boolean isCurrent(long generation)
     {
-        return generation == current;
+        return generation == current.get();
     }
 }

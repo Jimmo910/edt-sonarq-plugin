@@ -31,6 +31,7 @@ import org.junit.Test;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
+import ru.jimmo.edt.sonarq.core.suppress.LineAnchor;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /** Tests for {@link IssueMarkerSynchronizer}. */
@@ -84,6 +85,21 @@ public class IssueMarkerSynchronizerTest
         assertEquals("bsl:Rule1", marker.getAttribute(IssueMarkers.ATTR_RULE_KEY, ""));
         assertEquals("BLOCKER", marker.getAttribute(IssueMarkers.ATTR_SONAR_SEVERITY, ""));
         assertEquals("k1", marker.getAttribute(IssueMarkers.ATTR_ISSUE_KEY, ""));
+    }
+
+    /**
+     * The anchor travels onto the marker verbatim, which is what lets the Problems-view quick fix verify the
+     * line it is about to wrap when no issues view is open to hold the issue model.
+     */
+    @Test
+    public void createsMarkerWithTheIssuesLineAnchor() throws CoreException
+    {
+        String anchor = LineAnchor.of("    А = 1;");
+
+        synchronizer.sync(project, List.of(new IssueEntry(
+            issue("k1a", "bsl:Rule1", SonarSeverity.MAJOR, 10).withAnchor(anchor), RELATIVE_PATH)));
+
+        assertEquals(anchor, onlyMarker().getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, ""));
     }
 
     @Test

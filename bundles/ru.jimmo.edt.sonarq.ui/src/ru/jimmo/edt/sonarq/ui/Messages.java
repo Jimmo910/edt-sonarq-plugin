@@ -170,7 +170,14 @@ public final class Messages extends NLS
     public static String StoredSecrets_RemoveFailed;
     public static String StoredSecrets_Title;
     public static String StoredSecrets_UnknownUrl;
+    public static String Suppress_Refused_AlreadySuppressed;
+    public static String Suppress_Refused_FileChanged;
+    public static String Suppress_Refused_Title;
+    public static String Suppress_Refused_Unavailable;
+    public static String Suppress_Refused_UnsavedChanges;
     public static String Suppress_ResolutionLabel;
+    public static String Suppress_Stale_Message;
+    public static String Suppress_Stale_Title;
 
     static
     {

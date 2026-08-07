@@ -67,55 +67,73 @@ public final class BslSuppression
     }
 
     /**
-     * Wraps the given 1-based line with an off/on pair of {@code ruleKey} suppression comments, each at the
-     * flagged line's own indentation, so the BSL Language Server (and SonarQube's community BSL plugin)
-     * stops reporting {@code ruleKey} for that line.
+     * Wraps the line the issue's anchor points at with an off/on pair of {@code ruleKey} suppression
+     * comments, each at that line's own indentation, so the BSL Language Server (and SonarQube's community
+     * BSL plugin) stops reporting {@code ruleKey} for it.
      *
-     * <p>A no-op in two cases, both guarding against corrupting the file with a nested or wrapped-comment
-     * suppression when a caller passes a line number that is stale (see {@link #isBslSuppressionComment}):
+     * <p>The line is <em>verified before it is edited</em>, never merely trusted: {@code line1Based} is only
+     * a hint, and {@link LineAnchor#resolveLine} decides which line - if any - this call may touch. When the
+     * recorded number no longer carries {@code lineAnchor}, the nearest line within
+     * {@link LineAnchor#SEARCH_RADIUS} that does is edited instead (this is what silently absorbs a
+     * server-mode refresh restoring the line numbers of its last analysis, and small local edits above the
+     * issue); when no such line exists, nothing is written at all. An empty {@code lineAnchor} - an issue
+     * that could never be fingerprinted - keeps the pre-anchor behaviour of editing {@code line1Based}
+     * itself, so nothing regresses for it.
+     *
+     * <p>Two further guards make the call a no-op, both against wrapping a comment instead of code:
      * <ul>
-     * <li>{@code line1Based} itself is already a BSL Language Server suppression comment - inserting would
-     * wrap the comment instead of code, producing an {@code off/off/on/.../on} mess.</li>
-     * <li>the line immediately above {@code line1Based} is already the exact off-comment this call would
-     * insert - re-running the action on an already-suppressed line does not nest another wrapper around
-     * it.</li>
+     * <li>the resolved line is itself a BSL Language Server suppression comment - inserting would produce an
+     * {@code off/off/on/.../on} mess (see {@link #isBslSuppressionComment});</li>
+     * <li>the line immediately above it is already the exact off-comment this call would insert - re-running
+     * the action on an already-suppressed line does not nest another wrapper around it.</li>
      * </ul>
      *
-     * <p>The return value reports which of the two happened, because a caller that keeps its own in-memory
-     * line numbers (see {@link SuppressionLineShift}) must only renumber them when the document really did
-     * grow by the two comment lines: shifting after a no-op desynchronizes the caller's model from the file
-     * and makes the next suppression wrap the wrong lines.
+     * <p>The whole target line is replaced in a single {@link IDocument#replace} call, so no failure can
+     * leave the file holding half of a comment pair.
+     *
+     * <p>The returned outcome tells a caller that keeps its own in-memory line numbers (see
+     * {@link SuppressionLineShift}) whether it may renumber them: only a real insertion grew the document by
+     * two lines, and shifting after a refusal desynchronizes that caller's model from the file, which is what
+     * makes the <em>next</em> suppression wrap the wrong lines.
      *
      * @param document the document to edit, not {@code null}
-     * @param line1Based the 1-based line number of the flagged line
+     * @param line1Based the 1-based line number recorded for the flagged issue
      * @param ruleKey the rule key, bare or {@code bsl:}-prefixed, not {@code null}
-     * @return {@code true} when the off/on comment pair was inserted, {@code false} when one of the two
-     *     guards above made this call a no-op and the document was left untouched
-     * @throws BadLocationException when {@code line1Based} is out of the document's range
+     * @param lineAnchor the anchor recorded for the flagged line (see {@link LineAnchor}), not {@code null};
+     *     {@link LineAnchor#NONE} disables the verification
+     * @return {@link SuppressionOutcome#INSERTED} when the comment pair was written, and the reason the
+     *     document was left untouched otherwise
+     * @throws BadLocationException when the resolved line is out of the document's range - only reachable
+     *     with an empty {@code lineAnchor}, since a resolved anchor is by construction inside the document
      */
-    public static boolean insert(IDocument document, int line1Based, String ruleKey) throws BadLocationException
+    public static SuppressionOutcome insert(IDocument document, int line1Based, String ruleKey,
+        String lineAnchor) throws BadLocationException
     {
-        int line0 = line1Based - 1;
+        int target = LineAnchor.resolveLine(document, line1Based, lineAnchor);
+        if (target == LineAnchor.NOT_FOUND)
+        {
+            return SuppressionOutcome.ANCHOR_NOT_FOUND;
+        }
+        int line0 = target - 1;
         if (isBslSuppressionComment(trimmedLineOf(document, line0)))
         {
-            return false;
+            return SuppressionOutcome.ALREADY_SUPPRESSED;
         }
         String off = offComment(ruleKey);
         if (isAlreadySuppressed(document, line0, off))
         {
-            return false;
+            return SuppressionOutcome.ALREADY_SUPPRESSED;
         }
         String indentation = leadingWhitespaceOf(document, line0);
         String delimiter = lineDelimiterOf(document, line0);
 
-        int lineOffset = document.getLineOffset(line0);
-        document.replace(lineOffset, 0, indentation + off + delimiter);
-
-        // The target line was pushed one line down by the insertion above.
-        IRegion targetRegion = document.getLineInformation(line0 + 1);
-        int insertOnAt = targetRegion.getOffset() + targetRegion.getLength();
-        document.replace(insertOnAt, 0, delimiter + indentation + onComment(ruleKey));
-        return true;
+        IRegion targetRegion = document.getLineInformation(line0);
+        String targetText = document.get(targetRegion.getOffset(), targetRegion.getLength());
+        String replacement = indentation + off + delimiter
+            + targetText + delimiter
+            + indentation + onComment(ruleKey);
+        document.replace(targetRegion.getOffset(), targetRegion.getLength(), replacement);
+        return SuppressionOutcome.INSERTED;
     }
 
     /**

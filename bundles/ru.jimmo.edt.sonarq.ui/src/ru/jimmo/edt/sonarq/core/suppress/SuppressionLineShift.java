@@ -9,6 +9,7 @@ package ru.jimmo.edt.sonarq.core.suppress;
 import java.util.ArrayList;
 import java.util.List;
 
+import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 
 /**
@@ -55,6 +56,31 @@ public final class SuppressionLineShift
             result.add(shiftIfSameFile(issue, suppressed.componentKey(), suppressed.line()));
         }
         return result;
+    }
+
+    /**
+     * Applies {@link #applyAfterSuppress(List, SonarIssue)} to a whole snapshot, keeping everything the
+     * snapshot knows besides its issues.
+     *
+     * <p>The total matters as much as the issues. It is what tells the view that the result on screen is only
+     * the first {@code N} of {@code M} findings the server (or a capped local analysis) actually has, and
+     * rebuilding the snapshot with "total = issues I still hold" silently turned every truncated result into a
+     * complete one at the first suppression - the "Showing first N of M" warning simply disappeared and never
+     * came back until the next refresh. The suppressed findings are gone for good, so the total loses exactly
+     * them and nothing else; it can never fall below the number of issues left, which would claim a truncation
+     * that is not there.
+     *
+     * @param snapshot the snapshot before the suppression, not {@code null}
+     * @param suppressed the issue that was just suppressed, not {@code null}
+     * @return a snapshot with the same query, load time and truncation state, and the adjusted issues, never
+     *     {@code null}
+     */
+    public static IssueSnapshot applyAfterSuppress(IssueSnapshot snapshot, SonarIssue suppressed)
+    {
+        List<SonarIssue> adjusted = applyAfterSuppress(snapshot.issues(), suppressed);
+        int silenced = snapshot.issues().size() - adjusted.size();
+        int total = Math.max(adjusted.size(), snapshot.serverTotal() - silenced);
+        return new IssueSnapshot(snapshot.query(), adjusted, total, snapshot.loadedAt());
     }
 
     /**
@@ -110,12 +136,9 @@ public final class SuppressionLineShift
             return issue;
         }
         int shifted = shiftedLine(issue.line(), codeLine);
-        return shifted == issue.line() ? issue : withLine(issue, shifted);
-    }
-
-    private static SonarIssue withLine(SonarIssue issue, int newLine)
-    {
-        return new SonarIssue(issue.key(), issue.ruleKey(), issue.severity(), issue.type(), issue.componentKey(),
-            issue.message(), newLine);
+        // withLine keeps the issue's line anchor: the comment pair moved the line, it did not change its
+        // text, and that anchor is what lets the next suppression find the line again even if this
+        // renumbering is later undone by a refresh that restores the analysis-time numbers.
+        return shifted == issue.line() ? issue : issue.withLine(shifted);
     }
 }

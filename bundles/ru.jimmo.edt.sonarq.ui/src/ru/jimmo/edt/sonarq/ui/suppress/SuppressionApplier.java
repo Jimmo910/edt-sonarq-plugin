@@ -25,6 +25,7 @@ import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.texteditor.ITextEditor;
 
 import ru.jimmo.edt.sonarq.core.suppress.BslSuppression;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
 
 /**
  * Applies a {@link BslSuppression#insert} edit to a workspace file (issue #7).
@@ -33,8 +34,10 @@ import ru.jimmo.edt.sonarq.core.suppress.BslSuppression;
  * that editor's document, so the change is live and undoable through the editor's own undo stack. Otherwise
  * - and always as the reliable fallback when no matching open editor is found - the edit is applied through
  * a connected {@link ITextFileBufferManager}, which reads and writes the file with its own encoding/BOM
- * handling, so this class never hand-rolls file I/O. That fallback never commits a buffer that already holds
- * someone else's unsaved changes.
+ * handling, so this class never hand-rolls file I/O.
+ *
+ * <p>Neither path touches a file with unsaved changes: the buffer path would commit somebody else's edits to
+ * disk on the user's behalf, and both paths would be editing content that no analysis has ever seen.
  */
 public final class SuppressionApplier
 {
@@ -43,36 +46,97 @@ public final class SuppressionApplier
     }
 
     /**
-     * Suppresses {@code ruleKey} on {@code line} of {@code file}.
+     * Suppresses {@code ruleKey} on the line of {@code file} that still carries {@code lineAnchor}.
      *
-     * <p>Reports whether anything was actually written, so a caller that adjusts its own in-memory line
-     * numbers afterwards (see {@link ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift}) only does so
-     * when the file really changed. Nothing is written when {@link BslSuppression#insert}'s own guards make
-     * the edit a no-op, or when the file-buffer path finds unsaved changes it must not commit (see
-     * {@link #applyToFileBuffer}).
+     * <p>Reports what happened, so a caller that adjusts its own in-memory line numbers afterwards (see
+     * {@link ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift}) only does so when the file really
+     * changed, and can tell the user why it did not otherwise. Nothing is written when
+     * {@link BslSuppression#insert} refuses the line, or when either path finds unsaved changes it must not
+     * commit or edit.
      *
      * @param file the file to edit, not {@code null}; must {@link IFile#exists()}
-     * @param line the 1-based line to wrap, must be {@code > 0}
+     * @param line the 1-based line recorded for the issue, must be {@code > 0}
      * @param ruleKey the rule key (bare or {@code bsl:}-prefixed) to suppress, not {@code null}
+     * @param lineAnchor the anchor recorded for the flagged line, not {@code null}; empty disables the
+     *     verification and edits {@code line} itself
      * @param page the active workbench page to search for an already-open editor of {@code file}, or
      *     {@code null} to always go through the file-buffer path
-     * @return {@code true} when the suppression comments were inserted, {@code false} when the call was a
-     *     no-op and neither the document nor the file changed
+     * @return what the attempt did, never {@code null}
      * @throws CoreException when connecting to, or committing, the file buffer fails
      * @throws BadLocationException when {@code line} is out of the document's range
      */
-    public static boolean apply(IFile file, int line, String ruleKey, IWorkbenchPage page)
-        throws CoreException, BadLocationException
+    public static SuppressionOutcome apply(IFile file, int line, String ruleKey, String lineAnchor,
+        IWorkbenchPage page) throws CoreException, BadLocationException
     {
-        IDocument openDocument = openEditorDocument(file, page);
-        if (openDocument != null)
+        SuppressionOutcome outcome = applyToBestPath(file, line, ruleKey, lineAnchor, page);
+        if (!outcome.inserted())
         {
-            return BslSuppression.insert(openDocument, line, ruleKey);
+            logRefusal(file, ruleKey, outcome);
         }
-        return applyToFileBuffer(file, line, ruleKey);
+        return outcome;
     }
 
-    private static IDocument openEditorDocument(IFile file, IWorkbenchPage page)
+    /**
+     * Applies the edit to the open editor's document when there is one, and through a file buffer otherwise.
+     *
+     * @param file the file to edit, not {@code null}
+     * @param line the 1-based line recorded for the issue
+     * @param ruleKey the rule key to suppress, not {@code null}
+     * @param lineAnchor the anchor recorded for the flagged line, not {@code null}
+     * @param page the workbench page to look for an open editor in, or {@code null}
+     * @return what the attempt did, never {@code null}
+     * @throws CoreException when connecting to, or committing, the file buffer fails
+     * @throws BadLocationException when {@code line} is out of the document's range
+     */
+    private static SuppressionOutcome applyToBestPath(IFile file, int line, String ruleKey, String lineAnchor,
+        IWorkbenchPage page) throws CoreException, BadLocationException
+    {
+        OpenDocument open = openEditorDocument(file, page);
+        if (open != null)
+        {
+            return applyToOpenDocument(open.document(), open.dirty(), line, ruleKey, lineAnchor);
+        }
+        return applyToFileBuffer(file, line, ruleKey, lineAnchor);
+    }
+
+    /**
+     * Applies the edit to the document of an open text editor, unless that editor is dirty.
+     *
+     * <p>A dirty editor is refused for the same reason a dirty file buffer is: the line number and the anchor
+     * handed to this class describe the file as the last analysis saw it - i.e. as it was saved - so unsaved
+     * edits above the issue have already invalidated the number, and unsaved edits <em>to</em> the issue's
+     * line have invalidated the anchor. This path used to check nothing at all, which is how an untouched
+     * saved file and a heavily edited buffer were treated identically.
+     *
+     * <p>Package-private, and taking the dirty flag rather than the editor, so the refusal can be tested
+     * headless: the editor path itself needs a running workbench, which the test fragment does not have.
+     *
+     * @param document the open editor's document, not {@code null}
+     * @param dirty whether the editor holds unsaved changes
+     * @param line the 1-based line recorded for the issue
+     * @param ruleKey the rule key to suppress, not {@code null}
+     * @param lineAnchor the anchor recorded for the flagged line, not {@code null}
+     * @return what the attempt did, never {@code null}
+     * @throws BadLocationException when {@code line} is out of the document's range
+     */
+    static SuppressionOutcome applyToOpenDocument(IDocument document, boolean dirty, int line, String ruleKey,
+        String lineAnchor) throws BadLocationException
+    {
+        if (dirty)
+        {
+            return SuppressionOutcome.UNSAVED_CHANGES;
+        }
+        return BslSuppression.insert(document, line, ruleKey, lineAnchor);
+    }
+
+    /**
+     * Finds the document of an already-open text editor for the file, together with its dirty state.
+     *
+     * @param file the file to look for, not {@code null}
+     * @param page the workbench page to search, or {@code null}
+     * @return the open document, or {@code null} when the file is not open in a text editor
+     */
+    private static OpenDocument openEditorDocument(IFile file, IWorkbenchPage page)
     {
         if (page == null)
         {
@@ -85,7 +149,12 @@ public final class SuppressionApplier
             return null;
         }
         ITextEditor textEditor = Adapters.adapt(editor, ITextEditor.class);
-        return textEditor != null ? textEditor.getDocumentProvider().getDocument(textEditor.getEditorInput()) : null;
+        if (textEditor == null)
+        {
+            return null;
+        }
+        IDocument document = textEditor.getDocumentProvider().getDocument(textEditor.getEditorInput());
+        return document != null ? new OpenDocument(document, editor.isDirty()) : null;
     }
 
     /**
@@ -94,19 +163,17 @@ public final class SuppressionApplier
      * <p>Refuses to touch a buffer that is already dirty - i.e. something else holds unsaved changes for
      * this file. Committing then would silently write those foreign changes to disk on the user's behalf,
      * and the line number handed to this class comes from the last analysis of the <em>saved</em> file, so
-     * it need not point at the same code in the modified buffer. The refusal is only logged: this path runs
-     * from a quick fix or a context-menu action that may be driven in the background, where this project's
-     * rules forbid blocking on a modal dialog.
+     * it need not point at the same code in the modified buffer.
      *
      * @param file the file to edit, not {@code null}
-     * @param line the 1-based line to wrap
+     * @param line the 1-based line recorded for the issue
      * @param ruleKey the rule key to suppress, not {@code null}
-     * @return {@code true} when the comments were inserted and committed, {@code false} on a refused or
-     *     no-op edit
+     * @param lineAnchor the anchor recorded for the flagged line, not {@code null}
+     * @return what the attempt did, never {@code null}
      * @throws CoreException when connecting to, or committing, the file buffer fails
      * @throws BadLocationException when {@code line} is out of the document's range
      */
-    private static boolean applyToFileBuffer(IFile file, int line, String ruleKey)
+    private static SuppressionOutcome applyToFileBuffer(IFile file, int line, String ruleKey, String lineAnchor)
         throws CoreException, BadLocationException
     {
         ITextFileBufferManager manager = FileBuffers.getTextFileBufferManager();
@@ -117,20 +184,18 @@ public final class SuppressionApplier
             ITextFileBuffer buffer = manager.getTextFileBuffer(file.getFullPath(), LocationKind.IFILE);
             if (buffer == null)
             {
-                logRefusal(file, ruleKey, "no text file buffer is available for it"); //$NON-NLS-1$
-                return false;
+                return SuppressionOutcome.NO_BUFFER;
             }
             if (buffer.isDirty())
             {
-                logRefusal(file, ruleKey, "it has unsaved changes; save it and try again"); //$NON-NLS-1$
-                return false;
+                return SuppressionOutcome.UNSAVED_CHANGES;
             }
-            boolean inserted = BslSuppression.insert(buffer.getDocument(), line, ruleKey);
-            if (inserted)
+            SuppressionOutcome outcome = BslSuppression.insert(buffer.getDocument(), line, ruleKey, lineAnchor);
+            if (outcome.inserted())
             {
                 buffer.commit(monitor, false);
             }
-            return inserted;
+            return outcome;
         }
         finally
         {
@@ -139,18 +204,30 @@ public final class SuppressionApplier
     }
 
     /**
-     * Logs a refused suppression instead of raising it in the UI: this path can run unattended (a background
-     * refresh's context menu, a quick fix), where a modal dialog would block.
+     * Logs a refused suppression. The user-facing half of the report is the caller's job (the issues view
+     * puts it on its status line, the quick fix shows it), because only the caller knows whether it was
+     * driven by an explicit click; this path can also run unattended, where this project's rules forbid
+     * blocking on a modal dialog.
      *
      * @param file the file that was left untouched, not {@code null}
      * @param ruleKey the rule that was not suppressed, not {@code null}
-     * @param reason the untranslated reason, not {@code null}
+     * @param outcome the reason nothing was written, not {@code null}
      */
-    private static void logRefusal(IFile file, String ruleKey, String reason)
+    private static void logRefusal(IFile file, String ruleKey, SuppressionOutcome outcome)
     {
         String message = "Not suppressing " + ruleKey //$NON-NLS-1$
             + " in " + file.getFullPath() //$NON-NLS-1$
-            + ": " + reason; //$NON-NLS-1$
+            + ": " + outcome; //$NON-NLS-1$
         Platform.getLog(SuppressionApplier.class).warn(message);
+    }
+
+    /**
+     * The document of an open text editor, and whether that editor holds unsaved changes.
+     *
+     * @param document the editor's document, not {@code null}
+     * @param dirty whether the editor is dirty
+     */
+    private record OpenDocument(IDocument document, boolean dirty)
+    {
     }
 }

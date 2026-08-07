@@ -29,6 +29,18 @@ public final class IssueMarkers
     /** The marker attribute holding the server-side issue key. */
     public static final String ATTR_ISSUE_KEY = "issueKey"; //$NON-NLS-1$
 
+    /**
+     * The marker attribute holding the fingerprint of the source line the issue was reported on (see
+     * {@link ru.jimmo.edt.sonarq.core.suppress.LineAnchor}).
+     *
+     * <p>Markers outlive the issues view and are created for every configured project by the background
+     * auto-sync, so the Problems-view quick fix regularly runs with no view - and therefore no issue model -
+     * behind it. Carrying the anchor on the marker itself is what lets that quick fix verify the line it is
+     * about to wrap instead of trusting {@link IMarker#LINE_NUMBER}, which any edit since the last analysis
+     * may have invalidated.
+     */
+    public static final String ATTR_LINE_ANCHOR = "lineAnchor"; //$NON-NLS-1$
+
     private IssueMarkers()
     {
     }
