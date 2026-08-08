@@ -280,6 +280,32 @@ public class LineAnchorTest
     }
 
     /**
+     * The floor applies to an anchor that only ever had one side, too - a line at the very top of a file has
+     * no context above it and cannot be asked for any. One surviving neighbour out of three is not enough to
+     * call this the same line, and there is no both-sides rule here to refuse it in the floor's place.
+     */
+    @Test
+    public void resolveLineRefusesWhenAOneSidedAnchorHasOnlyOneMatchLeft()
+    {
+        IDocument before = document("TARGET;", "a;", "b;", "c;");
+        String anchor = LineAnchor.of(before, 1);
+        IDocument after = document("TARGET;", "a;", "z1;", "z2;");
+
+        assertEquals(LineAnchor.WEAK_EVIDENCE, LineAnchor.resolveLine(after, 1, anchor));
+    }
+
+    /** Two of the three, on the other hand, are: the floor is two matches, not all of them. */
+    @Test
+    public void aOneSidedAnchorResolvesOnTwoMatches()
+    {
+        IDocument before = document("TARGET;", "a;", "b;", "c;");
+        String anchor = LineAnchor.of(before, 1);
+        IDocument after = document("TARGET;", "a;", "b;", "z2;");
+
+        assertEquals(1, LineAnchor.resolveLine(after, 1, anchor));
+    }
+
+    /**
      * Half a neighbourhood decides nothing either: when the anchor recorded context on both sides, a
      * candidate has to answer on both. A fragment that only agrees above it is what a moved or copied block
      * looks like.
