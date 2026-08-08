@@ -6,7 +6,7 @@
 
   <groupId>ru.jimmo.edt.sonarq</groupId>
   <artifactId>bom</artifactId>
-  <version>0.9.4-SNAPSHOT</version>
+  <version>0.9.5-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>BOM</name>
@@ -91,7 +91,7 @@
               <artifact>
                 <groupId>ru.jimmo.edt.sonarq</groupId>
                 <artifactId>default</artifactId>
-                <version>0.9.4-SNAPSHOT</version>
+                <version>0.9.5-SNAPSHOT</version>
               </artifact>
             </target>
             <dependency-resolution>
