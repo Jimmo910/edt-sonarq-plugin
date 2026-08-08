@@ -243,7 +243,7 @@ public class IssueAnchorsTest
                 Instant.EPOCH));
         SonarIssue first = loaded.issues().get(0);
         assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, first.line(), "R1", first.lineAnchor(), null));
+            SuppressionApplier.apply(file, first.line(), "R1", first.lineAnchor(), null).outcome());
         IssueSnapshot afterEdit = SuppressionLineShift.applyAfterSuppress(loaded, first);
         String anchorOfTheStatement = afterEdit.issues().get(0).lineAnchor();
 
@@ -256,7 +256,7 @@ public class IssueAnchorsTest
         assertEquals("the pre-edit anchor must have been carried over", anchorOfTheStatement,
             survivor.lineAnchor());
         assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, survivor.line(), "R2", survivor.lineAnchor(), null));
+            SuppressionApplier.apply(file, survivor.line(), "R2", survivor.lineAnchor(), null).outcome());
         assertEquals("Процедура П()\n"
             + "    // BSLLS:R1-off\n"
             + "    А = 1;\n"

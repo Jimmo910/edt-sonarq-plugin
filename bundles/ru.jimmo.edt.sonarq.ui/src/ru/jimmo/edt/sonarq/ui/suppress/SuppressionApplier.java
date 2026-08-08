@@ -26,6 +26,7 @@ import org.eclipse.ui.texteditor.ITextEditor;
 
 import ru.jimmo.edt.sonarq.core.suppress.BslSuppression;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionResult;
 
 /**
  * Applies a {@link BslSuppression#insert} edit to a workspace file (issue #7).
@@ -48,32 +49,34 @@ public final class SuppressionApplier
     /**
      * Suppresses {@code ruleKey} on the line of {@code file} that still carries {@code lineAnchor}.
      *
-     * <p>Reports what happened, so a caller that adjusts its own in-memory line numbers afterwards (see
-     * {@link ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift}) only does so when the file really
-     * changed, and can tell the user why it did not otherwise. Nothing is written when
-     * {@link BslSuppression#insert} refuses the line, or when either path finds unsaved changes it must not
-     * commit or edit.
+     * <p>Reports what happened <em>and where</em>, so a caller that adjusts its own in-memory line numbers
+     * afterwards (see {@link ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift}) only does so when the
+     * file really changed, does it around the line the comments actually went in at - which the anchor may
+     * well have moved away from the recorded one - and can tell the user why nothing happened otherwise.
+     * Nothing is written when {@link BslSuppression#insert} refuses the line, or when either path finds
+     * unsaved changes it must not commit or edit.
      *
      * @param file the file to edit, not {@code null}; must {@link IFile#exists()}
      * @param line the 1-based line recorded for the issue, must be {@code > 0}
      * @param ruleKey the rule key (bare or {@code bsl:}-prefixed) to suppress, not {@code null}
-     * @param lineAnchor the anchor recorded for the flagged line, not {@code null}; empty disables the
-     *     verification and edits {@code line} itself
+     * @param lineAnchor the anchor recorded for the flagged line, not {@code null}; empty is refused, since
+     *     an unverifiable line may not be rewritten
      * @param page the active workbench page to search for an already-open editor of {@code file}, or
      *     {@code null} to always go through the file-buffer path
-     * @return what the attempt did, never {@code null}
+     * @return what the attempt did, and the line it edited (see {@link SuppressionResult}), never
+     *     {@code null}
      * @throws CoreException when connecting to, or committing, the file buffer fails
      * @throws BadLocationException when {@code line} is out of the document's range
      */
-    public static SuppressionOutcome apply(IFile file, int line, String ruleKey, String lineAnchor,
+    public static SuppressionResult apply(IFile file, int line, String ruleKey, String lineAnchor,
         IWorkbenchPage page) throws CoreException, BadLocationException
     {
-        SuppressionOutcome outcome = applyToBestPath(file, line, ruleKey, lineAnchor, page);
-        if (!outcome.inserted())
+        SuppressionResult result = applyToBestPath(file, line, ruleKey, lineAnchor, page);
+        if (!result.inserted())
         {
-            logRefusal(file, ruleKey, outcome);
+            logRefusal(file, ruleKey, result.outcome());
         }
-        return outcome;
+        return result;
     }
 
     /**
@@ -84,11 +87,12 @@ public final class SuppressionApplier
      * @param ruleKey the rule key to suppress, not {@code null}
      * @param lineAnchor the anchor recorded for the flagged line, not {@code null}
      * @param page the workbench page to look for an open editor in, or {@code null}
-     * @return what the attempt did, never {@code null}
+     * @return what the attempt did, and the line it edited (see {@link SuppressionResult}), never
+     *     {@code null}
      * @throws CoreException when connecting to, or committing, the file buffer fails
      * @throws BadLocationException when {@code line} is out of the document's range
      */
-    private static SuppressionOutcome applyToBestPath(IFile file, int line, String ruleKey, String lineAnchor,
+    private static SuppressionResult applyToBestPath(IFile file, int line, String ruleKey, String lineAnchor,
         IWorkbenchPage page) throws CoreException, BadLocationException
     {
         OpenDocument open = openEditorDocument(file, page);
@@ -116,15 +120,16 @@ public final class SuppressionApplier
      * @param line the 1-based line recorded for the issue
      * @param ruleKey the rule key to suppress, not {@code null}
      * @param lineAnchor the anchor recorded for the flagged line, not {@code null}
-     * @return what the attempt did, never {@code null}
+     * @return what the attempt did, and the line it edited (see {@link SuppressionResult}), never
+     *     {@code null}
      * @throws BadLocationException when {@code line} is out of the document's range
      */
-    static SuppressionOutcome applyToOpenDocument(IDocument document, boolean dirty, int line, String ruleKey,
+    static SuppressionResult applyToOpenDocument(IDocument document, boolean dirty, int line, String ruleKey,
         String lineAnchor) throws BadLocationException
     {
         if (dirty)
         {
-            return SuppressionOutcome.UNSAVED_CHANGES;
+            return SuppressionResult.refused(SuppressionOutcome.UNSAVED_CHANGES);
         }
         return BslSuppression.insert(document, line, ruleKey, lineAnchor);
     }
@@ -169,11 +174,12 @@ public final class SuppressionApplier
      * @param line the 1-based line recorded for the issue
      * @param ruleKey the rule key to suppress, not {@code null}
      * @param lineAnchor the anchor recorded for the flagged line, not {@code null}
-     * @return what the attempt did, never {@code null}
+     * @return what the attempt did, and the line it edited (see {@link SuppressionResult}), never
+     *     {@code null}
      * @throws CoreException when connecting to, or committing, the file buffer fails
      * @throws BadLocationException when {@code line} is out of the document's range
      */
-    private static SuppressionOutcome applyToFileBuffer(IFile file, int line, String ruleKey, String lineAnchor)
+    private static SuppressionResult applyToFileBuffer(IFile file, int line, String ruleKey, String lineAnchor)
         throws CoreException, BadLocationException
     {
         ITextFileBufferManager manager = FileBuffers.getTextFileBufferManager();
@@ -184,18 +190,18 @@ public final class SuppressionApplier
             ITextFileBuffer buffer = manager.getTextFileBuffer(file.getFullPath(), LocationKind.IFILE);
             if (buffer == null)
             {
-                return SuppressionOutcome.NO_BUFFER;
+                return SuppressionResult.refused(SuppressionOutcome.NO_BUFFER);
             }
             if (buffer.isDirty())
             {
-                return SuppressionOutcome.UNSAVED_CHANGES;
+                return SuppressionResult.refused(SuppressionOutcome.UNSAVED_CHANGES);
             }
-            SuppressionOutcome outcome = BslSuppression.insert(buffer.getDocument(), line, ruleKey, lineAnchor);
-            if (outcome.inserted())
+            SuppressionResult result = BslSuppression.insert(buffer.getDocument(), line, ruleKey, lineAnchor);
+            if (result.inserted())
             {
                 buffer.commit(monitor, false);
             }
-            return outcome;
+            return result;
         }
         finally
         {

@@ -23,7 +23,7 @@ import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PlatformUI;
 
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
-import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionResult;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
 import ru.jimmo.edt.sonarq.ui.views.SonarIssuesView;
@@ -98,16 +98,19 @@ final class SuppressMarkerResolution implements IMarkerResolution2
             SuppressedIssue suppressed = SuppressedIssue.of(marker);
             String lineAnchor = marker.getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, ""); //$NON-NLS-1$
             IWorkbenchPage page = activePage();
-            SuppressionOutcome outcome = SuppressionApplier.apply(file, line, bareRuleKey, lineAnchor, page);
-            if (!outcome.inserted())
+            SuppressionResult result = SuppressionApplier.apply(file, line, bareRuleKey, lineAnchor, page);
+            if (!result.inserted())
             {
                 // Nothing was written (the file changed since the analysis, the line is already suppressed,
                 // or the file has unsaved changes) - leave both the marker and the issue view's line numbers
                 // exactly as they are, and tell the user why the quick fix appears to have done nothing.
-                notice.show(Messages.Suppress_Refused_Title, SuppressionMessages.describe(outcome));
+                notice.show(Messages.Suppress_Refused_Title, SuppressionMessages.describe(result.outcome()));
                 return;
             }
-            updateModelsAfterEdit(file, marker, line, page, suppressed);
+            // Everything below renumbers around result.line(), not around the marker's own line number: the
+            // anchor may have found the flagged code a few lines away from where this marker said it was, and
+            // that is where the file really grew by two lines.
+            updateModelsAfterEdit(file, marker, result.line(), page, suppressed);
         }
         catch (CoreException | BadLocationException e)
         {
@@ -129,7 +132,8 @@ final class SuppressMarkerResolution implements IMarkerResolution2
      *
      * @param file the edited file, not {@code null}
      * @param resolved the marker whose quick fix was just applied, not {@code null}
-     * @param codeLine the 1-based line the {@code -off}/{@code -on} comments were wrapped around
+     * @param codeLine the 1-based line the {@code -off}/{@code -on} comments were really wrapped around,
+     *     which the anchor may have moved away from the marker's own line number
      * @param page the active workbench page, or {@code null} when there is none
      * @param suppressed the identity of the suppressed issue, or {@code null} when the marker carried none
      */
@@ -142,7 +146,7 @@ final class SuppressMarkerResolution implements IMarkerResolution2
             // of the file's markers right away, instead of waiting for the next full issue-tree refresh to
             // re-sync them all (see ru.jimmo.edt.sonarq.ui.markers.IssueMarkerSynchronizer#sync).
             renumbering.renumber(file, resolved, codeLine);
-            notifyIssuesView(page, suppressed);
+            notifyIssuesView(page, suppressed, codeLine);
         }
         catch (CoreException | RuntimeException e)
         {
@@ -214,8 +218,9 @@ final class SuppressMarkerResolution implements IMarkerResolution2
      * @param page the workbench page to look the view up in, or {@code null} when there is none
      * @param suppressed the project-scoped identity of the suppressed issue, or {@code null} when the marker
      *     is not inside a project
+     * @param codeLine the 1-based line the comments were really wrapped around
      */
-    private static void notifyIssuesView(IWorkbenchPage page, SuppressedIssue suppressed)
+    private static void notifyIssuesView(IWorkbenchPage page, SuppressedIssue suppressed, int codeLine)
     {
         if (page == null || suppressed == null)
         {
@@ -224,7 +229,7 @@ final class SuppressMarkerResolution implements IMarkerResolution2
         // findView returns null when the view is not open at all - then there is no model to update.
         if (page.findView(SonarIssuesView.VIEW_ID) instanceof SonarIssuesView view)
         {
-            view.issueSuppressedExternally(suppressed);
+            view.issueSuppressedExternally(suppressed, codeLine);
         }
     }
 

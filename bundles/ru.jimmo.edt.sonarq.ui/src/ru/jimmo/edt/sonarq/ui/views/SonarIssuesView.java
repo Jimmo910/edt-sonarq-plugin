@@ -77,6 +77,7 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionResult;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion;
@@ -755,15 +756,15 @@ public class SonarIssuesView extends ViewPart
                 applyFileUnavailableStatus(entry);
                 return;
             }
-            SuppressionOutcome outcome = SuppressionApplier.apply(file, entry.issue().line(),
+            SuppressionResult result = SuppressionApplier.apply(file, entry.issue().line(),
                 entry.issue().ruleKey(), entry.issue().lineAnchor(), getSite().getPage());
-            if (outcome.inserted())
+            if (result.inserted())
             {
-                applySuppressionLineShift(entry.issue());
+                applySuppressionLineShift(entry.issue(), result.line());
             }
             else
             {
-                applySuppressionRefusedStatus(outcome);
+                applySuppressionRefusedStatus(result.outcome());
             }
         }
         catch (CoreException | BadLocationException e)
@@ -822,14 +823,17 @@ public class SonarIssuesView extends ViewPart
      *
      * @param suppressed the project-scoped identity of the issue that was just suppressed, may be
      *     {@code null}, in which case nothing happens
+     * @param codeLine the 1-based line the comment pair was really wrapped around, which the quick fix's own
+     *     anchor lookup may have moved away from the line the marker recorded
      */
-    public void issueSuppressedExternally(SuppressedIssue suppressed)
+    public void issueSuppressedExternally(SuppressedIssue suppressed, int codeLine)
     {
         if (suppressed == null || viewer == null || viewer.getControl().isDisposed())
         {
             return;
         }
-        suppressed.locateIn(selectedProject, snapshot).ifPresent(this::applySuppressionLineShift);
+        suppressed.locateIn(selectedProject, snapshot)
+            .ifPresent(issue -> applySuppressionLineShift(issue, codeLine));
     }
 
     /**
@@ -854,8 +858,11 @@ public class SonarIssuesView extends ViewPart
      * outranks a plain issue count).
      *
      * @param issue the issue that was just suppressed, not {@code null}
+     * @param codeLine the 1-based line the comment pair was really wrapped around (see
+     *     {@link SuppressionResult#line()}), which the anchor lookup may have moved away from
+     *     {@link SonarIssue#line()}
      */
-    private void applySuppressionLineShift(SonarIssue issue)
+    private void applySuppressionLineShift(SonarIssue issue, int codeLine)
     {
         if (snapshot == null)
         {
@@ -864,7 +871,7 @@ public class SonarIssuesView extends ViewPart
         // Rebuilt through the snapshot overload, which carries the server total over: rebuilding it here with
         // "total = the issues I still hold" dropped the truncation warning ("Showing first N of M") at the
         // first suppression and never brought it back until the next refresh.
-        snapshot = SuppressionLineShift.applyAfterSuppress(snapshot, issue);
+        snapshot = SuppressionLineShift.applyAfterSuppress(snapshot, issue, codeLine);
         refreshGeneration.invalidate();
         if (selectedProject != null)
         {

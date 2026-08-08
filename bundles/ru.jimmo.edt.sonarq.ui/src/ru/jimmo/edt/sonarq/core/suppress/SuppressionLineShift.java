@@ -46,6 +46,31 @@ public final class SuppressionLineShift
      */
     public static List<SonarIssue> applyAfterSuppress(List<SonarIssue> issues, SonarIssue suppressed)
     {
+        return applyAfterSuppress(issues, suppressed, suppressed.line());
+    }
+
+    /**
+     * The same, for a suppression that did not land on the line the issue was reported at.
+     *
+     * <p>The comment pair goes around the line the issue's {@link LineAnchor} named, which after a
+     * server-mode refresh - or any edit above the issue - is regularly a few lines away from the reported
+     * number (see {@link SuppressionResult#line()}). The file therefore grew two lines <em>there</em>, so
+     * that is the line the renumbering has to pivot on: renumbering around the reported number instead moves
+     * every issue between the two by two lines it never gained.
+     *
+     * <p>Which issues the comment pair <em>silenced</em> is a different question, and deliberately still
+     * asked in the issue list's own numbering: the siblings that share the wrapped line are the ones this
+     * list has at {@code suppressed.line()}, whatever the file calls that line.
+     *
+     * @param issues the issues before the suppression, not {@code null}
+     * @param suppressed the issue that was just suppressed, not {@code null}
+     * @param codeLine the 1-based line the {@code -off}/{@code -on} comments were really wrapped around, in
+     *     the numbering the file had before the insertion
+     * @return a new list, as {@link #applyAfterSuppress(List, SonarIssue)} describes
+     */
+    public static List<SonarIssue> applyAfterSuppress(List<SonarIssue> issues, SonarIssue suppressed,
+        int codeLine)
+    {
         List<SonarIssue> result = new ArrayList<>(issues.size());
         for (SonarIssue issue : issues)
         {
@@ -53,7 +78,7 @@ public final class SuppressionLineShift
             {
                 continue;
             }
-            result.add(shiftIfSameFile(issue, suppressed.componentKey(), suppressed.line()));
+            result.add(shiftIfSameFile(issue, suppressed.componentKey(), codeLine));
         }
         return result;
     }
@@ -77,7 +102,23 @@ public final class SuppressionLineShift
      */
     public static IssueSnapshot applyAfterSuppress(IssueSnapshot snapshot, SonarIssue suppressed)
     {
-        List<SonarIssue> adjusted = applyAfterSuppress(snapshot.issues(), suppressed);
+        return applyAfterSuppress(snapshot, suppressed, suppressed.line());
+    }
+
+    /**
+     * Applies {@link #applyAfterSuppress(List, SonarIssue, int)} to a whole snapshot, keeping everything the
+     * snapshot knows besides its issues (see {@link #applyAfterSuppress(IssueSnapshot, SonarIssue)} for why
+     * the total is carried over rather than recomputed).
+     *
+     * @param snapshot the snapshot before the suppression, not {@code null}
+     * @param suppressed the issue that was just suppressed, not {@code null}
+     * @param codeLine the 1-based line the comments were really wrapped around
+     * @return a snapshot with the same query, load time and truncation state, and the adjusted issues, never
+     *     {@code null}
+     */
+    public static IssueSnapshot applyAfterSuppress(IssueSnapshot snapshot, SonarIssue suppressed, int codeLine)
+    {
+        List<SonarIssue> adjusted = applyAfterSuppress(snapshot.issues(), suppressed, codeLine);
         int silenced = snapshot.issues().size() - adjusted.size();
         int total = Math.max(adjusted.size(), snapshot.serverTotal() - silenced);
         return new IssueSnapshot(snapshot.query(), adjusted, total, snapshot.loadedAt());

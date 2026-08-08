@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.eclipse.jface.text.Document;
 import org.eclipse.jface.text.IDocument;
@@ -51,7 +52,7 @@ public class SuppressionDesyncRegressionTest
     public void aNoOpInsertionMustNotShiftTheRemainingIssues() throws Exception
     {
         IDocument document = new Document(ALREADY_SUPPRESSED);
-        List<SonarIssue> issues = List.of(issue("k-already", FILE_A, 3), issue("k-next", FILE_A, 5));
+        List<SonarIssue> issues = anchored(document, issue("k-already", FILE_A, 3), issue("k-next", FILE_A, 5));
 
         Applied applied = suppress(document, issues, "k-already", "R1");
 
@@ -69,7 +70,7 @@ public class SuppressionDesyncRegressionTest
     public void theNextSuppressionAfterANoOpStillWrapsTheRightLine() throws Exception
     {
         IDocument document = new Document(ALREADY_SUPPRESSED);
-        List<SonarIssue> issues = List.of(issue("k-already", FILE_A, 3), issue("k-next", FILE_A, 5));
+        List<SonarIssue> issues = anchored(document, issue("k-already", FILE_A, 3), issue("k-next", FILE_A, 5));
 
         List<SonarIssue> model = suppress(document, issues, "k-already", "R1").issues();
         assertTrue(suppress(document, model, "k-next", "R2").inserted());
@@ -89,7 +90,7 @@ public class SuppressionDesyncRegressionTest
     public void aRealInsertionStillShiftsTheRemainingIssues() throws Exception
     {
         IDocument document = new Document("Процедура П()\n    А = 1;\n    Б = 2;\nКонецПроцедуры\n");
-        List<SonarIssue> issues = List.of(issue("k-first", FILE_A, 2), issue("k-next", FILE_A, 3));
+        List<SonarIssue> issues = anchored(document, issue("k-first", FILE_A, 2), issue("k-next", FILE_A, 3));
 
         Applied applied = suppress(document, issues, "k-first", "R1");
 
@@ -124,13 +125,29 @@ public class SuppressionDesyncRegressionTest
         throws Exception
     {
         SonarIssue target = issues.stream().filter(i -> i.key().equals(issueKey)).findFirst().orElseThrow();
-        boolean inserted =
-            BslSuppression.insert(document, target.line(), ruleKey, target.lineAnchor()).inserted();
-        if (!inserted)
+        SuppressionResult result = BslSuppression.insert(document, target.line(), ruleKey, target.lineAnchor());
+        if (!result.inserted())
         {
             return new Applied(false, issues);
         }
-        return new Applied(true, SuppressionLineShift.applyAfterSuppress(issues, target));
+        // Around the line the edit really landed on, exactly as the view does it - the anchor may have found
+        // the flagged code somewhere other than where the issue said it was.
+        return new Applied(true, SuppressionLineShift.applyAfterSuppress(issues, target, result.line()));
+    }
+
+    /**
+     * Anchors issues against the document they were reported on, as the issue mapping does before any of them
+     * reaches a suppression.
+     *
+     * @param document the document the issues were reported on
+     * @param issues the issues to anchor
+     * @return the anchored issues, in the same order
+     */
+    private static List<SonarIssue> anchored(IDocument document, SonarIssue... issues)
+    {
+        return Stream.of(issues)
+            .map(issue -> issue.withAnchor(LineAnchor.of(document, issue.line())))
+            .toList();
     }
 
     /**

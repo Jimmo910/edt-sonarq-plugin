@@ -55,16 +55,18 @@ import ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder;
  * <li>the current text of the reported line.</li>
  * </ol>
  *
- * <p>A carried anchor - from either source - is only kept while it is still findable near the reported line
- * ({@link LineAnchor#resolveLine}): otherwise the code it described is really gone, and holding on to it
- * would make the issue permanently unsuppressable. "Findable" deliberately includes
- * {@link LineAnchor#AMBIGUOUS}: the anchored code is still there, several times over, and replacing the
- * anchor with a fresh fingerprint of whatever line the server happened to name would turn a safe refusal
- * into a confident edit of a line nobody verified.
+ * <p>A carried anchor - from either source - is only kept while the code it describes is still findable near
+ * the reported line ({@link LineAnchor#isFindable}): otherwise that code is really gone, and holding on to
+ * the anchor would make the issue permanently unsuppressable. "Findable" deliberately includes the refusals
+ * that did find the anchored text but would not edit on it ({@link LineAnchor#AMBIGUOUS},
+ * {@link LineAnchor#WEAK_EVIDENCE}): the code is still there, and replacing a checkable anchor with a fresh
+ * fingerprint of whatever line the server happened to name would turn a safe refusal into a confident edit
+ * of a line nobody verified.
  *
  * <p>Anything that cannot be read - a file missing from the resource tree, an I/O failure, a line beyond the
- * end of the file - leaves the anchor empty, which means "unverifiable" and makes the quick-suppress fall
- * back to its pre-anchor behaviour rather than refuse.
+ * end of the file - leaves the anchor empty. That is not a silent fallback to the pre-anchor behaviour: an
+ * issue with no anchor cannot be quick-suppressed at all (see {@link LineAnchor#NO_ANCHOR}), and the user is
+ * told to refresh the issues, because the alternative is rewriting source at a line number nobody checked.
  */
 public final class IssueAnchors
 {
@@ -259,7 +261,7 @@ public final class IssueAnchors
     private static String anchorFor(IDocument document, SonarIssue issue, String carried)
     {
         if (carried != null && !carried.isEmpty()
-            && LineAnchor.resolveLine(document, issue.line(), carried) != LineAnchor.NOT_FOUND)
+            && LineAnchor.isFindable(LineAnchor.resolveLine(document, issue.line(), carried)))
         {
             return carried;
         }

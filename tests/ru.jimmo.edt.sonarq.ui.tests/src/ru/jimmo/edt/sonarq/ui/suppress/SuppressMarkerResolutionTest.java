@@ -56,6 +56,9 @@ public class SuppressMarkerResolutionTest
     private static final String RELATIVE_PATH = "src/Module.bsl";
     private static final int LINES = 25;
 
+    /** Four lines an edit outside EDT puts above the module, pushing every recorded line number four down. */
+    private static final String PREPENDED = "A1;\nA2;\nA3;\nA4;\n";
+
     private IProject project;
     private IFile file;
 
@@ -124,6 +127,33 @@ public class SuppressMarkerResolutionTest
 
         assertFalse(below.exists());
         assertEquals(expected(Map.of(10, "R1", 20, "R2")), onDisk());
+    }
+
+    /**
+     * The regression this pins: a suppression that the anchor <em>relocated</em> must renumber the other
+     * markers around the line it really edited, not around the line the marker claimed.
+     *
+     * <p>Four lines are inserted at the top of the module outside EDT, so every marker is four lines short.
+     * The quick fix on the marker that says line 10 wraps {@code L10;} where it really is, on line 14. A
+     * marker recorded at line 12 sits <em>above</em> that edit and gains nothing; renumbering around the
+     * marker's own line number instead pushed it to 14 - two lines it never grew - and every later
+     * renumbering of it started from there.
+     */
+    @Test
+    public void relocatedSuppressionRenumbersAroundTheLineItReallyEdited() throws Exception
+    {
+        IMarker resolved = marker("R1", 10);
+        IMarker between = marker("R2", 12);
+        IMarker below = marker("R3", 20);
+        write(PREPENDED + source());
+
+        new SuppressMarkerResolution("R1").run(resolved);
+
+        assertFalse("the resolved marker must be gone", resolved.exists());
+        assertEquals("a marker above the edited line keeps its number", 12,
+            between.getAttribute(IMarker.LINE_NUMBER, -1));
+        assertEquals(22, below.getAttribute(IMarker.LINE_NUMBER, -1));
+        assertEquals(PREPENDED + expected(Map.of(10, "R1")), onDisk());
     }
 
     /** A file-level marker carries no line number to shift, and must not gain one. */
@@ -200,7 +230,7 @@ public class SuppressMarkerResolutionTest
         String stored = markerOf("k1").getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, "");
 
         assertEquals(LineAnchor.of(new Document(source()), 10), stored);
-        assertTrue(stored, stored.startsWith("v2:"));
+        assertTrue(stored, stored.startsWith("v3:"));
         assertEquals(10, LineAnchor.resolveLine(new Document(source()), 10, stored));
     }
 
@@ -325,13 +355,36 @@ public class SuppressMarkerResolutionTest
             "proj:" + RELATIVE_PATH, "boom", line);
     }
 
-    private IMarker marker(String ruleKey, int line) throws CoreException
+    /**
+     * A marker on the given line, anchored the way the marker synchronization anchors one: to the text the
+     * file holds at that line right now.
+     *
+     * @param ruleKey the rule key to carry
+     * @param line the 1-based line number
+     * @return the marker
+     * @throws CoreException when the marker cannot be created
+     * @throws IOException when the file cannot be read
+     */
+    private IMarker marker(String ruleKey, int line) throws CoreException, IOException
     {
         IMarker marker = file.createMarker(IssueMarkers.MARKER_TYPE);
         marker.setAttribute(IMarker.LINE_NUMBER, line);
         marker.setAttribute(IssueMarkers.ATTR_RULE_KEY, ruleKey);
         marker.setAttribute(IMarker.SEVERITY, IMarker.SEVERITY_WARNING);
+        marker.setAttribute(IssueMarkers.ATTR_LINE_ANCHOR, LineAnchor.of(new Document(onDisk()), line));
         return marker;
+    }
+
+    /**
+     * Replaces the file's content, as an edit made outside this plug-in would.
+     *
+     * @param content the new content
+     * @throws CoreException when the file cannot be written
+     */
+    private void write(String content) throws CoreException
+    {
+        file.setContents(new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)), true, false,
+            new NullProgressMonitor());
     }
 
     private String onDisk() throws IOException
