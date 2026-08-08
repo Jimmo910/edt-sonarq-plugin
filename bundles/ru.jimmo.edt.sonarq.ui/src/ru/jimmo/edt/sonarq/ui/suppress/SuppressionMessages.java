@@ -36,6 +36,9 @@ public final class SuppressionMessages
             case INSERTED -> ""; //$NON-NLS-1$
             case ALREADY_SUPPRESSED -> Messages.Suppress_Refused_AlreadySuppressed;
             case ANCHOR_NOT_FOUND -> Messages.Suppress_Refused_FileChanged;
+            case ANCHOR_AMBIGUOUS -> Messages.Suppress_Refused_Ambiguous;
+            case ANCHOR_UNCERTAIN -> Messages.Suppress_Refused_Uncertain;
+            case ANCHOR_MISSING -> Messages.Suppress_Refused_NoAnchor;
             case UNSAVED_CHANGES -> Messages.Suppress_Refused_UnsavedChanges;
             case NO_BUFFER -> Messages.Suppress_Refused_Unavailable;
         };

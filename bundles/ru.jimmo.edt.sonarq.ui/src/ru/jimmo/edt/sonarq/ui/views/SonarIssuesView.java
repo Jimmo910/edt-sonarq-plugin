@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -66,6 +67,7 @@ import ru.jimmo.edt.sonarq.core.client.ISonarServerClient;
 import ru.jimmo.edt.sonarq.core.client.SonarConnection;
 import ru.jimmo.edt.sonarq.core.client.SonarHttpClients;
 import ru.jimmo.edt.sonarq.core.localanalysis.BslServerInstaller;
+import ru.jimmo.edt.sonarq.core.mapping.ComponentPathMapper;
 import ru.jimmo.edt.sonarq.core.mapping.GitBranchDetector;
 import ru.jimmo.edt.sonarq.core.model.IssueSnapshot;
 import ru.jimmo.edt.sonarq.core.model.SonarIssue;
@@ -76,12 +78,15 @@ import ru.jimmo.edt.sonarq.core.provider.IIssueProvider;
 import ru.jimmo.edt.sonarq.core.settings.ProjectBinding;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionResult;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncResult;
+import ru.jimmo.edt.sonarq.ui.resources.AnchorMemory;
 import ru.jimmo.edt.sonarq.ui.resources.IssueAnchors;
+import ru.jimmo.edt.sonarq.ui.resources.RefreshAnchoring;
 import ru.jimmo.edt.sonarq.ui.resources.WorkspaceFiles;
 import ru.jimmo.edt.sonarq.ui.settings.AnalysisLaunchConfigFactory;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
@@ -754,15 +759,15 @@ public class SonarIssuesView extends ViewPart
                 applyFileUnavailableStatus(entry);
                 return;
             }
-            SuppressionOutcome outcome = SuppressionApplier.apply(file, entry.issue().line(),
+            SuppressionResult result = SuppressionApplier.apply(file, entry.issue().line(),
                 entry.issue().ruleKey(), entry.issue().lineAnchor(), getSite().getPage());
-            if (outcome.inserted())
+            if (result.inserted())
             {
-                applySuppressionLineShift(entry.issue());
+                applySuppressionLineShift(entry.issue(), result.line());
             }
             else
             {
-                applySuppressionRefusedStatus(outcome);
+                applySuppressionRefusedStatus(result.outcome());
             }
         }
         catch (CoreException | BadLocationException e)
@@ -821,14 +826,17 @@ public class SonarIssuesView extends ViewPart
      *
      * @param suppressed the project-scoped identity of the issue that was just suppressed, may be
      *     {@code null}, in which case nothing happens
+     * @param codeLine the 1-based line the comment pair was really wrapped around, which the quick fix's own
+     *     anchor lookup may have moved away from the line the marker recorded
      */
-    public void issueSuppressedExternally(SuppressedIssue suppressed)
+    public void issueSuppressedExternally(SuppressedIssue suppressed, int codeLine)
     {
         if (suppressed == null || viewer == null || viewer.getControl().isDisposed())
         {
             return;
         }
-        suppressed.locateIn(selectedProject, snapshot).ifPresent(this::applySuppressionLineShift);
+        suppressed.locateIn(selectedProject, snapshot)
+            .ifPresent(issue -> applySuppressionLineShift(issue, codeLine));
     }
 
     /**
@@ -853,8 +861,11 @@ public class SonarIssuesView extends ViewPart
      * outranks a plain issue count).
      *
      * @param issue the issue that was just suppressed, not {@code null}
+     * @param codeLine the 1-based line the comment pair was really wrapped around (see
+     *     {@link SuppressionResult#line()}), which the anchor lookup may have moved away from
+     *     {@link SonarIssue#line()}
      */
-    private void applySuppressionLineShift(SonarIssue issue)
+    private void applySuppressionLineShift(SonarIssue issue, int codeLine)
     {
         if (snapshot == null)
         {
@@ -863,8 +874,9 @@ public class SonarIssuesView extends ViewPart
         // Rebuilt through the snapshot overload, which carries the server total over: rebuilding it here with
         // "total = the issues I still hold" dropped the truncation warning ("Showing first N of M") at the
         // first suppression and never brought it back until the next refresh.
-        snapshot = SuppressionLineShift.applyAfterSuppress(snapshot, issue);
+        snapshot = SuppressionLineShift.applyAfterSuppress(snapshot, issue, codeLine);
         refreshGeneration.invalidate();
+        long stateVersion = RefreshResult.NO_STATE_VERSION;
         if (selectedProject != null)
         {
             // Fence the marker synchronizations already in flight for this project: they were produced from
@@ -872,14 +884,32 @@ public class SonarIssuesView extends ViewPart
             // two lines. Published here, and not only by the job #scheduleMarkerSync creates below, because
             // that method returns without creating one when the user switched editor markers off - and a job
             // created while they were still on must not write after this edit either.
-            MarkerStateVersion.publish(selectedProject);
+            // The plug-in's persisted anchor memory needs the same treatment, and needs it whatever the state
+            // of the markers: the file has two more lines in it now, so every record of it - this issue's,
+            // which is gone, and its neighbours' hints, which have moved - is stale on disk until this runs.
+            stateVersion = MarkerStateVersion.publish(selectedProject);
+            AnchorMemory.suppressionApplied(selectedProject, relativePathOf(issue), issue.key(), codeLine);
         }
         rebuildTree();
-        scheduleMarkerSync();
+        scheduleMarkerSync(stateVersion);
         if (lastErrorMessage == null)
         {
             updateStatusAndBanner();
         }
+    }
+
+    /**
+     * The project-relative path of an issue in the current snapshot, resolved with the mapping inputs the
+     * last refresh used.
+     *
+     * @param issue the issue, not {@code null}
+     * @return the path, or {@code null} when the issue's component does not map into the bound project
+     */
+    private String relativePathOf(SonarIssue issue)
+    {
+        return ComponentPathMapper
+            .toProjectRelativePath(issue.componentKey(), boundProjectKey, boundPathPrefix)
+            .orElse(null);
     }
 
     private void refreshIssues()
@@ -908,8 +938,13 @@ public class SonarIssuesView extends ViewPart
         lastRefreshWasLocal = RefreshIssuesJob.isLocalProvider(refreshedProvider);
         applyRunningStatus();
         showEngineDownloadHintIfNeeded();
+        // Read here, on the UI thread that owns the snapshot field, and handed to the background callback as
+        // a value: these are the fingerprints this view already knows for its issues, and they are the only
+        // ones that survive a refresh when the user switched editor markers off (see IssueAnchors).
+        Map<String, String> knownAnchors = IssueAnchors.anchorsOf(snapshot);
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, project, refreshInputs, result)));
+            result -> onRefreshFinished(generation, result),
+            new RefreshAnchoring(refreshInputs, knownAnchors)));
     }
 
     /**
@@ -1137,27 +1172,19 @@ public class SonarIssuesView extends ViewPart
     }
 
     /**
-     * Receives a finished refresh <em>in the refresh job's thread</em>, fingerprints the issues' source lines
-     * there, and applies the result on the UI thread.
+     * Receives a finished refresh <em>in the refresh job's thread</em> and applies it on the UI thread.
      *
-     * <p>The anchoring has to happen here, before the snapshot reaches the view: it reads every file the
-     * issues point at, which must not happen on the UI thread, and it is what later lets a quick-suppress
-     * verify the line it is about to edit instead of trusting a number that a local edit - or the server's
-     * own memory of its last analysis - may already have invalidated (see {@link IssueAnchors}). The mapping
-     * inputs are the ones this refresh was scheduled with, passed in rather than read from the view's fields,
-     * because those fields belong to the UI thread.
+     * <p>The snapshot arrives already anchored: the job reconciled it against the plug-in's persisted anchor
+     * memory before calling back (see {@link IssueAnchoring}), which is where the file reads that must never
+     * happen on the UI thread belong. This view used to do that reconciliation itself, and the marker
+     * synchronization did a second one of its own; both are now downstream of the single pass in the job, so
+     * what is on screen, what is on the markers and what is on disk cannot disagree.
      *
      * @param generation the refresh generation this result belongs to
-     * @param project the project the refresh ran for, not {@code null}
-     * @param inputs the inputs the refresh was scheduled with, not {@code null}
      * @param result the refresh outcome, not {@code null}
      */
-    private void onRefreshFinished(long generation, IProject project, ProjectRefreshInputs inputs,
-        RefreshResult result)
+    private void onRefreshFinished(long generation, RefreshResult result)
     {
-        IssueSnapshot anchored = result.isError() ? null
-            : IssueAnchors.anchor(project, inputs.mappingProjectKey(), inputs.mappingPathPrefix(),
-                result.snapshot());
         Display.getDefault().asyncExec(() ->
         {
             if (viewer.getControl().isDisposed())
@@ -1173,12 +1200,14 @@ public class SonarIssuesView extends ViewPart
                 applyErrorStatus(result.errorMessage());
                 return;
             }
-            setInput(anchored, result.branchState());
+            setInput(result.snapshot(), result.branchState());
             // A previous sync's missing-file count no longer applies to this fresh snapshot; scheduleMarkerSync
             // reports the up-to-date count asynchronously once its background job completes.
             missingFileMarkerCount = 0;
             updateStatusAndBanner();
-            scheduleMarkerSync();
+            // The version this refresh reserved before it fetched, so a quick-suppress that landed in the
+            // meantime supersedes these markers instead of being overwritten by them.
+            scheduleMarkerSync(result.markerStateVersion());
         });
     }
 
@@ -1253,11 +1282,14 @@ public class SonarIssuesView extends ViewPart
      * {@link #refreshGeneration} check as {@link #onRefreshFinished} so a slow sync from a superseded
      * refresh cannot overwrite a newer one's status (issue #6).
      */
-    private void scheduleMarkerSync()
+    private void scheduleMarkerSync(long stateVersion)
     {
         IPreferencesService preferences = Platform.getPreferencesService();
         if (!preferences.getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null))
         {
+            // Only the delivery of the anchors is switched off here. The anchors themselves were reconciled
+            // and persisted by the refresh, and a suppression updates that memory through AnchorMemory - both
+            // outside this gate, which is what keeps the safety net alive with markers off.
             return;
         }
         IProject project = selectedProject;
@@ -1267,8 +1299,8 @@ public class SonarIssuesView extends ViewPart
         long generation = refreshGeneration.current();
         new MarkerSyncJob(project,
             () -> IssueTreeBuilder.toEntries(markerSnapshot.issues(), projectKey, pathPrefix),
-            result -> Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result)))
-                .schedule();
+            result -> Display.getDefault().asyncExec(() -> applyMarkerSyncResult(generation, result)),
+            stateVersion).schedule();
     }
 
     /**

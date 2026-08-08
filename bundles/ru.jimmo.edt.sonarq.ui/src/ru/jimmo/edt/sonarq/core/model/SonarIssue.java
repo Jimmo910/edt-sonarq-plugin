@@ -19,8 +19,9 @@ import ru.jimmo.edt.sonarq.core.suppress.LineAnchor;
  * @param message the issue message, not {@code null}
  * @param line the 1-based line number, {@code 0} for file-level issues
  * @param lineAnchor the fingerprint of the source line this issue was reported on (see {@link LineAnchor}),
- *     or {@link LineAnchor#NONE} when it could not be computed - the issue is then unverifiable and a
- *     quick-suppress falls back to trusting {@code line}. Issue producers (the server JSON and SARIF parsers)
+ *     or {@link LineAnchor#NONE} when it could not be computed - the issue is then unverifiable, and a
+ *     quick-suppress refuses it rather than editing {@code line} unchecked. Issue producers (the server JSON
+ *     and SARIF parsers)
  *     do not have the file at hand and leave it empty; it is filled in where issues are mapped to workspace
  *     files (see {@code ru.jimmo.edt.sonarq.ui.resources.IssueAnchors}). Never {@code null}: the canonical
  *     constructor normalizes {@code null} to {@link LineAnchor#NONE}

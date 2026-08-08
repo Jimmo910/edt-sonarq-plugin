@@ -7,11 +7,12 @@
 package ru.jimmo.edt.sonarq.core.localanalysis;
 
 /**
- * Turns arbitrary SonarQube project keys into safe, unique file-name segments for the per-project files the
- * local analysis writes under the plugin state directory (the report directory of
- * {@link LocalIssueProvider} and the generated configuration of {@link BslConfigWriter}).
+ * Turns arbitrary identifiers - SonarQube project keys, workspace project names - into safe, unique
+ * file-name segments for the per-identifier files this plug-in writes under its state directory: the report
+ * directory of {@link LocalIssueProvider}, the generated configuration of {@link BslConfigWriter}, and the
+ * per-project anchor memory of {@code ru.jimmo.edt.sonarq.core.anchors.AnchorIndexStore}.
  */
-final class SafeFileNames
+public final class SafeFileNames
 {
     private static final int MAX_SEGMENT_LENGTH = 80;
 
@@ -20,15 +21,16 @@ final class SafeFileNames
     }
 
     /**
-     * Turns a SonarQube project key into a safe single path segment. Real Sonar keys routinely contain
-     * characters that are illegal or dangerous in a file name ({@code :}, {@code /}, {@code ..}), and the
-     * files named from them are deleted and rewritten per run, so the raw key must never reach the
-     * filesystem. The key itself is still used verbatim for component-key mapping.
+     * Turns an identifier into a safe single path segment. Real Sonar keys routinely contain characters that
+     * are illegal or dangerous in a file name ({@code :}, {@code /}, {@code ..}), workspace project names may
+     * contain spaces and non-ASCII characters, and the files named from them are deleted and rewritten per
+     * run, so the raw identifier must never reach the filesystem. The identifier itself is still used
+     * verbatim wherever it means something (component-key mapping, project lookup).
      *
-     * @param key the project key, not {@code null}
+     * @param key the identifier, not {@code null}
      * @return a file-name-safe segment, never {@code null} or a path-traversal token
      */
-    static String segmentFor(String key)
+    public static String segmentFor(String key)
     {
         // Allow only letters, digits, underscore and hyphen. Dots are deliberately excluded so the name
         // can never be "."/".." nor end in a dot (which Windows silently trims), and separators/colons

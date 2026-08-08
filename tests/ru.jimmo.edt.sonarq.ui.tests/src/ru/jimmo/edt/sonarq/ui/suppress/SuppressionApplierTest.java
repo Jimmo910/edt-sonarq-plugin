@@ -31,6 +31,7 @@ import org.junit.Test;
 
 import ru.jimmo.edt.sonarq.core.suppress.LineAnchor;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionOutcome;
+import ru.jimmo.edt.sonarq.core.suppress.SuppressionResult;
 
 /**
  * Tests for {@link SuppressionApplier}'s file-buffer path - the one taken when the file is not open in an
@@ -84,21 +85,23 @@ public class SuppressionApplierTest
     @Test
     public void writesTheCommentPairAndReportsTheInsertion() throws Exception
     {
-        assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, 2, "bsl:MagicNumber", LineAnchor.NONE, null));
+        SuppressionResult result = SuppressionApplier.apply(file, 2, "bsl:MagicNumber", anchorOfLine(2), null);
 
+        assertEquals(SuppressionOutcome.INSERTED, result.outcome());
+        assertEquals("the caller has to know which line grew the comment pair", 2, result.line());
         assertEquals(SUPPRESSED, onDisk());
     }
 
     @Test
     public void reportsNoInsertionWhenTheLineIsAlreadySuppressed() throws Exception
     {
+        String anchor = anchorOfLine(2);
         assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, 2, "MagicNumber", LineAnchor.NONE, null));
+            SuppressionApplier.apply(file, 2, "MagicNumber", anchor, null).outcome());
 
-        // The line moved down by one, so this is the same code line, already wrapped by the call above.
+        // The same issue again, with its pre-edit line number: the anchor finds the line it just wrapped.
         assertEquals(SuppressionOutcome.ALREADY_SUPPRESSED,
-            SuppressionApplier.apply(file, 3, "MagicNumber", LineAnchor.NONE, null));
+            SuppressionApplier.apply(file, 2, "MagicNumber", anchor, null).outcome());
 
         assertEquals(SUPPRESSED, onDisk());
     }
@@ -120,7 +123,7 @@ public class SuppressionApplierTest
             buffer.getDocument().replace(0, 0, "// someone else is editing this\n");
 
             assertEquals(SuppressionOutcome.UNSAVED_CHANGES,
-                SuppressionApplier.apply(file, 2, "MagicNumber", LineAnchor.NONE, null));
+                SuppressionApplier.apply(file, 2, "MagicNumber", anchorOfLine(2), null).outcome());
 
             assertEquals(-1, buffer.getDocument().get().indexOf("BSLLS"));
             assertEquals(SOURCE, onDisk());
@@ -140,14 +143,18 @@ public class SuppressionApplierTest
     @Test
     public void wrapsTheAnchoredLineAfterARefreshRestoredPreEditLineNumbers() throws Exception
     {
-        write("Процедура П()\n    А = 1;\n    Б = 2;\n    В = 3;\nКонецПроцедуры\n");
-        String secondIssueAnchor = LineAnchor.of("    Б = 2;");
+        String source = "Процедура П()\n    А = 1;\n    Б = 2;\n    В = 3;\nКонецПроцедуры\n";
+        write(source);
+        String firstIssueAnchor = LineAnchor.of(new Document(source), 2);
+        String secondIssueAnchor = LineAnchor.of(new Document(source), 3);
 
         assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, 2, "R1", LineAnchor.of("    А = 1;"), null));
-        // The refresh puts the second issue back at its pre-edit line 3; it really sits on line 5 now.
-        assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, 3, "R2", secondIssueAnchor, null));
+            SuppressionApplier.apply(file, 2, "R1", firstIssueAnchor, null).outcome());
+        // The refresh puts the second issue back at its pre-edit line 3; it really sits on line 5 now, and
+        // that is the line the result has to report.
+        SuppressionResult second = SuppressionApplier.apply(file, 3, "R2", secondIssueAnchor, null);
+        assertEquals(SuppressionOutcome.INSERTED, second.outcome());
+        assertEquals(5, second.line());
 
         assertEquals("Процедура П()\n"
             + "    // BSLLS:R1-off\n"
@@ -168,22 +175,24 @@ public class SuppressionApplierTest
     public void refusesAndLeavesTheFileUntouchedWhenTheAnchoredLineIsGone() throws Exception
     {
         assertEquals(SuppressionOutcome.ANCHOR_NOT_FOUND,
-            SuppressionApplier.apply(file, 2, "MagicNumber", LineAnchor.of("    Я = 99;"), null));
+            SuppressionApplier.apply(file, 2, "MagicNumber", LineAnchor.of("    Я = 99;"), null).outcome());
 
         assertEquals(SOURCE, onDisk());
     }
 
     /**
-     * An issue that could not be fingerprinted (its file was missing when the issues were mapped) keeps the
-     * pre-anchor behaviour instead of being refused: nothing regresses for it.
+     * An issue that could not be fingerprinted (its file was missing when the issues were mapped) is refused,
+     * not written blind: the recorded line number is the one thing an unverifiable issue offers, and it is
+     * exactly what may not be trusted when the answer is an edit to the user's source.
      */
     @Test
-    public void anEmptyAnchorStillEditsTheRecordedLine() throws Exception
+    public void anEmptyAnchorIsRefusedAndWritesNothing() throws Exception
     {
-        assertEquals(SuppressionOutcome.INSERTED,
-            SuppressionApplier.apply(file, 2, "MagicNumber", LineAnchor.NONE, null));
+        SuppressionResult result = SuppressionApplier.apply(file, 2, "MagicNumber", LineAnchor.NONE, null);
 
-        assertEquals(SUPPRESSED, onDisk());
+        assertEquals(SuppressionOutcome.ANCHOR_MISSING, result.outcome());
+        assertEquals(SuppressionResult.NO_LINE, result.line());
+        assertEquals(SOURCE, onDisk());
     }
 
     /**
@@ -197,7 +206,8 @@ public class SuppressionApplierTest
         IDocument document = new Document(SOURCE);
 
         assertEquals(SuppressionOutcome.UNSAVED_CHANGES,
-            SuppressionApplier.applyToOpenDocument(document, true, 2, "MagicNumber", LineAnchor.NONE));
+            SuppressionApplier.applyToOpenDocument(document, true, 2, "MagicNumber",
+                LineAnchor.of(document, 2)).outcome());
 
         assertEquals(SOURCE, document.get());
     }
@@ -209,9 +219,20 @@ public class SuppressionApplierTest
 
         assertEquals(SuppressionOutcome.INSERTED,
             SuppressionApplier.applyToOpenDocument(document, false, 2, "MagicNumber",
-                LineAnchor.of("    А = 1;")));
+                LineAnchor.of(document, 2)).outcome());
 
         assertEquals(SUPPRESSED, document.get());
+    }
+
+    /**
+     * The anchor of one line of the pristine module, as the issue mapping records it.
+     *
+     * @param line1Based the 1-based line number
+     * @return the serialized anchor
+     */
+    private static String anchorOfLine(int line1Based)
+    {
+        return LineAnchor.of(new Document(SOURCE), line1Based);
     }
 
     private void write(String content) throws CoreException
