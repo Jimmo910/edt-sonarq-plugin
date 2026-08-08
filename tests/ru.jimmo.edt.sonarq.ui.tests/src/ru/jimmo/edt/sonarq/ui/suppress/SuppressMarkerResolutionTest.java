@@ -39,6 +39,7 @@ import ru.jimmo.edt.sonarq.core.suppress.LineAnchor;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
+import ru.jimmo.edt.sonarq.ui.resources.IssueAnchors;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /**
@@ -322,9 +323,13 @@ public class SuppressMarkerResolutionTest
      */
     private void syncMarkers(SonarIssue... issues) throws InterruptedException
     {
-        List<IssueEntry> entries = List.of(issues).stream()
+        List<IssueEntry> mapped = List.of(issues).stream()
             .map(issue -> new IssueEntry(issue, RELATIVE_PATH))
             .toList();
+        // Anchored before the synchronization, exactly as production does it: the refresh job reconciles a
+        // snapshot once and both the issues view and the marker sync consume the result (see
+        // ru.jimmo.edt.sonarq.ui.views.RefreshIssuesJob). The marker sync itself no longer anchors anything.
+        List<IssueEntry> entries = IssueAnchors.anchor(project, mapped);
         MarkerSyncJob job = new MarkerSyncJob(project, () -> entries);
         job.schedule();
         job.join();

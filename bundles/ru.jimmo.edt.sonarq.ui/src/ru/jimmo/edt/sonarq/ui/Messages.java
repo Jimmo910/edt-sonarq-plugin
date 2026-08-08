@@ -24,6 +24,7 @@ public final class Messages extends NLS
     public static String Analysis_ScannerNotFound;
     public static String Analysis_ServerProcessing;
     public static String Analysis_ServerTimeout;
+    public static String AnchorMemoryJob_Name;
     public static String AutoSyncJob_Name;
     public static String BslChecksPage_ApplyProfile;
     public static String BslChecksPage_Column_Key;

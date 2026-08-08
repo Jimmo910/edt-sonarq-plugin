@@ -19,7 +19,6 @@ import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 
 import ru.jimmo.edt.sonarq.ui.Messages;
-import ru.jimmo.edt.sonarq.ui.resources.IssueAnchors;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /**
@@ -34,9 +33,15 @@ import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
  * may synchronize markers from the refresh callback: both hand the work to this job instead.
  *
  * <p>That rule is what keeps the marker writes from interleaving; it is not what keeps them <em>in order</em>.
- * Constructing this job publishes the state it is about to write ({@link MarkerStateVersion}), and the job
- * verifies that version under the rule before the synchronization deletes anything, so a job released after a
- * newer state has been published abandons its run instead of resurrecting the older one.
+ * Every job carries the version of the issue state it is about to write ({@link MarkerStateVersion}) and
+ * verifies it under the rule before the synchronization deletes anything, so a job released after a newer
+ * state has been published abandons its run instead of resurrecting the older one.
+ *
+ * <p>Which version it carries is the whole of the guarantee. A job derived from a refresh must be given the
+ * version that refresh reserved <em>before</em> it fetched its issues; publishing one here instead - which is
+ * what the constructors below still do for callers that have no earlier moment to point at, such as a
+ * quick-suppress that has just edited the file - would mint an always-current version at the end of a fetch
+ * and wave through exactly the stale write the fence exists to stop.
  */
 public final class MarkerSyncJob extends WorkspaceJob
 {
@@ -80,14 +85,31 @@ public final class MarkerSyncJob extends WorkspaceJob
     public MarkerSyncJob(IProject project, Supplier<List<IssueEntry>> entries,
         Consumer<MarkerSyncResult> onSynced)
     {
+        // Published here, on the producer's thread, at the moment it hands its snapshot over: for a producer
+        // whose state was created just now - a quick-suppress - this <em>is</em> the moment the state came
+        // into being. A producer whose state predates its own completion must use the overload below.
+        this(project, entries, onSynced, MarkerStateVersion.publish(project));
+    }
+
+    /**
+     * Creates a synchronization job for an issue state that was published earlier.
+     *
+     * @param project the project whose issue markers are replaced, not {@code null}
+     * @param entries supplies the entries to materialize as markers; evaluated in the job thread, not
+     *     {@code null}
+     * @param onSynced receives the outcome in the job thread once the synchronization succeeded, not
+     *     {@code null}
+     * @param stateVersion the version the state being written was published under - for a refresh, the one it
+     *     reserved before it fetched anything (see {@code RefreshResult#markerStateVersion()})
+     */
+    public MarkerSyncJob(IProject project, Supplier<List<IssueEntry>> entries,
+        Consumer<MarkerSyncResult> onSynced, long stateVersion)
+    {
         super(Messages.MarkerSyncJob_Name);
         this.project = project;
         this.entries = entries;
         this.onSynced = onSynced;
-        // Taken here, on the producer's thread, at the moment it hands its snapshot over: this is the newest
-        // published marker state of the project until somebody constructs the next job for it. Doing it in the
-        // constructor rather than in each producer is what makes it impossible for a producer to forget.
-        this.stateVersion = MarkerStateVersion.publish(project);
+        this.stateVersion = stateVersion;
         // The project's resource rule contains the rule IssueMarkerSynchronizer#sync begins, which makes the
         // synchronization legal here, and serializes it with other resource work on the same project.
         setRule(project);
@@ -101,19 +123,16 @@ public final class MarkerSyncJob extends WorkspaceJob
         {
             if (!MarkerStateVersion.isCurrent(project, stateVersion))
             {
-                // Superseded before this job even started: skip the file reads the anchoring would do. The
-                // decision that matters is repeated inside the synchronization, under the project's rule.
+                // Superseded before this job even started: skip mapping the snapshot. The decision that
+                // matters is repeated inside the synchronization, under the project's rule.
                 return Status.OK_STATUS;
             }
-            // Anchoring belongs here rather than in either caller: this is the one background job every
-            // marker synchronization goes through - the issues view's and the unattended auto-sync's alike -
-            // and the markers it writes are what the Problems-view quick fix verifies its line against when
-            // no view is open at all. It reads each referenced file once, skips issues that are already
-            // anchored (the view's refresh anchors its snapshot before it gets here), and must run before
-            // IssueMarkerSynchronizer#sync, whose first act is to delete the markers whose anchors it
-            // carries over.
-            List<IssueEntry> anchored = IssueAnchors.anchor(project, entries.get());
-            MarkerSyncResult result = new IssueMarkerSynchronizer().sync(project, anchored,
+            // The entries arrive already anchored: the refresh that produced them reconciled them against the
+            // plug-in's persisted anchor memory (see ru.jimmo.edt.sonarq.ui.views.RefreshIssuesJob), which
+            // this job used to duplicate with a second, memory-less pass of its own. The anchors written onto
+            // the markers below are therefore the same fingerprints the issues view holds, and the
+            // Problems-view quick fix verifies against the same evidence whether or not a view is open.
+            MarkerSyncResult result = new IssueMarkerSynchronizer().sync(project, entries.get(),
                 () -> MarkerStateVersion.isCurrent(project, stateVersion));
             if (result.abandoned())
             {

@@ -12,12 +12,21 @@ import ru.jimmo.edt.sonarq.core.provider.BranchState;
 /**
  * The outcome of a background issue refresh.
  *
- * @param snapshot the loaded issues, {@code null} on error
+ * @param snapshot the loaded issues, already anchored (see
+ *     {@code ru.jimmo.edt.sonarq.ui.views.IssueAnchoring}), {@code null} on error
  * @param branchState the resolved branch state, {@code null} on error
  * @param errorMessage a user-facing error message, {@code null} on success
+ * @param markerStateVersion the project issue state version the refresh reserved <em>before</em> it fetched
+ *     anything (see {@code ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion}). Every marker write derived
+ *     from this result has to carry it rather than publish a newer one, or a refresh a quick-suppress
+ *     overtook would put pre-edit line numbers back on an already-edited file
  */
-public record RefreshResult(IssueSnapshot snapshot, BranchState branchState, String errorMessage)
+public record RefreshResult(IssueSnapshot snapshot, BranchState branchState, String errorMessage,
+    long markerStateVersion)
 {
+    /** The version of a result no marker write may be derived from. */
+    public static final long NO_STATE_VERSION = 0;
+
     /**
      * Creates a failed result carrying a user-facing message.
      *
@@ -26,7 +35,7 @@ public record RefreshResult(IssueSnapshot snapshot, BranchState branchState, Str
      */
     public static RefreshResult error(String errorMessage)
     {
-        return new RefreshResult(null, null, errorMessage);
+        return new RefreshResult(null, null, errorMessage, NO_STATE_VERSION);
     }
 
     /**

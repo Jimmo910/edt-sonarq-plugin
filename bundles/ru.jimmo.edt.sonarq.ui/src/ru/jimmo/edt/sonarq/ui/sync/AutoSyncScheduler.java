@@ -7,6 +7,7 @@
 package ru.jimmo.edt.sonarq.ui.sync;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -22,6 +23,7 @@ import org.eclipse.core.runtime.preferences.IPreferencesService;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.SonarqPlugin;
 import ru.jimmo.edt.sonarq.ui.markers.MarkerSyncJob;
+import ru.jimmo.edt.sonarq.ui.resources.RefreshAnchoring;
 import ru.jimmo.edt.sonarq.ui.settings.PreferenceConstants;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 import ru.jimmo.edt.sonarq.ui.views.IssueTreeBuilder;
@@ -197,8 +199,12 @@ public final class AutoSyncScheduler
         }
         ProjectRefreshInputs refresh = inputs.get();
         AtomicReference<RefreshResult> refreshed = new AtomicReference<>();
+        // Anchored even when the markers below are switched off: the anchor memory is the plug-in's own and
+        // is what a later quick-suppress verifies against, whereas markers are only one way of delivering it.
+        // This is also the only refresh path that runs with no view at all, so it is the only one that can
+        // keep a project's memory current while its issues are nobody's foreground concern.
         Job job = new RefreshIssuesJob(refresh.provider(), refresh.project(), refresh.binding(), null,
-            refreshed::set);
+            refreshed::set, new RefreshAnchoring(refresh, Map.of()));
         job.schedule();
         try
         {
@@ -237,10 +243,12 @@ public final class AutoSyncScheduler
             .getBoolean(SonarqPlugin.PLUGIN_ID, PreferenceConstants.PREF_SHOW_MARKERS, true, null);
         if (!showMarkers)
         {
+            // Only the delivery is switched off. The refresh above has already reconciled and persisted this
+            // project's anchors, which is what the preference must never gate.
             return true;
         }
         return syncMarkers(inputs.project(), () -> IssueTreeBuilder.toEntries(result.snapshot().issues(),
-            inputs.mappingProjectKey(), inputs.mappingPathPrefix()));
+            inputs.mappingProjectKey(), inputs.mappingPathPrefix()), result.markerStateVersion());
     }
 
     /**
@@ -258,19 +266,25 @@ public final class AutoSyncScheduler
      * does not conflict with the project's resource rule.
      *
      * <p>This is the second of the two producers of marker state, alongside the issues view's
-     * {@code scheduleMarkerSync}, and it publishes through the same fence: constructing the job records the
-     * state version ({@link ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion}), so a background cycle whose
-     * issues were fetched before a quick-suppress cannot write its markers after it.
+     * {@code scheduleMarkerSync}, and it passes through the same fence
+     * ({@link ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion}). It carries the version the <em>refresh</em>
+     * reserved before fetching, not one minted now: a background cycle whose issues were fetched before a
+     * quick-suppress has to lose to that suppression, and a version created at this point would always be the
+     * newest and would therefore always win.
      *
      * @param project the project whose markers are replaced, not {@code null}
      * @param entries supplies the entries to materialize, evaluated in the synchronization job, not
      *     {@code null}
+     * @param stateVersion the version the refresh that produced {@code entries} reserved
      * @return {@code true} when the synchronization finished, {@code false} if the thread was interrupted
      *     while waiting
      */
-    static boolean syncMarkers(IProject project, Supplier<List<IssueEntry>> entries)
+    static boolean syncMarkers(IProject project, Supplier<List<IssueEntry>> entries, long stateVersion)
     {
-        MarkerSyncJob job = new MarkerSyncJob(project, entries);
+        MarkerSyncJob job = new MarkerSyncJob(project, entries, result ->
+        {
+            // Nothing to report back; the log already records anything notable.
+        }, stateVersion);
         job.schedule();
         try
         {

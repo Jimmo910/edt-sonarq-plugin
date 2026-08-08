@@ -36,6 +36,7 @@ import ru.jimmo.edt.sonarq.core.model.SonarIssue;
 import ru.jimmo.edt.sonarq.core.model.SonarIssueType;
 import ru.jimmo.edt.sonarq.core.model.SonarSeverity;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
+import ru.jimmo.edt.sonarq.ui.markers.MarkerStateVersion;
 import ru.jimmo.edt.sonarq.ui.views.IssueEntry;
 
 /**
@@ -122,7 +123,8 @@ public class AutoSyncMarkerSyncTest
             {
                 try
                 {
-                    completed.set(AutoSyncScheduler.syncMarkers(project, () -> List.of(entry("k1", 7))));
+                    completed.set(AutoSyncScheduler.syncMarkers(project, () -> List.of(entry("k1", 7)),
+                        MarkerStateVersion.publish(project)));
                 }
                 catch (RuntimeException e)
                 {
@@ -150,11 +152,12 @@ public class AutoSyncMarkerSyncTest
     @Test(timeout = JOB_TIMEOUT_MILLIS)
     public void markerSyncWaitsForTheSynchronizationJobToFinish() throws CoreException
     {
-        assertTrue(AutoSyncScheduler.syncMarkers(project, () -> List.of(entry("k2", 3))));
+        assertTrue(AutoSyncScheduler.syncMarkers(project, () -> List.of(entry("k2", 3)),
+            MarkerStateVersion.publish(project)));
 
         assertEquals(1, file.findMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_ZERO).length);
 
-        assertTrue(AutoSyncScheduler.syncMarkers(project, List::of));
+        assertTrue(AutoSyncScheduler.syncMarkers(project, List::of, MarkerStateVersion.publish(project)));
 
         assertEquals(0, file.findMarkers(IssueMarkers.MARKER_TYPE, true, IResource.DEPTH_ZERO).length);
     }

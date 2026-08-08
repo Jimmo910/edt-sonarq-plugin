@@ -26,6 +26,7 @@ import ru.jimmo.edt.sonarq.core.suppress.SuppressionLineShift;
 import ru.jimmo.edt.sonarq.core.suppress.SuppressionResult;
 import ru.jimmo.edt.sonarq.ui.Messages;
 import ru.jimmo.edt.sonarq.ui.markers.IssueMarkers;
+import ru.jimmo.edt.sonarq.ui.resources.AnchorMemory;
 import ru.jimmo.edt.sonarq.ui.views.SonarIssuesView;
 
 /**
@@ -140,6 +141,12 @@ final class SuppressMarkerResolution implements IMarkerResolution2
     private void updateModelsAfterEdit(IFile file, IMarker resolved, int codeLine, IWorkbenchPage page,
         SuppressedIssue suppressed)
     {
+        // First, and outside the try: the plug-in's persisted anchor memory is the only one of the three
+        // models here that outlives this session, and it is what the *next* quick fix in this file will
+        // verify its line against - including after a restart, when neither the markers below nor the view
+        // exist any more. A failure of the two session models must not skip it.
+        AnchorMemory.suppressionApplied(file.getProject(), file.getProjectRelativePath().toString(),
+            suppressed != null ? suppressed.issueKey() : "", codeLine); //$NON-NLS-1$
         try
         {
             // The edit already removed the cause of this finding; drop this one marker and renumber the rest
