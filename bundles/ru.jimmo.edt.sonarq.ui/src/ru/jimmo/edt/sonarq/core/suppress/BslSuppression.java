@@ -73,12 +73,14 @@ public final class BslSuppression
      *
      * <p>The line is <em>verified before it is edited</em>, never merely trusted: {@code line1Based} is only
      * a hint, and {@link LineAnchor#resolveLine} decides which line - if any - this call may touch. When the
-     * recorded number no longer carries {@code lineAnchor}, the nearest line within
+     * recorded number no longer carries {@code lineAnchor}, the one line within
      * {@link LineAnchor#SEARCH_RADIUS} that does is edited instead (this is what silently absorbs a
      * server-mode refresh restoring the line numbers of its last analysis, and small local edits above the
-     * issue); when no such line exists, nothing is written at all. An empty {@code lineAnchor} - an issue
-     * that could never be fingerprinted - keeps the pre-anchor behaviour of editing {@code line1Based}
-     * itself, so nothing regresses for it.
+     * issue). Nothing is written when no line carries it, and - just as important - nothing is written when
+     * <em>several</em> do: identical code that even the anchor's widest context cannot tell apart is a
+     * refusal ({@link SuppressionOutcome#ANCHOR_AMBIGUOUS}), never a nearest-match guess. An empty
+     * {@code lineAnchor} - an issue that could never be fingerprinted - keeps the pre-anchor behaviour of
+     * editing {@code line1Based} itself, so nothing regresses for it.
      *
      * <p>Two further guards make the call a no-op, both against wrapping a comment instead of code:
      * <ul>
@@ -110,9 +112,11 @@ public final class BslSuppression
         String lineAnchor) throws BadLocationException
     {
         int target = LineAnchor.resolveLine(document, line1Based, lineAnchor);
-        if (target == LineAnchor.NOT_FOUND)
+        if (!LineAnchor.isResolved(target))
         {
-            return SuppressionOutcome.ANCHOR_NOT_FOUND;
+            return target == LineAnchor.AMBIGUOUS
+                ? SuppressionOutcome.ANCHOR_AMBIGUOUS
+                : SuppressionOutcome.ANCHOR_NOT_FOUND;
         }
         int line0 = target - 1;
         if (isBslSuppressionComment(trimmedLineOf(document, line0)))

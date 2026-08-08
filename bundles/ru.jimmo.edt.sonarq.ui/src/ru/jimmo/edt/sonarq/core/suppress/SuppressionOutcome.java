@@ -28,6 +28,14 @@ public enum SuppressionOutcome
      */
     ANCHOR_NOT_FOUND,
 
+    /**
+     * Several lines near the recorded one carry the issue's anchor and none of them is the recorded line
+     * itself - identical blocks of code that even the widest context in the anchor cannot tell apart (see
+     * {@link LineAnchor#AMBIGUOUS}). Editing the nearest of them would be a guess, and a guess here rewrites
+     * the user's source, so nothing is written.
+     */
+    ANCHOR_AMBIGUOUS,
+
     /** The file holds unsaved changes, which this plug-in must neither commit nor edit around. */
     UNSAVED_CHANGES,
 

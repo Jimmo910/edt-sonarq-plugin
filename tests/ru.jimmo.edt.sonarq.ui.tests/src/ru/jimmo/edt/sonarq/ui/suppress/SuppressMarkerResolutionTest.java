@@ -27,6 +27,7 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Status;
+import org.eclipse.jface.text.Document;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -186,13 +187,21 @@ public class SuppressMarkerResolutionTest
         assertEquals(expected(Map.of(10, "R1", 20, "R2")), onDisk());
     }
 
-    /** The marker sync stores the anchor of the line the issue was reported on. */
+    /**
+     * The marker sync stores the multi-level anchor of the line the issue was reported on, and it survives
+     * the round trip through the marker attribute unchanged - that attribute is the only carrier the
+     * Problems-view quick fix has.
+     */
     @Test
     public void markerSyncStoresTheAnchorOfTheFlaggedLine() throws Exception
     {
         syncMarkers(issue("k1", "R1", 10));
 
-        assertEquals(LineAnchor.of("L10;"), markerOf("k1").getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, ""));
+        String stored = markerOf("k1").getAttribute(IssueMarkers.ATTR_LINE_ANCHOR, "");
+
+        assertEquals(LineAnchor.of(new Document(source()), 10), stored);
+        assertTrue(stored, stored.startsWith("v2:"));
+        assertEquals(10, LineAnchor.resolveLine(new Document(source()), 10, stored));
     }
 
     /**

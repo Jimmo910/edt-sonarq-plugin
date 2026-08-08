@@ -181,6 +181,50 @@ public class BslSuppressionTest
         assertEquals(SOURCE, document.get());
     }
 
+    /**
+     * The ambiguity the context levels exist for, end to end. Two byte-identical statements sit inside the
+     * search window and the recorded number is stale, so the line alone cannot say which one the issue is on
+     * - the seven-line context can, and that is the line that gets wrapped.
+     */
+    @Test
+    public void insertPicksTheRightOneOfTwoIdenticalLinesByItsContext() throws Exception
+    {
+        IDocument document = new Document("Если А Тогда\n    Возврат;\nКонецЕсли;\n"
+            + "Б = 1;\n"
+            + "Если В Тогда\n    Возврат;\nКонецЕсли;\n");
+        // The second "Возврат;" is on line 6; the analysis that reported it numbered it 2.
+        String anchor = LineAnchor.of(document, 6);
+
+        assertEquals(SuppressionOutcome.INSERTED, BslSuppression.insert(document, 2, "R1", anchor));
+
+        assertEquals("Если А Тогда\n    Возврат;\nКонецЕсли;\n"
+            + "Б = 1;\n"
+            + "Если В Тогда\n"
+            + "    // BSLLS:R1-off\n"
+            + "    Возврат;\n"
+            + "    // BSLLS:R1-on\n"
+            + "КонецЕсли;\n", document.get());
+    }
+
+    /**
+     * The refusal that replaces the old nearest-match guess: two identical lines that even the widest context
+     * cannot tell apart leave the file byte-for-byte untouched. Wrapping either of them would be a coin flip
+     * on the user's own source, and the outcome tells the caller why the action appeared to do nothing.
+     */
+    @Test
+    public void insertRefusesAndWritesNothingWhenTwoLinesAreIndistinguishable() throws Exception
+    {
+        // The same two statements ten times over: every "Возврат;" in the middle of the file has exactly the
+        // same seven lines around it as the next one, so no context can name a single line.
+        String repeated = "Х = 1;\n    Возврат;\n".repeat(10);
+        IDocument document = new Document(repeated);
+        String anchor = LineAnchor.of(document, 6);
+
+        assertEquals(SuppressionOutcome.ANCHOR_AMBIGUOUS, BslSuppression.insert(document, 5, "R1", anchor));
+
+        assertEquals(repeated, document.get());
+    }
+
     /** A rewritten line is a different line: its old anchor must not match it any more. */
     @Test
     public void insertRefusesWhenTheAnchoredLineWasEdited() throws Exception

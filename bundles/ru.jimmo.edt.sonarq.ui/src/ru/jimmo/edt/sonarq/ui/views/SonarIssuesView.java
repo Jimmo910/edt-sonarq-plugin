@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -908,8 +909,12 @@ public class SonarIssuesView extends ViewPart
         lastRefreshWasLocal = RefreshIssuesJob.isLocalProvider(refreshedProvider);
         applyRunningStatus();
         showEngineDownloadHintIfNeeded();
+        // Read here, on the UI thread that owns the snapshot field, and handed to the background callback as
+        // a value: these are the fingerprints this view already knows for its issues, and they are the only
+        // ones that survive a refresh when the user switched editor markers off (see IssueAnchors).
+        Map<String, String> knownAnchors = IssueAnchors.anchorsOf(snapshot);
         scheduleTracked(new RefreshIssuesJob(refreshedProvider, project, refreshInputs.binding(), sessionBranch,
-            result -> onRefreshFinished(generation, project, refreshInputs, result)));
+            result -> onRefreshFinished(generation, project, refreshInputs, result, knownAnchors)));
     }
 
     /**
@@ -1151,13 +1156,15 @@ public class SonarIssuesView extends ViewPart
      * @param project the project the refresh ran for, not {@code null}
      * @param inputs the inputs the refresh was scheduled with, not {@code null}
      * @param result the refresh outcome, not {@code null}
+     * @param knownAnchors the anchors this view held when the refresh was scheduled, keyed by issue key, not
+     *     {@code null}; captured on the UI thread by {@link #refreshIssues()}
      */
     private void onRefreshFinished(long generation, IProject project, ProjectRefreshInputs inputs,
-        RefreshResult result)
+        RefreshResult result, Map<String, String> knownAnchors)
     {
         IssueSnapshot anchored = result.isError() ? null
             : IssueAnchors.anchor(project, inputs.mappingProjectKey(), inputs.mappingPathPrefix(),
-                result.snapshot());
+                result.snapshot(), knownAnchors);
         Display.getDefault().asyncExec(() ->
         {
             if (viewer.getControl().isDisposed())
